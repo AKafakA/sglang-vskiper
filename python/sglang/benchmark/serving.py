@@ -41,6 +41,10 @@ from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
 from sglang.benchmark.datasets import DatasetRow, get_dataset
 from sglang.benchmark.datasets.mooncake import get_mooncake_request_over_time
+from sglang.benchmark.request_identity import (
+    SGLANG_OPENAI_BACKENDS,
+    attach_stable_sglang_rid,
+)
 from sglang.benchmark.utils import (
     get_tokenizer,
     parse_custom_headers,
@@ -1296,6 +1300,25 @@ async def benchmark(
     profile_prefill_url: Optional[List[str]] = None,
     profile_decode_url: Optional[List[str]] = None,
 ):
+    forward_request_id_as_rid = bool(
+        getattr(args, "forward_request_id_as_rid", False)
+    )
+    if forward_request_id_as_rid:
+        if backend not in SGLANG_OPENAI_BACKENDS:
+            raise ValueError(
+                "--forward-request-id-as-rid requires sglang-oai or "
+                "sglang-oai-chat"
+            )
+        missing_request_ids = [
+            index
+            for index, request in enumerate(input_requests)
+            if not getattr(request, "request_id", None)
+        ]
+        if missing_request_ids:
+            raise ValueError(
+                "--forward-request-id-as-rid requires every input request to "
+                f"have a frozen request_id; missing indices={missing_request_ids[:8]}"
+            )
     if backend in ASYNC_REQUEST_FUNCS:
         request_func = ASYNC_REQUEST_FUNCS[backend]
     else:
@@ -1357,7 +1380,7 @@ async def benchmark(
     else:
         lora_name = None
 
-    # Create the test input once
+    # Create the shared warmup input. Stable, unique RIDs are attached per task.
     test_input = RequestFuncInput(
         model=model_id,
         prompt=test_request.prompt,
@@ -1371,9 +1394,21 @@ async def benchmark(
 
     # Run warmup requests
     warmup_tasks = []
-    for _ in range(warmup_requests):
+    for warmup_index in range(warmup_requests):
+        warmup_input = test_input
+        if forward_request_id_as_rid:
+            warmup_request_id = f"__sglang_benchmark_warmup__:{warmup_index}"
+            warmup_input = replace(
+                test_input,
+                request_id=warmup_request_id,
+                extra_request_body=attach_stable_sglang_rid(
+                    backend,
+                    warmup_request_id,
+                    test_input.extra_request_body,
+                ),
+            )
         warmup_tasks.append(
-            asyncio.create_task(request_func(request_func_input=test_input))
+            asyncio.create_task(request_func(request_func_input=warmup_input))
         )
 
     warmup_outputs = await asyncio.gather(*warmup_tasks)
@@ -1468,6 +1503,12 @@ async def benchmark(
         # Merge global extra_request_body with per-request extras
         # Per-request parameters take precedence over global ones
         merged_extra_body = {**extra_request_body, **request.extra_request_body}
+        if forward_request_id_as_rid:
+            merged_extra_body = attach_stable_sglang_rid(
+                backend,
+                request.request_id,
+                merged_extra_body,
+            )
 
         request_func_input = RequestFuncInput(
             model=model_id,
@@ -2302,6 +2343,14 @@ def cli_main():
     parser.add_argument("--output-file", type=str, help="Output JSONL file name.")
     parser.add_argument(
         "--output-details", action="store_true", help="Output details of benchmarking."
+    )
+    parser.add_argument(
+        "--forward-request-id-as-rid",
+        action="store_true",
+        help=(
+            "Forward each frozen dataset request_id as the SGLang server rid. "
+            "Only valid for SGLang OpenAI backends."
+        ),
     )
     parser.add_argument(
         "--print-requests",
