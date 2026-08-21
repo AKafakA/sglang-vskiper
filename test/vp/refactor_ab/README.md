@@ -24,6 +24,21 @@ identity** before any timing is compared (GR-1a).
 Prompts are sent as `input_ids`: the frozen suites carry token IDs, and sending
 them as `text` is a 400.
 
+## CSD3 A/B
+
+`csd3_ab_run.sh` (replace `RUNDIR_PLACEHOLDER` with the staged run directory)
+plus `csd3_ab_compare.py`. This pair REPLACES the former `csd3_refactor_ab.sh`,
+which was removed because it could not fail: it invoked
+`test/vp/cross_arm_work_gate.py`, a file that does not exist in this repository,
+and swallowed the resulting non-zero status with
+
+    ... || echo 'WORK GATE FAILED - timings NOT comparable' >> work_gate.txt
+
+so the run logged the missing gate and exited 0. A performance comparison could
+therefore be reported with its error, equal-work and saturation checks silently
+absent. `csd3_ab_compare.py` implements those checks inline and exits non-zero
+when any of them fails, printing NO deltas.
+
 ## Reading the results
 
 Three gates run before any delta is printed:
