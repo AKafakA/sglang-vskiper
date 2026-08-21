@@ -52,15 +52,6 @@ class BatchedRepetitionPenalizer(_BatchedPenalizer):
             src=self.repetition_penalties,
         )
 
-    def _cumulate_output_tokens_selected(
-        self, output_ids: torch.Tensor, selected_indices: torch.Tensor
-    ) -> None:
-        rows = selected_indices.long()
-        self.cumulated_repetition_penalties.index_put_(
-            (rows, output_ids.long()),
-            self.repetition_penalties.index_select(0, rows).squeeze(1),
-        )
-
     def _apply(self, logits: torch.Tensor) -> torch.Tensor:
         apply_scaling_penalties(logits, self.cumulated_repetition_penalties)
         return logits
