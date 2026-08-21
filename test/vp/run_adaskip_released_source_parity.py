@@ -27,12 +27,10 @@ import torch.nn.functional as F
 from sglang.srt.server_args import ServerArgs, set_global_server_args_for_scheduler
 from sglang.srt.vpipe.adaskip_profile import (
     ADASKIP_CALIBRATION_SCHEMA,
+    ADASKIP_OFFICIAL_SOURCE_REVISION,
     AdaSkipCalibration,
     profile_from_calibration,
     selected_sublayer_ids,
-)
-from sglang.srt.vpipe.skipper import (
-    ADASKIP_OFFICIAL_SOURCE_REVISION,
 )
 from sglang.srt.vpipe.executor import (
     _execute_sublayer_route_full_graph,

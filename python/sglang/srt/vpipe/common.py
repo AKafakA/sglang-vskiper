@@ -83,11 +83,15 @@ from sglang.srt.vpipe.env import (
 )
 from sglang.srt.vpipe.skipper import (
     _ADAPTERS,
-    _adaskip_adapter,
     _deterministic_mock_adapter,
-    _parse_adaskip_capacity,
     _parse_mock_config,
+)
+from sglang.srt.vpipe.skipper_adaskip import (
+    _adaskip_adapter,
+    _parse_adaskip_capacity,
     adaskip_dense_reference_mlp_enabled,
+)
+from sglang.srt.vpipe.adaskip_profile import (
     load_adaskip_profile,
 )
 from sglang.srt.vpipe.kv_commit import (
