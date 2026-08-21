@@ -1,0 +1,122 @@
+{
+ "gateup@205": {
+  "cublas_ms": null,
+  "best_ms": null,
+  "ratio": null,
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ]
+ },
+ "gateup@512": {
+  "cublas_ms": null,
+  "best_ms": null,
+  "ratio": null,
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ]
+ },
+ "gateup@1024": {
+  "cublas_ms": null,
+  "best_ms": null,
+  "ratio": null,
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ]
+ },
+ "gateup@2048": {
+  "cublas_ms": null,
+  "best_ms": null,
+  "ratio": null,
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ]
+ },
+ "gateup@4096": {
+  "cublas_ms": null,
+  "best_ms": null,
+  "ratio": null,
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ]
+ },
+ "down@205": {
+  "cublas_ms": null,
+  "best_ms": null,
+  "ratio": null,
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ]
+ },
+ "down@512": {
+  "cublas_ms": null,
+  "best_ms": null,
+  "ratio": null,
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ]
+ },
+ "down@1024": {
+  "cublas_ms": null,
+  "best_ms": null,
+  "ratio": null,
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ]
+ },
+ "down@2048": {
+  "cublas_ms": null,
+  "best_ms": null,
+  "ratio": null,
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ]
+ },
+ "down@4096": {
+  "cublas_ms": null,
+  "best_ms": null,
+  "ratio": null,
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ]
+ }
+}
