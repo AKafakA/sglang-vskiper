@@ -288,7 +288,11 @@ def count_matmul_gridexit(
     num_warps: int = 8,
     num_stages: int = 2,
 ) -> None:
-    """Diagnostic launcher: capacity grid + early exit (bench only)."""
+    """Production launcher: capacity grid + per-tile early exit.
+
+    Promoted by D-302/D-303 over the persistent-while ``count_matmul`` (which
+    lost 2.4-2.7x on A100); it is what the binary-cohort MLP path calls.
+    """
 
     cap, k_dim = compact_a.shape
     n_dim = weight.shape[0]

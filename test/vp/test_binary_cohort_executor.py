@@ -21,7 +21,9 @@ set_global_server_args_for_scheduler(
     ServerArgs(model_path="dummy", chunked_prefill_size=4096)
 )
 
-from sglang.srt.vp.flexidepth_full_graph import _binary_cohort_mlp
+from sglang.srt.vpipe.mlp import (
+    _binary_cohort_mlp,
+)
 
 sys.path.insert(0, "test/vp")
 from binary_cohort_reference import reference_binary_cohort_mlp

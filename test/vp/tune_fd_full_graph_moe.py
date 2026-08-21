@@ -26,7 +26,9 @@ from sglang.srt.layers.moe.moe_runner.triton_utils.fused_moe_triton_config impor
     get_default_config,
 )
 from sglang.srt.server_args import ServerArgs, set_global_server_args_for_scheduler
-from sglang.srt.vp.flexidepth_full_graph import _one_expert_mlp
+from sglang.srt.vpipe.mlp_compact import (
+    _one_expert_mlp,
+)
 
 
 def _candidate_configs() -> list[dict[str, int]]:

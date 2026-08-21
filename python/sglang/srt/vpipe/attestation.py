@@ -195,7 +195,6 @@ def coverage_dense_runtime_attestation(model_runner: Any) -> Optional[dict[str, 
         },
         "counters": {
             "eager_skip_decode_layer_calls": counters.eager_skip_decode_layer_calls,
-            "v4_route_execute_decode_calls": counters.v4_route_execute_decode_calls,
             "dense_overflow_decisions": counters.dense_overflow_decisions,
             "dense_overflow_rows": counters.dense_overflow_rows,
             "dense_body_passes": counters.dense_body_passes,
