@@ -75,8 +75,6 @@ from sglang.srt.vpipe.env import (
 )
 
 
-_cached: Optional[bool] = None
-_server_args_enabled: bool = False
 def full_graph_policy_identity_required(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
@@ -472,14 +470,3 @@ def full_graph_mapped_decode_attention_enabled(
     if value in {"0", "false", "no", "off", ""}:
         return False
     raise ValueError(f"{FD_MAPPED_DECODE_ATTN_ENV} must be a boolean value")
-def note_server_args(server_args) -> None:
-    """OR in CLI-only VP configs; call from ModelRunner/Scheduler __init__."""
-
-    global _server_args_enabled, _cached
-    # Direct attribute access, per the repo rule against defensive getattr: this
-    # module ships only in the fork, where ServerArgs always declares both VP
-    # fields. A rename must surface as AttributeError, not be swallowed into a
-    # silently-disabled runtime.
-    if bool(server_args.vp_v2_config) or bool(server_args.vp_v4_config):
-        _server_args_enabled = True
-        _cached = True

@@ -1849,28 +1849,6 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
     capture_hidden_mode: Optional[CaptureHiddenMode] = None
     return_hidden_states_before_norm: bool = False
 
-    # Virtual Pipelining V2 execution payload. These are explicit dataclass
-    # fields so overlap snapshots and deferred result copies retain identity.
-    vp_v2_dispatch_id: int = -1
-    vp_v2_stage_id: int = -1
-    vp_v2_end_stage_id: int = -1
-    vp_v2_start_layer: int = -1
-    vp_v2_end_layer: int = -1
-    vp_v2_lane: str = ""
-    vp_v2_is_final: bool = False
-    vp_v2_work_ids: Optional[Tuple[int, ...]] = None
-    vp_v2_work_keys: Optional[Tuple[object, ...]] = None
-    vp_v2_repair_ids: Optional[Tuple[int, ...]] = None
-    vp_v2_repair_input_slots: Optional[Tuple[int, ...]] = None
-    vp_v2_defer_jump_kv: bool = False
-    vp_v2_skip_penalty_cumulate: bool = False
-    vp_v2_full_run_fastpath: bool = False
-    vp_v2_graph_bucket: int = 0
-    vp_v2_state_rows: Optional[torch.Tensor] = None
-    vp_v2_work_id_tensor: Optional[torch.Tensor] = None
-    vp_v2_repair_input_slot_tensor: Optional[torch.Tensor] = None
-    vp_rebatching_tick: bool = False
-
     @classmethod
     def init_new(
         cls,
@@ -2661,10 +2639,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             spec_prepare_for_decode(self)
             return
 
-        if (
-            not self.vp_v2_skip_penalty_cumulate
-            and self.sampling_info.penalizer_orchestrator.is_required
-        ):
+        if self.sampling_info.penalizer_orchestrator.is_required:
             self.cumulate_penalty_output_tokens()
 
         # input_ids is set at end of previous run_batch (placeholder for
@@ -2896,23 +2871,6 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             prefill_stats=self.prefill_stats,
             fpm_start_time=self.fpm_start_time,
             forward_iter=self.forward_iter,
-            vp_v2_dispatch_id=self.vp_v2_dispatch_id,
-            vp_v2_stage_id=self.vp_v2_stage_id,
-            vp_v2_end_stage_id=self.vp_v2_end_stage_id,
-            vp_v2_start_layer=self.vp_v2_start_layer,
-            vp_v2_end_layer=self.vp_v2_end_layer,
-            vp_v2_lane=self.vp_v2_lane,
-            vp_v2_is_final=self.vp_v2_is_final,
-            vp_v2_work_ids=self.vp_v2_work_ids,
-            vp_v2_work_keys=self.vp_v2_work_keys,
-            vp_v2_repair_ids=self.vp_v2_repair_ids,
-            vp_v2_repair_input_slots=self.vp_v2_repair_input_slots,
-            vp_v2_defer_jump_kv=self.vp_v2_defer_jump_kv,
-            vp_v2_full_run_fastpath=self.vp_v2_full_run_fastpath,
-            vp_v2_graph_bucket=self.vp_v2_graph_bucket,
-            vp_v2_state_rows=self.vp_v2_state_rows,
-            vp_v2_work_id_tensor=self.vp_v2_work_id_tensor,
-            vp_v2_repair_input_slot_tensor=self.vp_v2_repair_input_slot_tensor,
         )
 
     def maybe_evict_swa(self):

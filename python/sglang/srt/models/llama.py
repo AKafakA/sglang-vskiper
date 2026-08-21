@@ -120,10 +120,6 @@ from sglang.srt.vpipe.regime import (
     prefill_regime_decision,
     regime_switch_zero_counters,
 )
-from sglang.srt.vpipe.route_tape import (
-    FullGraphRouteTapeShadowBridge,
-    route_tape_shadow_config,
-)
 from sglang.utils import get_exception_traceback
 
 _is_cuda = is_cuda()
@@ -773,45 +769,6 @@ class LlamaModel(nn.Module):
             ),
             persistent=False,
         )
-        rebatching_shadow_config = route_tape_shadow_config()
-        self._fd_full_graph_rebatching_shadow = None
-        if rebatching_shadow_config.enabled:
-            shadow_dependencies = (
-                self.fd_execution_mode == FD_EXECUTION_FULL_GRAPH,
-                has_routed_layers,
-                full_graph_device_route_tape_enabled(),
-                full_graph_device_route_digest_enabled(),
-                full_graph_route_accounting_enabled(),
-                full_graph_scheduler_convergence_enabled(),
-                full_graph_skipper.execution_kind == RUN_PROJECT_EXECUTION,
-                route_digest_uses_logical_request_ids(full_graph_skipper),
-                "decode" in flexidepth_active_phases(),
-            )
-            if not all(shadow_dependencies):
-                raise ValueError(
-                    "full-graph rebatching shadow dependencies are incomplete"
-                )
-            if not torch.cuda.is_available():
-                raise ValueError(
-                    "full-graph rebatching shadow requires a CUDA device"
-                )
-            self._fd_full_graph_rebatching_shadow = (
-                FullGraphRouteTapeShadowBridge(
-                    stage_id=routed_layer_ids[0],
-                    max_rows=rebatching_shadow_config.max_rows,
-                    queue_capacity=rebatching_shadow_config.queue_capacity,
-                    min_dispatch_rows=(
-                        rebatching_shadow_config.min_dispatch_rows
-                    ),
-                    max_dispatch_rows=(
-                        rebatching_shadow_config.max_dispatch_rows
-                    ),
-                    wait_rounds=rebatching_shadow_config.wait_rounds,
-                    device=torch.device("cuda", torch.cuda.current_device()),
-                )
-            )
-            self._fd_full_graph_rebatching_shadow.warmup()
-
         if self.pp_group.is_last_rank:
             self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         else:
@@ -1303,13 +1260,6 @@ class LlamaForCausalLM(nn.Module):
                 ),
                 "completion": "inline_after_own_layer_attention",
             }
-        rebatching_shadow = getattr(
-            self.model, "_fd_full_graph_rebatching_shadow", None
-        )
-        if rebatching_shadow is not None:
-            flexidepth_state.setdefault("full_graph_routes", {})[
-                "rebatching_shadow"
-            ] = rebatching_shadow.debug_snapshot()
         return {
             "model_family": "llama",
             "flexidepth": flexidepth_state,
@@ -1363,11 +1313,6 @@ class LlamaForCausalLM(nn.Module):
         )
         if readiness_counters is not None:
             readiness_counters.zero_()
-        rebatching_shadow = getattr(
-            self.model, "_fd_full_graph_rebatching_shadow", None
-        )
-        if rebatching_shadow is not None:
-            rebatching_shadow.reset()
         # [W1] Reset the prefill regime-switch decision counters (always present).
         self.model._vp_regime_prefill_fd_passes = 0
         self.model._vp_regime_prefill_dense_passes = 0

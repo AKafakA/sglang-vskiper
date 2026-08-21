@@ -105,15 +105,6 @@ class ForwardMode(IntEnum):
     # Used in dLLM
     DLLM_EXTEND = auto()
 
-    # Virtual Pipelining: run ONE block (a contiguous layer range) of the model for a
-    # decode batch; the inter-block (hidden, residual) state persists across scheduler
-    # ticks in the VP VRAM ledger. Appended last so no existing member's int value shifts.
-    VP_BLOCK = auto()
-
-    # Virtual Pipelining V2: run one scheduler-owned stage. Keep this distinct from
-    # VP_BLOCK so the archived V1 cursor path and V2 persistent queues cannot mix.
-    VP_V2_STAGE = auto()
-
     def is_prefill(self, include_draft_extend_v2: bool = False):
         return self.is_extend(include_draft_extend_v2=include_draft_extend_v2)
 
@@ -148,14 +139,7 @@ class ForwardMode(IntEnum):
         return self == ForwardMode.IDLE
 
     def is_decode_or_idle(self):
-        # VP_BLOCK is decode-shaped (1 token/req, no extend lens): it must take the
-        # decode branches for extend-field/position setup in ForwardBatch.init_new.
-        return (
-            self == ForwardMode.DECODE
-            or self == ForwardMode.IDLE
-            or self == ForwardMode.VP_BLOCK
-            or self == ForwardMode.VP_V2_STAGE
-        )
+        return self == ForwardMode.DECODE or self == ForwardMode.IDLE
 
     def is_target_verify(self):
         return self == ForwardMode.TARGET_VERIFY
@@ -449,10 +433,6 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
     vp_req_pool_indices_cpu: Optional[List[int]] = None
     vp_token_epochs: Optional[List[int]] = None
     vp_kv_positions: Optional[List[int]] = None
-    # VP skipper metadata. Built from request extra_key/routing_key and kept on CPU.
-    vp_request_tags: Optional[List[str]] = None
-    # VP skipper prompt text metadata. Kept on CPU and used only by opt-in routers.
-    vp_request_texts: Optional[List[str]] = None
     # Device route mask bound around one full-graph FlexiDepth attention call.
     fd_full_graph_attention_run_mask: Optional[torch.Tensor] = None
     # Host-static component action for fixed-profile sublayer adapters.
@@ -544,43 +524,6 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
     model_specific_states: Dict[str, any] = None
     # current split index of layer
     split_index: int = 0
-
-    # For Virtual Pipelining (VP_BLOCK): which block to run this forward + its lane.
-    # Copied from the ScheduleBatch in init_new; default inert for non-VP batches.
-    vp_block_idx: int = 0
-    vp_is_project: bool = False
-    vp_span_len: int = 1  # number of consecutive blocks to run in this VP forward (span fusion)
-    vp_run_mask: object = None  # LANEFUSE: [rows,1] float run-mask for a mixed span (None = homogeneous)
-    vp_layer_lanes: object = None  # per-layer skip (Phase A): per-global-layer bool seq (True=project) or None
-    vp_layer_run_masks: object = None  # dynamic per-layer [rows,1] RUN masks for hosted decode skippers
-    vp_force_reinit_metadata: bool = False  # VP subset/cohort spans need fresh decode metadata
-    vp_profile_id: object = None  # graph/profile key for a hosted skipper's lane pattern
-    vp_fd_route_only: bool = False  # route/normalize this layer, but do not execute it yet
-    vp_fd_route_execute: bool = False  # consume retained route weights for a homogeneous cohort
-    vp_fd_route_layer: int = -1
-    vp_fd_route_weights: object = None
-
-    # Virtual Pipelining V2 stage metadata. The scheduler owns work identity and
-    # queue state; ForwardBatch receives only the immutable execution payload.
-    vp_v2_dispatch_id: int = -1
-    vp_v2_stage_id: int = -1
-    vp_v2_end_stage_id: int = -1
-    vp_v2_start_layer: int = -1
-    vp_v2_end_layer: int = -1
-    vp_v2_lane: str = ""
-    vp_v2_is_final: bool = False
-    vp_v2_work_ids: object = None
-    vp_v2_work_keys: object = None
-    vp_v2_repair_ids: object = None
-    vp_v2_repair_input_slots: object = None
-    vp_v2_defer_jump_kv: bool = False
-    vp_v2_full_run_fastpath: bool = False
-    vp_v2_graph_bucket: int = 0
-    vp_v2_state_rows: object = None
-    vp_v2_work_id_tensor: object = None
-    vp_v2_repair_input_slot_tensor: object = None
-    vp_v2_trace: object = None
-    vp_rebatching_tick: bool = False
 
     # For multimodal
     mm_input_embeds: Optional[torch.Tensor] = None
@@ -927,8 +870,6 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
         if (
             ret.forward_mode.is_decode()
             or ret.forward_mode.is_target_verify()
-            or ret.forward_mode == ForwardMode.VP_BLOCK
-            or ret.forward_mode == ForwardMode.VP_V2_STAGE
         ):
             if ret.positions is None:
                 ret.positions = clamp_position(batch.seq_lens)
@@ -996,52 +937,6 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
             ret.dcp_kv_mask = (
                 ret.positions % model_runner.dcp_size == model_runner.dcp_rank
             )
-
-        # Virtual Pipelining: carry the dispatched block/lane onto the ForwardBatch so the
-        # VP_BLOCK model-runner route knows which block to run and which lane. getattr keeps
-        # this inert for every non-VP batch (no vp_* attrs on the ScheduleBatch).
-        ret.vp_block_idx = getattr(batch, "vp_block_idx", 0)
-        ret.vp_is_project = getattr(batch, "vp_is_project", False)
-        ret.vp_span_len = getattr(batch, "vp_span_len", 1)
-        ret.vp_run_mask = getattr(batch, "vp_run_mask", None)
-        ret.vp_layer_lanes = getattr(batch, "vp_layer_lanes", None)
-        ret.vp_layer_run_masks = getattr(batch, "vp_layer_run_masks", None)
-        ret.vp_force_reinit_metadata = getattr(batch, "vp_force_reinit_metadata", False)
-        ret.vp_profile_id = getattr(batch, "vp_profile_id", None)
-        ret.vp_fd_route_only = getattr(batch, "vp_fd_route_only", False)
-        ret.vp_fd_route_execute = getattr(batch, "vp_fd_route_execute", False)
-        ret.vp_fd_route_layer = getattr(batch, "vp_fd_route_layer", -1)
-        ret.vp_fd_route_weights = None
-        ret.vp_v2_dispatch_id = getattr(batch, "vp_v2_dispatch_id", -1)
-        ret.vp_v2_stage_id = getattr(batch, "vp_v2_stage_id", -1)
-        ret.vp_v2_end_stage_id = getattr(batch, "vp_v2_end_stage_id", -1)
-        ret.vp_v2_start_layer = getattr(batch, "vp_v2_start_layer", -1)
-        ret.vp_v2_end_layer = getattr(batch, "vp_v2_end_layer", -1)
-        ret.vp_v2_lane = getattr(batch, "vp_v2_lane", "")
-        ret.vp_v2_is_final = getattr(batch, "vp_v2_is_final", False)
-        ret.vp_v2_work_ids = getattr(batch, "vp_v2_work_ids", None)
-        ret.vp_v2_work_keys = getattr(batch, "vp_v2_work_keys", None)
-        ret.vp_v2_repair_ids = getattr(batch, "vp_v2_repair_ids", None)
-        ret.vp_v2_repair_input_slots = getattr(
-            batch, "vp_v2_repair_input_slots", None
-        )
-        ret.vp_v2_defer_jump_kv = getattr(
-            batch, "vp_v2_defer_jump_kv", False
-        )
-        ret.vp_v2_full_run_fastpath = getattr(
-            batch, "vp_v2_full_run_fastpath", False
-        )
-        ret.vp_v2_graph_bucket = getattr(batch, "vp_v2_graph_bucket", 0)
-        ret.vp_v2_state_rows = getattr(batch, "vp_v2_state_rows", None)
-        ret.vp_v2_work_id_tensor = getattr(
-            batch, "vp_v2_work_id_tensor", None
-        )
-        ret.vp_v2_repair_input_slot_tensor = getattr(
-            batch, "vp_v2_repair_input_slot_tensor", None
-        )
-        ret.vp_rebatching_tick = getattr(
-            batch, "vp_rebatching_tick", False
-        )
 
         return ret
 
@@ -1773,16 +1668,4 @@ def _vp_batch_metadata(reqs) -> dict:
         "vp_kv_positions": [
             len(req.origin_input_ids) + len(req.output_ids) - 1 for req in reqs
         ],
-        "vp_request_tags": [_vp_request_tag(req) for req in reqs],
-        "vp_request_texts": [
-            str(getattr(req, "origin_input_text", "") or "") for req in reqs
-        ],
     }
-
-
-def _vp_request_tag(req) -> str:
-    parts = []
-    for value in (getattr(req, "extra_key", None), getattr(req, "routing_key", None)):
-        if value:
-            parts.append(str(value))
-    return "|".join(parts)

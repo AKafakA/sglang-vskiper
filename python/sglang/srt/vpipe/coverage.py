@@ -14,17 +14,92 @@ import os
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Optional
 import torch
-from sglang.srt.vpipe.route_tape import (
-    _c3_counters,
-)
-from sglang.srt.vpipe.route_tape import (
-    COVERAGE_REASON_INELIGIBLE,
-    COVERAGE_REASON_NO_RUNNER,
-)
 
 
 _fd_skip_decode_deployed_cache: Optional[bool] = None
 _graph_lifecycle_depth = 0
+
+
+COVERAGE_REASON_ROWS = "rows_gt_max_bs"
+COVERAGE_REASON_INELIGIBLE = "not_graph_eligible"
+COVERAGE_REASON_NO_RUNNER = "no_graph_runner"
+COVERAGE_REASONS = (
+    COVERAGE_REASON_ROWS,
+    COVERAGE_REASON_INELIGIBLE,
+    COVERAGE_REASON_NO_RUNNER,
+)
+class CoverageDenseCounters(msgspec.Struct):
+    """Process-wide (c3) evidence counters, served via ``/server_info``.
+
+    Two-site parity (F2/F18): site A (dispatch-seam decision) writes
+    ``dense_overflow_*``; site B (dense-body entry at the first ROUTED layer,
+    deduped per pass via ``vp_fd_coverage_counted``) writes ``dense_body_*``.
+    The gate is ``decisions == passes`` and ``rows == rows`` — removing either
+    site fails the cross-check.
+    """
+
+    # Site A — dispatch-seam decision witnesses.
+    dense_overflow_decisions: int = 0
+    dense_overflow_rows: int = 0
+    overflow_reason: dict[str, int] = {}
+    # Site B — dense-body positive witnesses (the Candidate-A lesson: the body
+    # that ran is attested at the body, not at the decision).
+    dense_body_passes: int = 0
+    dense_body_rows: int = 0
+    # Negative witnesses (invariant: exactly 0 in serving; >0 => cell VOID).
+    eager_skip_decode_layer_calls: int = 0
+    # V4/V2 scheduler-owned route body (F3 tripwire; pinned 0 while the V4
+    # decode scheduler is disabled — nonzero forces the C-E obligation).
+    v4_route_execute_decode_calls: int = 0
+    # Body-mix accounting per SS5 (token == decode row here).
+    fd_tokens_skip_body: int = 0
+    fd_tokens_prod_allrun_band: int = 0
+    fd_tokens_dense_overflow: int = 0
+    # Composition observability.
+    dispatch_graph_steps: int = 0
+    regime_observe_eager: int = 0
+    coverage_stamp_w1_composed: int = 0
+    # Graph-lifecycle mark evidence (F1): guarded sections entered, and each
+    # mid-serving recapture with its forward-pass index (visible evidence, not
+    # a silent counter hole).
+    graph_lifecycle_sections: int = 0
+    recapture_events: list[int] = []
+
+    @classmethod
+    def create(cls) -> "CoverageDenseCounters":
+        return cls(
+            overflow_reason={reason: 0 for reason in COVERAGE_REASONS},
+            recapture_events=[],
+        )
+def vp_graph_lifecycle_active() -> bool:
+    """True inside capture()/warmup()/recapture in the decode graph runner.
+
+    ``torch.cuda.is_current_stream_capturing()`` excludes only the capture
+    invocation itself; the backend runs every body twice EAGERLY before
+    capture, and warmup/recapture also execute bodies eagerly on decode
+    dummies — the sentinel must not count any of them.
+    """
+
+    return _graph_lifecycle_depth > 0
+def _serving_decode_layer_call(forward_batch: Any) -> bool:
+    mode = forward_batch.forward_mode
+    if mode is None or not mode.is_decode():
+        return False
+    if torch.cuda.is_current_stream_capturing():
+        return False
+    if vp_graph_lifecycle_active():
+        return False
+    return True
+def record_eager_skip_decode_layer_call(forward_batch: Any) -> None:
+    """Negative witness at the entry of every FD skip decode body.
+
+    Invariant: exactly 0 in serving.  Excluded: stream capture, and the
+    graph-lifecycle sections (capture warmups, boot warmup, recapture).
+    """
+
+    if _serving_decode_layer_call(forward_batch):
+        _c3_counters.eager_skip_decode_layer_calls += 1
+_c3_counters = CoverageDenseCounters.create()
 LADDER_STOP_POOL_CEILING = "pool_ceiling"
 LADDER_STOP_USER_FLAG = "user_flag"
 RESERVE_PROVENANCE_DEFAULT_ZERO = "default_zero_unmeasured"

@@ -114,7 +114,7 @@ from sglang.srt.vpipe.coverage import (
     trim_candidates,
     vp_graph_lifecycle_mark,
 )
-from sglang.srt.vpipe.route_tape import (
+from sglang.srt.vpipe.coverage import (
     COVERAGE_REASON_INELIGIBLE,
     COVERAGE_REASON_ROWS,
 )
@@ -131,13 +131,6 @@ from sglang.srt.vpipe.regime import (
     DecodeRegimeDispatch,
     compose_regime_variant_label,
     regime_body_dispatches_stock_decode,
-)
-from sglang.srt.vpipe.attestation import (
-    register_captured_route_tape,
-    replay_captured_route_tape,
-)
-from sglang.srt.vpipe.route_tape import (
-    resolve_model_route_tape_shadow,
 )
 
 try:
@@ -400,10 +393,6 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
 
         # --- backend ---------------------------------------------------
         self.backend = resolve_decode_backend(self)
-        self._vp_rebatching_shadow = resolve_model_route_tape_shadow(
-            self.model_runner.model
-        )
-        self._vp_rebatching_shadow_tapes: dict[ShapeKey, object] = {}
 
         # --- W1 unified regime switch: decode leg (I6) -----------------
         # One stateful dispatcher per runner maps the RAW pre-pad decode row
@@ -1096,12 +1085,6 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
                     ),
                     post_warmup_hook=post_warmup_hook,
                 )
-                register_captured_route_tape(
-                    shadow=self._vp_rebatching_shadow,
-                    forward_batch=forward_batch,
-                    shape_key=shape_key,
-                    captured_tapes=self._vp_rebatching_shadow_tapes,
-                )
 
     def recapture_if_needed(self, forward_batch: ForwardBatch):
 
@@ -1329,11 +1312,6 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
                 read_done.record()
                 self.model_runner.war_fastpath_read_done_event = read_done
             output = self.backend.replay(self._replay_graph_key, forward_batch)
-            replay_captured_route_tape(
-                shadow=self._vp_rebatching_shadow,
-                shape_key=self._replay_graph_key,
-                captured_tapes=self._vp_rebatching_shadow_tapes,
-            )
 
         if isinstance(output, LogitsProcessorOutput):
             if self.is_dllm:

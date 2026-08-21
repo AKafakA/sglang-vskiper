@@ -33,8 +33,6 @@ SERVER_IDENTITY_FIELDS = (
     "disable_overlap_schedule",
     "disable_radix_cache",
     "chunked_prefill_size",
-    "vp_v2_config",
-    "vp_v4_config",
 )
 
 

@@ -349,14 +349,6 @@ class RankZeroFilter(logging.Filter):
 class ModelRunnerOutput:
     logits_output: Optional[Union[LogitsProcessorOutput, PPProxyTensors]]
     can_run_graph: bool
-    vp_rebatching_completion: Optional[Any] = None
-    vp_rebatching_pending: bool = False
-    vp_route_mask: Optional[torch.Tensor] = None
-    vp_route_executed: bool = False
-    vp_route_is_project: bool = False
-    vp_route_advance_count: int = 0
-    vp_route_layer: int = -1
-    vp_route_used_attention: bool = False
     expert_distribution_metrics: Optional[ExpertDistributionMetrics] = None
     routed_experts_output: Optional[TopkCaptureOutput] = None
     indexer_topk_output: Optional[TopkCaptureOutput] = None
@@ -3324,11 +3316,7 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         from sglang.srt.vpipe.attestation import (
             vp_runtime_enabled,
         )
-        from sglang.srt.vpipe.config import (
-            note_server_args,
-        )
 
-        note_server_args(server_args)
         self._vp_runtime_enabled = vp_runtime_enabled()
 
     def _maybe_drain_fdvp_deferred_async_kv(
@@ -3371,8 +3359,6 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         reinit_attn_backend: bool = False,
         split_forward_count: int = 1,
     ) -> ModelRunnerOutput:
-        rebatching_completion = None
-        rebatching_pending = False
         if has_forward_context():
             ctx_mgr = contextlib.nullcontext()
         else:
@@ -3518,22 +3504,6 @@ class ModelRunner(ModelRunnerKVCacheMixin):
                 return ModelRunnerOutput(
                     logits_output=ret,
                     can_run_graph=can_run_graph,
-                    vp_rebatching_completion=rebatching_completion,
-                    vp_rebatching_pending=rebatching_pending,
-                    vp_route_mask=getattr(self, "_vp_route_mask_output", None),
-                    vp_route_executed=getattr(
-                        self, "_vp_route_executed_output", False
-                    ),
-                    vp_route_is_project=getattr(
-                        self, "_vp_route_is_project_output", False
-                    ),
-                    vp_route_advance_count=getattr(
-                        self, "_vp_route_advance_count_output", 0
-                    ),
-                    vp_route_layer=getattr(self, "_vp_route_layer_output", -1),
-                    vp_route_used_attention=getattr(
-                        self, "_vp_route_used_attention_output", False
-                    ),
                 )
             finally:
                 # (c3) both stamps + the attention pairing reset after the pass
@@ -3603,8 +3573,6 @@ class ModelRunner(ModelRunnerKVCacheMixin):
                 forward_batch.positions
                 if (
                     forward_batch.forward_mode.is_decode()
-                    or forward_batch.forward_mode == ForwardMode.VP_BLOCK
-                    or forward_batch.forward_mode == ForwardMode.VP_V2_STAGE
                 )
                 else forward_batch.seq_lens - 1
             ),

@@ -15,7 +15,6 @@ from typing import Mapping, Sequence
 import hashlib
 import json
 import math
-import triton
 import os
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Optional
@@ -24,64 +23,20 @@ from sglang.srt.vpipe.common import (
     regime_switch_config,
 )
 from sglang.srt.vpipe.env import (
-    FD_ACTIVE_PHASES_ENV,
     FD_COMMIT_OVERLAP_ENV,
-    FD_COMPACT_CAPACITY_FRACTION_ENV,
-    FD_COMPACT_CAPACITY_MULTIPLE_ENV,
-    FD_COMPACT_ENABLED_ENV,
-    FD_COMPACT_MIN_ROWS_ENV,
-    FD_COMPACT_O_PROJ_ENV,
-    FD_COMPACT_O_PROJ_LAYERS_ENV,
-    FD_COMPACT_O_PROJ_MIN_ROWS_ENV,
-    FD_COMPACT_PHASES_ENV,
-    FD_COMPACT_Q_PROJ_ENV,
-    FD_COMPACT_ROUTED_QKV_ENV,
     FD_CONDITIONAL_BRANCH_COUNTERS_ENV,
     FD_CONDITIONAL_GRAPH_ENV,
-    FD_CONDITIONAL_GRAPH_HELPER_ENV,
     FD_CONDITIONAL_MAX_ROWS_ENV,
     FD_CONDITIONAL_PRODUCTION_ALL_RUN_ENV,
-    FD_CONTIGUOUS_ROUTED_QKV_ENV,
     FD_DEFER_PROJECT_KV_DIAGNOSTIC_STAGE_ENV,
-    FD_DEFER_PROJECT_KV_ENV,
-    FD_DEVICE_ROUTE_DIGEST_ENV,
-    FD_DEVICE_ROUTE_TAPE_ENV,
-    FD_DUAL_COMPACT_MIN_ROWS_ENV,
-    FD_EAGER_SEMANTIC_DEBUG_ENV,
-    FD_EXECUTION_DIRECT_EAGER,
     FD_EXECUTION_FULL_GRAPH,
-    FD_EXECUTION_MODE_ENV,
-    FD_FORCED_ALL_RUN_FASTPATH_ENV,
-    FD_FORCED_ALL_RUN_PRODUCTION_ATTN_ENV,
-    FD_FORCE_ROUTE_ENV,
-    FD_FUSED_EVIDENCE_ENV,
-    FD_LAYER_COUNTERS_ENV,
-    FD_LAYER_POLICIES_ENV,
-    FD_LOW_ROW_MAX_ROWS_ENV,
-    FD_LOW_ROW_POLICY_ENV,
-    FD_MAPPED_DECODE_ATTN_ENV,
-    FD_MASKED_DECODE_ATTN_ENV,
-    FD_PREFILL_GROUPED_MLP_ENV,
     FD_REPAIR_GROUP_SIZE_ENV,
-    FD_ROUTED_QKV_CAPACITIES_ENV,
-    FD_ROUTED_QKV_CAPACITY_MULTIPLE_ENV,
-    FD_ROUTED_QKV_MIN_ROWS_ENV,
-    FD_ROUTE_ACCOUNTING_ENV,
-    FD_SCHEDULER_CONVERGENCE_ENV,
-    FD_VIRTUAL_COHORT_ENV,
-    FD_WEIGHTED_SCATTER_ENV,
     FULL_GRAPH_CAPTURE_SYNTHETIC_RID_BASE,
     _BINARY_COHORT_CONFIG_DIGEST,
     _BINARY_COHORT_LAYERS,
     _BINARY_COHORT_STATS,
-    _CONFLICTING_FULL_GRAPH_ENV,
     _MASKED_DECODE_REQUIRED_BACKEND,
-    _VALID_ACTIVE_PHASES,
     _VALID_DEFER_PROJECT_KV_DIAGNOSTIC_STAGES,
-    _VALID_EXECUTION_MODES,
-    _VALID_FORCED_ROUTES,
-    _VALID_LAYER_POLICIES,
-    _VALID_LOW_ROW_POLICIES,
 )
 from sglang.srt.vpipe.kernel import (
     weighted_scatter,
@@ -143,14 +98,13 @@ from sglang.srt.vpipe.coverage import (
 from sglang.srt.vpipe.regime import (
     regime_switch_zero_counters,
 )
-from sglang.srt.vpipe.route_tape import (
+from sglang.srt.vpipe.coverage import (
     _c3_counters,
 )
 
 
 _cached: Optional[bool] = None
 _VP_ENV_PREFIXES = ("SGLANG_FD_", "SGLANG_VP_")
-_server_args_enabled: bool = False
 def per_boot_ladder_hash(capture_bs: Sequence[int]) -> str:
     """Stable hash of the realized ladder (boot-contingency evidence, SS7.7)."""
 
@@ -257,78 +211,6 @@ def coverage_dense_runtime_attestation(model_runner: Any) -> Optional[dict[str, 
             "recapture_events": list(counters.recapture_events),
         },
     }
-def _env_enabled(name: str, default: str = "0") -> bool:
-    return os.environ.get(name, default) == "1"
-def _env_int(name: str, default: int) -> int:
-    try:
-        return int(os.environ.get(name, str(default)) or str(default))
-    except ValueError:
-        return default
-def _v1_runtime_attestation(scheduler: Any) -> dict[str, Any]:
-    enabled = bool(getattr(scheduler, "vp_enabled", False))
-    grid = getattr(scheduler, "vp_grid", None)
-    async_enabled = _env_enabled("SGLANG_FD_VP_ASYNC_KV")
-    batched_enabled = _env_enabled("SGLANG_VP_ASYNC_KV_BATCHED")
-    return {
-        "scheduler": {
-            "enabled": enabled,
-            "block_size": getattr(grid, "block_size", None) if enabled else None,
-            "span": getattr(scheduler, "vp_span", None) if enabled else None,
-            "generic_router_disabled": bool(
-                getattr(scheduler, "vp_disable_router", False)
-            ),
-            "stage_scheduler_enabled": bool(
-                getattr(scheduler, "vp_stage_sched", False)
-            ),
-            "stage_policy": getattr(scheduler, "vp_stage_policy", None),
-            "stage_fuse_mixed": bool(
-                getattr(scheduler, "vp_stage_fuse_mixed", False)
-            ),
-        },
-        "flexidepth": {
-            "project_only": _env_enabled("SGLANG_FD_VP_PROJECT"),
-            "router_graph": {
-                "enabled": _env_enabled("SGLANG_FD_VP_ROUTER_GRAPH"),
-                "max_rows": _env_int("SGLANG_FD_VP_ROUTER_GRAPH_MAX_ROWS", 64),
-                "max_entries": _env_int(
-                    "SGLANG_FD_VP_ROUTER_GRAPH_MAX_ENTRIES", 4
-                ),
-            },
-            "stage_route": {
-                "enabled": bool(getattr(scheduler, "vp_fd_stage_route", False)),
-                "fuse_homogeneous": _env_enabled(
-                    "SGLANG_FD_VP_STAGE_ROUTE_FUSE_HOMOGENEOUS"
-                ),
-                "runahead": _env_enabled("SGLANG_FD_VP_STAGE_ROUTE_RUNAHEAD"),
-            },
-            "async_kv": {
-                "enabled": async_enabled,
-                "defer_drain": _env_enabled(
-                    "SGLANG_FD_VP_ASYNC_KV_DEFER_DRAIN"
-                ),
-                "scoped": async_enabled
-                and _env_enabled("SGLANG_FD_VP_ASYNC_KV_SCOPED", "1"),
-                "mixed_decode": _env_enabled(
-                    "SGLANG_FD_VP_MIXED_DECODE_ASYNC_KV"
-                ),
-                "batched": batched_enabled,
-                "token_launch": batched_enabled
-                and _env_enabled("SGLANG_VP_ASYNC_KV_BATCHED_TOKEN_LAUNCH"),
-                "grouped_event": batched_enabled
-                and _env_enabled("SGLANG_VP_ASYNC_KV_GROUPED_EVENT"),
-                "repair_graph": batched_enabled
-                and _env_enabled("SGLANG_VP_ASYNC_KV_REPAIR_GRAPH"),
-                "repair_graph_max_rows": _env_int(
-                    "SGLANG_VP_ASYNC_KV_REPAIR_GRAPH_MAX_ROWS", 64
-                ),
-                "repair_graph_max_entries": _env_int(
-                    "SGLANG_VP_ASYNC_KV_REPAIR_GRAPH_MAX_ENTRIES", 64
-                ),
-                "kv_only_qkv": _env_enabled("SGLANG_VP_KV_ONLY_QKV")
-                or _env_enabled("SGLANG_FD_VP_ALL_SKIP_KV_ONLY_QKV"),
-            },
-        },
-    }
 def scheduler_runtime_attestation(scheduler: Any) -> dict[str, Any]:
     model_runner = scheduler.tp_worker.model_runner
     model = model_runner.model
@@ -357,377 +239,7 @@ def scheduler_runtime_attestation(scheduler: Any) -> dict[str, Any]:
             loaded_layer_count=len(model_flexidepth.get("loaded_layers", ())),
         )
 
-    stage_runtime_enabled = bool(getattr(scheduler, "vp_v2_enabled", False))
-    stage_runtime_version = int(getattr(scheduler, "vp_runtime_version", 2))
-    stage_runtime = None
-    if stage_runtime_enabled:
-        config = scheduler.vp_v2_config
-        snapshot = scheduler.vp_v2_stage_scheduler.snapshot()
-        tracer = getattr(model_runner, "vp_v2_trace", None)
-        trace_state = (
-            tracer.attestation()
-            if tracer is not None
-            else {
-                "enabled": False,
-                "request_id": None,
-                "token_epoch_start": 0,
-                "token_epoch_end": 0,
-                "selected_tensors": 0,
-                "flushed": False,
-            }
-        )
-        graph_runner = getattr(model_runner, "vp_v2_graph_runner", None)
-        graph_state = (
-            graph_runner.attestation()
-            if graph_runner is not None
-            else {
-                "enabled": False,
-                "backend": "disabled",
-                "buckets": [],
-                "dummy_state_row": None,
-                "dummy_repair_slot": None,
-                "captured_keys": [],
-                "counters": {},
-                "rejection_reasons": {},
-            }
-        )
-        graph_counters = graph_state.get("counters", {})
-        completion_registry = getattr(
-            scheduler, "_vp_v4_completion_registry", None
-        )
-        epoch_slots = getattr(scheduler, "_vp_v4_epoch_slots", None)
-        epoch_leases = getattr(scheduler, "_vp_v4_epoch_leases", None)
-        device_executor = getattr(
-            model_runner, "_vp_v4_device_rebatching_executor", None
-        )
-        device_rebatching_state = {
-            "enabled": bool(
-                getattr(scheduler, "_vp_v4_device_rebatching", False)
-            ),
-            "completion_registry": (
-                completion_registry.snapshot()
-                if completion_registry is not None
-                else {}
-            ),
-            "foreground_epoch_slots": (
-                epoch_slots.snapshot() if epoch_slots is not None else {}
-            ),
-            "lease_rows": (
-                len(epoch_leases) if epoch_leases is not None else 0
-            ),
-            "pending_rounds": getattr(
-                scheduler, "_vp_v4_pending_rounds", 0
-            ),
-            "admission_gate": {
-                "admission_batches": getattr(
-                    scheduler, "_vp_v4_admission_batches", 0
-                ),
-                "continuation_ticks": getattr(
-                    scheduler, "_vp_v4_continuation_ticks", 0
-                ),
-                "static_drain_ticks": getattr(
-                    scheduler, "_vp_v4_static_drain_ticks", 0
-                ),
-                "admissions_with_live_ownership": getattr(
-                    scheduler, "_vp_v4_admissions_with_live_ownership", 0
-                ),
-                "bound_deferred_ticks": getattr(
-                    scheduler, "_vp_v4_bound_deferred_ticks", 0
-                ),
-                "bound_violation_admissions": getattr(
-                    scheduler, "_vp_v4_bound_violation_admissions", 0
-                ),
-            },
-            "executor": (
-                device_executor.attestation()
-                if device_executor is not None
-                else None
-            ),
-        }
-        completed_epochs = getattr(
-            scheduler, "_vp_v2_decode_token_epochs_completed", 0
-        )
-        whole_step_graph_epochs = getattr(
-            scheduler, "_vp_v2_decode_token_epochs_whole_step_graph", 0
-        )
-        whole_step_graph_coverage_pct = (
-            100.0 * whole_step_graph_epochs / completed_epochs
-            if completed_epochs
-            else 0.0
-        )
-        stage_runtime = {
-            "runtime_version": stage_runtime_version,
-            "config_fingerprint": config.fingerprint(),
-            "adapter": {
-                "name": config.adapter.name,
-                "dynamic": scheduler.vp_v2_adapter.capabilities.dynamic,
-                "max_repairs_per_token": (
-                    scheduler.vp_v2_adapter.capabilities.max_repairs_per_token
-                ),
-            },
-            "stage_count": len(scheduler.vp_v2_stage_scheduler.stages),
-            "scheduler": {
-                "policy": config.scheduler.policy,
-                "max_batch_size": config.scheduler.max_batch_size,
-                "coalesce_run_stages": config.scheduler.coalesce_run_stages,
-                "dispatch_buckets": snapshot["dispatch_buckets"],
-                "dispatch_row_limit": snapshot["dispatch_row_limit"],
-            },
-            "execution": {
-                "repair_mode": config.execution.repair_mode,
-                "enable_graphs": config.execution.enable_graphs,
-                "enable_overlap": config.execution.enable_overlap,
-                "enable_radix_cache": config.execution.enable_radix_cache,
-                "enable_full_run_fastpath": (
-                    getattr(config.execution, "enable_full_run_fastpath", False)
-                ),
-                "enable_static_all_run_reduction": (
-                    getattr(
-                        config.execution,
-                        "enable_static_all_run_reduction",
-                        False,
-                    )
-                ),
-                "enable_future_epoch_overlap": (
-                    config.execution.enable_future_epoch_overlap
-                ),
-                "enable_full_parent_cohort_fastpath": (
-                    getattr(
-                        config.execution,
-                        "enable_full_parent_cohort_fastpath",
-                        False,
-                    )
-                ),
-                "enable_lane_buffers": getattr(
-                    config.execution, "enable_lane_buffers", False
-                ),
-                "enable_full_run_fallback": getattr(
-                    config.execution, "enable_full_run_fallback", False
-                ),
-                "enable_device_rebatching": getattr(
-                    config.execution, "enable_device_rebatching", False
-                ),
-                "device_round_substeps": getattr(
-                    config.execution, "device_round_substeps", 1
-                ),
-                "device_complete_wave": getattr(
-                    config.execution, "device_complete_wave", False
-                ),
-                "device_mixed_action_wave": getattr(
-                    config.execution, "device_mixed_action_wave", False
-                ),
-                "device_host_tick_coalescing": getattr(
-                    config.execution,
-                    "device_host_tick_coalescing",
-                    False,
-                ),
-                "device_min_dispatch_rows": getattr(
-                    config.execution,
-                    "device_min_dispatch_rows",
-                    1,
-                ),
-                "device_max_wait_rounds": getattr(
-                    config.execution,
-                    "device_max_wait_rounds",
-                    0,
-                ),
-                "device_project_kv_mode": getattr(
-                    config.execution,
-                    "device_project_kv_mode",
-                    "inline",
-                ),
-                "device_min_graph_bucket_rows": getattr(
-                    config.execution,
-                    "device_min_graph_bucket_rows",
-                    1,
-                ),
-                "device_max_graph_bucket_rows": getattr(
-                    config.execution,
-                    "device_max_graph_bucket_rows",
-                    0,
-                ),
-            },
-            "trace": trace_state,
-            "stage_graphs": graph_state,
-            "device_rebatching": device_rebatching_state,
-            "virtual_cohort": {
-                "schema_version": 1,
-                "descriptor_available": True,
-                "execution_enabled": False,
-            },
-            "movement_accounting": {
-                "schema_version": 1,
-                "scope": "state-ledger-and-route-payloads",
-                "semantics": "logical-tensor-bytes-not-measured-hbm-transactions",
-                "by_lane": {
-                    lane: dict(sorted(counters.items()))
-                    for lane, counters in sorted(
-                        getattr(
-                            scheduler,
-                            "_vp_v2_materialization_by_lane",
-                            {},
-                        ).items()
-                    )
-                },
-            },
-            "host_timing": {
-                "enabled": getattr(
-                    scheduler, "_vp_v2_profile_stage_activity", False
-                ),
-                "semantics": (
-                    "perf-counter host elapsed; route includes existing "
-                    "device-to-host decision synchronization"
-                ),
-                "counters": dict(
-                    sorted(
-                        getattr(scheduler, "_vp_v2_host_timing", {}).items()
-                    )
-                ),
-                "route_stages": {
-                    str(stage_id): dict(sorted(counters.items()))
-                    for stage_id, counters in sorted(
-                        getattr(
-                            scheduler, "_vp_v2_route_stage_timing", {}
-                        ).items()
-                    )
-                },
-            },
-            "counters": {
-                "decode_token_epochs_admitted": getattr(
-                    scheduler, "_vp_v2_decode_token_epochs_admitted", 0
-                ),
-                "decode_token_epochs_completed": completed_epochs,
-                "mixed_prefill_decode_rows": getattr(
-                    scheduler, "_vp_v4_mixed_prefill_decode_rows", 0
-                ),
-                "retracted_decode_rows": getattr(
-                    scheduler, "_vp_v4_retracted_decode_rows", 0
-                ),
-                "decode_token_epochs_whole_step_graph": whole_step_graph_epochs,
-                "whole_step_graph_coverage_pct": whole_step_graph_coverage_pct,
-                "host_route_dispatches": getattr(
-                    scheduler, "_vp_v2_host_route_dispatches", 0
-                ),
-                "host_route_rows": getattr(
-                    scheduler, "_vp_v2_host_route_rows", 0
-                ),
-                "host_stage_dispatches": getattr(
-                    scheduler, "_vp_v2_host_stage_dispatches", 0
-                ),
-                "host_stage_rows": getattr(
-                    scheduler, "_vp_v2_host_stage_rows", 0
-                ),
-                "stage_graph_executions": int(
-                    graph_counters.get("executions", 0)
-                ),
-                "stage_graph_rows": int(graph_counters.get("rows", 0)),
-                "materialized_read_payload_bytes": getattr(
-                    scheduler, "_vp_v2_materialized_read_payload_bytes", 0
-                ),
-                "materialized_write_payload_bytes": getattr(
-                    scheduler, "_vp_v2_materialized_write_payload_bytes", 0
-                ),
-                "materialized_read_operations": getattr(
-                    scheduler, "_vp_v2_materialized_read_operations", 0
-                ),
-                "materialized_write_operations": getattr(
-                    scheduler, "_vp_v2_materialized_write_operations", 0
-                ),
-                "coalesced_dispatches": snapshot["coalesced_dispatches"],
-                "coalesced_stages": snapshot["coalesced_stages"],
-                "full_run_fastpath_dispatches": getattr(
-                    scheduler, "_vp_v2_full_run_fastpath_dispatches", 0
-                ),
-                "static_all_run_reduction_dispatches": getattr(
-                    scheduler,
-                    "_vp_v2_static_all_run_reduction_dispatches",
-                    0,
-                ),
-                "future_epoch_admissions": getattr(
-                    scheduler, "_vp_v2_future_epoch_admissions", 0
-                ),
-                "batch_full_finish_resets": getattr(
-                    scheduler, "_vp_v2_batch_full_finish_resets", 0
-                ),
-                "full_parent_prepare_dispatches": getattr(
-                    scheduler, "_vp_v2_full_parent_prepare_dispatches", 0
-                ),
-                "full_parent_execution_dispatches": getattr(
-                    scheduler, "_vp_v2_full_parent_execution_dispatches", 0
-                ),
-                "deferred_jump_rows": getattr(
-                    scheduler, "_vp_v2_deferred_jump_rows", 0
-                ),
-                "repair_enqueued_rows": getattr(
-                    scheduler, "_vp_v2_repair_enqueued_rows", 0
-                ),
-                "repair_dispatches": getattr(
-                    scheduler, "_vp_v2_repair_dispatches", 0
-                ),
-                "repair_rows": getattr(scheduler, "_vp_v2_repair_rows", 0),
-                "repair_canceled_rows": getattr(
-                    scheduler, "_vp_v2_repair_canceled_rows", 0
-                ),
-                "repair_parent_deferrals": getattr(
-                    scheduler, "_vp_v2_repair_parent_deferrals", 0
-                ),
-                "repair_repeated_parent_rows": getattr(
-                    scheduler, "_vp_v2_repair_repeated_parent_rows", 0
-                ),
-                "repair_slot_capacity": getattr(
-                    scheduler, "_vp_v2_repair_slot_capacity", 0
-                ),
-                "repair_slot_high_watermark": getattr(
-                    scheduler, "_vp_v2_repair_slot_high_watermark", 0
-                ),
-                "repair_slots_in_use": len(
-                    getattr(scheduler, "_vp_v2_repair_slots_in_use", ())
-                ),
-                "route_run_rows": getattr(scheduler, "_vp_v2_route_run_rows", 0),
-                "route_jump_rows": getattr(
-                    scheduler, "_vp_v2_route_jump_rows", 0
-                ),
-                "route_veto_rows": getattr(
-                    scheduler, "_vp_v2_route_veto_rows", 0
-                ),
-                "route_digest_schema": getattr(
-                    scheduler, "_vp_v2_route_digest_schema", 1
-                ),
-                "route_digest_xor": format(
-                    getattr(scheduler, "_vp_v2_route_digest_xor", 0), "064x"
-                ),
-                "route_digest_sum": format(
-                    getattr(scheduler, "_vp_v2_route_digest_sum", 0), "064x"
-                ),
-                "route_audit_token_epochs": getattr(
-                    scheduler, "_vp_v2_route_audit_token_epochs", 0
-                ),
-                "route_audit_rows": getattr(
-                    scheduler, "_vp_v2_route_audit_rows", 0
-                ),
-                "route_audit_excluded_health_rows": getattr(
-                    scheduler,
-                    "_vp_v2_route_audit_excluded_health_rows",
-                    0,
-                ),
-                "route_audit_digest_xor": format(
-                    getattr(scheduler, "_vp_v2_route_audit_digest_xor", 0),
-                    "064x",
-                ),
-                "route_audit_digest_sum": format(
-                    getattr(scheduler, "_vp_v2_route_audit_digest_sum", 0),
-                    "064x",
-                ),
-                "final_dispatches_with_pending_repairs": snapshot.get(
-                    "final_dispatches_with_pending_repairs", 0
-                ),
-            },
-            "state_contracts": snapshot.get("state_contracts", {}),
-            "state_actions": snapshot.get("state_actions", {}),
-        }
 
-    v2_enabled = stage_runtime_enabled and stage_runtime_version == 2
-    v4_enabled = stage_runtime_enabled and stage_runtime_version == 4
 
     # [W1] Thread real per-body regime-switch pass counts into the (identity-
     # stripped) regime_switch.counters block when the model exposes them; falls
@@ -750,16 +262,6 @@ def scheduler_runtime_attestation(scheduler: Any) -> dict[str, Any]:
 
     result = {
         "schema_version": 1,
-        "v1_scheduler_enabled": bool(getattr(scheduler, "vp_enabled", False)),
-        "v1_stage_scheduler_enabled": bool(
-            getattr(scheduler, "vp_stage_sched", False)
-        ),
-        "v1_stage_policy": getattr(scheduler, "vp_stage_policy", None),
-        "v1": _v1_runtime_attestation(scheduler),
-        "v2_scheduler_enabled": v2_enabled,
-        "v2": stage_runtime if v2_enabled else None,
-        "v4_scheduler_enabled": v4_enabled,
-        "v4": stage_runtime if v4_enabled else None,
         "v3_full_graph_enabled": v3_full_graph_enabled,
         "v3_full_graph": v3_full_graph,
         "regime_switch": regime_switch_attestation(counters=regime_counters),
@@ -775,44 +277,6 @@ def scheduler_runtime_attestation(scheduler: Any) -> dict[str, Any]:
     if fd_c3 is not None:
         result["fd_c3"] = fd_c3
     return result
-def register_captured_route_tape(
-    *,
-    shadow: Optional[Any],
-    forward_batch: Any,
-    shape_key: Any,
-    captured_tapes: dict[Any, Any],
-) -> None:
-    """Retain the graph-owned tape that replay updates for one shape."""
-
-    if shadow is None:
-        return
-    tape = getattr(
-        forward_batch,
-        "fd_full_graph_device_route_tape",
-        None,
-    )
-    if tape is None:
-        raise RuntimeError(
-            "rebatching shadow capture requires a device route tape"
-        )
-    tape.require_complete()
-    captured_tapes[shape_key] = tape
-def replay_captured_route_tape(
-    *,
-    shadow: Optional[Any],
-    shape_key: Any,
-    captured_tapes: Mapping[Any, Any],
-) -> None:
-    """Admit the complete route tape immediately after whole-graph replay."""
-
-    if shadow is None:
-        return
-    tape = captured_tapes.get(shape_key)
-    if tape is None:
-        raise RuntimeError(
-            "rebatching shadow replay has no captured route tape"
-        )
-    shadow.observe(tape)
 class ReqVPMixin:
     def init_vp(self: "Req", enabled: bool = False) -> None:
         self.vp_enabled: bool = enabled
@@ -837,7 +301,7 @@ def vp_runtime_enabled() -> bool:
 
     global _cached
     if _cached is None:
-        _cached = _server_args_enabled or _env_scan()
+        _cached = _env_scan()
     return _cached
 def full_graph_conditional_graph_enabled(
     environ: Optional[Mapping[str, str]] = None,

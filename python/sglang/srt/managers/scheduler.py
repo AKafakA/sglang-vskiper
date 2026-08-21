@@ -3248,10 +3248,7 @@ class Scheduler(
                         batch_result = self.model_worker.forward_batch_generation(
                             batch, **fwd_kwargs
                         )
-                        if batch.spec_algorithm.is_none() and not (
-                            batch.forward_mode == ForwardMode.VP_V2_STAGE
-                            and not batch.vp_v2_is_final
-                        ):
+                        if batch.spec_algorithm.is_none():
                             self.future_map.publish(future_indices, batch.seq_lens + 1)
                         # Park any refs the worker wants kept alive 2 iters
                         # (cross-stream tensor lifetime; pinned in the same
@@ -3274,17 +3271,9 @@ class Scheduler(
                                 forward_done,
                                 batch.out_cache_loc,
                             )
-                        # Intermediate V2 stages intentionally have no logits or
-                        # sampled token, so there is no result payload to copy.
-                        tokenless_v2_stage = (
-                            batch.forward_mode == ForwardMode.VP_V2_STAGE
-                            and not batch.vp_v2_is_final
-                        )
                         # FIXME(lsyin): maybe move this to forward_batch_generation
-                        batch_result.copy_done = (
-                            None if tokenless_v2_stage else self.device_module.Event()
-                        )
-                        if batch_result.delay_sample_func is None and not tokenless_v2_stage:
+                        batch_result.copy_done = self.device_module.Event()
+                        if batch_result.delay_sample_func is None:
                             self._relay_forward_payload(future_indices, batch_result)
                             if _is_hip:
                                 # Cross-stream sync costs more than the tiny D2H it
@@ -3461,17 +3450,6 @@ class Scheduler(
         result: Union[GenerationBatchResult, EmbeddingBatchResult],
     ):
         self.publish_load_snapshot(force=batch.forward_mode.is_extend())
-
-        if getattr(result, "vp_rebatching_completion", None) is not None:
-            return self.process_batch_result_vp_rebatching(batch, result)
-
-        if batch.forward_mode == ForwardMode.VP_BLOCK:
-            # Virtual Pipelining: intermediate block advances the cursor (no token); the
-            # final block processes as a normal decode step (sample already done).
-            return self.process_batch_result_vp(batch, result)
-
-        if batch.forward_mode == ForwardMode.VP_V2_STAGE:
-            return self.process_batch_result_vp_v2(batch, result)
 
         if batch.forward_mode.is_decode():
             self.batch_result_processor.process_batch_result_decode(batch, result)

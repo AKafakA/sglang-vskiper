@@ -819,14 +819,6 @@ class ServerArgs:
         int,
         "Run multiple continuous decoding steps to reduce scheduling overhead. This can potentially increase throughput but may also increase time-to-first-token latency. The default value is 1, meaning only run one decoding step at a time.",
     ] = 1
-    vp_v2_config: A[
-        Optional[str],
-        "Path to a strict Virtual Pipelining V2 JSON configuration. The runtime is inert when unset.",
-    ] = None
-    vp_v4_config: A[
-        Optional[str],
-        "Path to a strict split-stage Virtual Pipelining V4 JSON configuration. The runtime is inert when unset.",
-    ] = None
     scheduler_recv_interval: A[
         int,
         "The interval to poll requests in scheduler. Can be set to >1 to reduce the overhead of this.",

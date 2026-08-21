@@ -1012,7 +1012,7 @@ def fd_execute_project_kv_repair_full_graph(
                     capacity=project_capacity,
                 )
             else:
-                from sglang.srt.vp.virtual_cohort import mapped_linear
+                from sglang.srt.vpipe.cohort import mapped_linear
 
                 mapped_linear(
                     hidden_states,

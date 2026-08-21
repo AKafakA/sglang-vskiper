@@ -43,14 +43,6 @@ class GenerationBatchResult:
     num_correct_drafts: int = 0  # no bonus included
     num_correct_drafts_per_req_cpu: Optional[List[int]] = None
     can_run_cuda_graph: bool = False
-    vp_rebatching_completion: Optional[Any] = None
-    vp_rebatching_pending: bool = False
-    vp_route_mask: Optional[torch.Tensor] = None
-    vp_route_executed: bool = False
-    vp_route_is_project: bool = False
-    vp_route_advance_count: int = 0
-    vp_route_layer: int = -1
-    vp_route_used_attention: bool = False
 
     # PP skip output comm: True when output send/recv was skipped and
     # next_token_ids are placeholder zeros. Used by process_batch_result_prefill
@@ -134,8 +126,6 @@ class GenerationBatchResult:
                 self.logits_output.hidden_states
             )
         self.next_token_ids = _async_d2h(self.next_token_ids)
-        if self.vp_route_mask is not None:
-            self.vp_route_mask = _async_d2h(self.vp_route_mask)
 
         if self.accept_lens is not None:
             self.accept_lens = _async_d2h(self.accept_lens)
