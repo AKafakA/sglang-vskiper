@@ -1,0 +1,1620 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Vast A100 run ladder for VP ASPLOS validation.
+# Defaults to dry-run and refuses non-/workspace checkouts unless explicitly
+# overridden for local syntax checks.
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ACTION="${ACTION:-preflight}"
+DRY_RUN="${DRY_RUN:-1}"
+MODEL="${MODEL:-Qwen/Qwen3-8B}"
+PROFILE_FILE="${PROFILE_FILE:-$ROOT/test/vp/qwen3_8b_layer_importance.json}"
+OUT_BASE="${OUT_BASE:-/workspace}"
+SGBENCH_MODES_WAS_SET="${SGBENCH_MODES+x}"
+SGBENCH_DATASET_WAS_SET="${SGBENCH_DATASET+x}"
+SGBENCH_NUM_PROMPTS_WAS_SET="${SGBENCH_NUM_PROMPTS+x}"
+SGBENCH_MAX_CONCURRENCY_WAS_SET="${SGBENCH_MAX_CONCURRENCY+x}"
+SGBENCH_BACKEND_WAS_SET="${SGBENCH_BACKEND+x}"
+SGBENCH_CONTEXT_LEN_WAS_SET="${SGBENCH_CONTEXT_LEN+x}"
+SGBENCH_OUTPUT_LEN_WAS_SET="${SGBENCH_OUTPUT_LEN+x}"
+SGBENCH_MAX_RUNNING_REQUESTS_WAS_SET="${SGBENCH_MAX_RUNNING_REQUESTS+x}"
+SGBENCH_CHUNKED_PREFILL_SIZE_WAS_SET="${SGBENCH_CHUNKED_PREFILL_SIZE+x}"
+SGBENCH_EXTRA_REQUEST_BODY="${SGBENCH_EXTRA_REQUEST_BODY:-}"
+SGBENCH_DATASET_PATH="${SGBENCH_DATASET_PATH:-}"
+SGBENCH_PORT="${SGBENCH_PORT:-30000}"
+SGBENCH_OUT_DIR="${SGBENCH_OUT_DIR:-$OUT_BASE/sgbench_vp}"
+SGBENCH_MODES="${SGBENCH_MODES:-vanilla,vanilla_matched,dynamic}"
+SGBENCH_DATASET="${SGBENCH_DATASET:-random}"
+SGBENCH_NUM_PROMPTS="${SGBENCH_NUM_PROMPTS:-2048}"
+SGBENCH_MAX_CONCURRENCY="${SGBENCH_MAX_CONCURRENCY:-}"
+SGBENCH_REQUEST_RATE="${SGBENCH_REQUEST_RATE:-inf}"
+SGBENCH_SEED="${SGBENCH_SEED:-42}"
+SGBENCH_CONTEXT_LEN="${SGBENCH_CONTEXT_LEN:-8192}"
+SGBENCH_OUTPUT_LEN="${SGBENCH_OUTPUT_LEN:-128}"
+SGBENCH_RANDOM_INPUT_LEN="${SGBENCH_RANDOM_INPUT_LEN:-512}"
+SGBENCH_RANDOM_OUTPUT_LEN="${SGBENCH_RANDOM_OUTPUT_LEN:-128}"
+SGBENCH_RANDOM_RANGE_RATIO="${SGBENCH_RANDOM_RANGE_RATIO:-1.0}"
+SGBENCH_WARMUP_REQUESTS="${SGBENCH_WARMUP_REQUESTS:-32}"
+SGBENCH_BACKEND="${SGBENCH_BACKEND:-sglang-native}"
+SGBENCH_REPS="${SGBENCH_REPS:-3}"
+SGBENCH_EVIDENCE_CLASS="${SGBENCH_EVIDENCE_CLASS:-diagnostic}"
+SGBENCH_LOAD_SAMPLE_INTERVAL_MS="${SGBENCH_LOAD_SAMPLE_INTERVAL_MS:-1000}"
+SGBENCH_SERVER_CAP_PURPOSE="${SGBENCH_SERVER_CAP_PURPOSE:-auto}"
+SGBENCH_PROFILE="${SGBENCH_PROFILE:-0}"
+SGBENCH_PROFILE_BY_STAGE="${SGBENCH_PROFILE_BY_STAGE:-0}"
+SGBENCH_PROFILE_NUM_STEPS="${SGBENCH_PROFILE_NUM_STEPS:-}"
+SGBENCH_PROFILE_OUTPUT_DIR="${SGBENCH_PROFILE_OUTPUT_DIR:-}"
+SGBENCH_PROFILE_PREFIX="${SGBENCH_PROFILE_PREFIX:-}"
+SGBENCH_ORDER_POLICY="${SGBENCH_ORDER_POLICY:-counterbalanced}"
+SGBENCH_BASELINE_SERVER_PROFILE="${SGBENCH_BASELINE_SERVER_PROFILE:-production}"
+SGBENCH_CANDIDATE_SERVER_PROFILE="${SGBENCH_CANDIDATE_SERVER_PROFILE:-breakable_dynamic}"
+SGBENCH_PREFILL_POLICY="${SGBENCH_PREFILL_POLICY:-hash}"
+SGBENCH_PREFILL_TOPKS="${SGBENCH_PREFILL_TOPKS:-8,12,0}"
+SGBENCH_PREFILL_BLOCK_SIZE="${SGBENCH_PREFILL_BLOCK_SIZE:-1}"
+SGBENCH_PREFILL_VETO_TAGS="${SGBENCH_PREFILL_VETO_TAGS:-}"
+SGBENCH_PREFILL_VETO_TEXT_RE="${SGBENCH_PREFILL_VETO_TEXT_RE:-}"
+SGBENCH_DECODE_TOPKS="${SGBENCH_DECODE_TOPKS:-$SGBENCH_PREFILL_TOPKS}"
+SGBENCH_DECODE_POLICY="${SGBENCH_DECODE_POLICY:-external}"
+SGBENCH_DECODE_SPAN="${SGBENCH_DECODE_SPAN:-4}"
+SGBENCH_DECODE_BLOCK_SIZE="${SGBENCH_DECODE_BLOCK_SIZE:-$SGBENCH_PREFILL_BLOCK_SIZE}"
+SGBENCH_DECODE_GATHER="${SGBENCH_DECODE_GATHER:-1}"
+SGBENCH_DECODE_COHORT="${SGBENCH_DECODE_COHORT:-0}"
+SGBENCH_DECODE_VP_GRAPH="${SGBENCH_DECODE_VP_GRAPH:-0}"
+SGBENCH_DECODE_STAGE_SCHED="${SGBENCH_DECODE_STAGE_SCHED:-0}"
+SGBENCH_DECODE_STAGE_POLICY="${SGBENCH_DECODE_STAGE_POLICY:-deepest}"
+SGBENCH_DECODE_STAGE_BLOCK_SYNC="${SGBENCH_DECODE_STAGE_BLOCK_SYNC:-0}"
+SGBENCH_DECODE_STAGE_FUSE_MIXED="${SGBENCH_DECODE_STAGE_FUSE_MIXED:-1}"
+SGBENCH_VP_ASYNC_KV="${SGBENCH_VP_ASYNC_KV:-0}"
+SGBENCH_VP_ASYNC_KV_DEFER_DRAIN="${SGBENCH_VP_ASYNC_KV_DEFER_DRAIN:-0}"
+SGBENCH_VP_ASYNC_KV_SCOPED="${SGBENCH_VP_ASYNC_KV_SCOPED:-1}"
+SGBENCH_VP_ASYNC_KV_BATCHED="${SGBENCH_VP_ASYNC_KV_BATCHED:-0}"
+SGBENCH_VP_ASYNC_KV_BATCHED_MAX_ROWS="${SGBENCH_VP_ASYNC_KV_BATCHED_MAX_ROWS:-0}"
+SGBENCH_VP_ASYNC_KV_BATCHED_TOKEN_LAUNCH="${SGBENCH_VP_ASYNC_KV_BATCHED_TOKEN_LAUNCH:-0}"
+SGBENCH_VP_ASYNC_KV_GROUPED_EVENT="${SGBENCH_VP_ASYNC_KV_GROUPED_EVENT:-0}"
+SGBENCH_VP_ASYNC_KV_REPAIR_GRAPH="${SGBENCH_VP_ASYNC_KV_REPAIR_GRAPH:-0}"
+SGBENCH_VP_ASYNC_KV_REPAIR_GRAPH_MAX_ROWS="${SGBENCH_VP_ASYNC_KV_REPAIR_GRAPH_MAX_ROWS:-64}"
+SGBENCH_VP_ASYNC_KV_REPAIR_GRAPH_MAX_ENTRIES="${SGBENCH_VP_ASYNC_KV_REPAIR_GRAPH_MAX_ENTRIES:-64}"
+SGBENCH_VP_ASYNC_KV_LOOKAHEAD_RELEASE="${SGBENCH_VP_ASYNC_KV_LOOKAHEAD_RELEASE:-0}"
+SGBENCH_VP_ASYNC_KV_RELEASE_LAYER="${SGBENCH_VP_ASYNC_KV_RELEASE_LAYER:-16}"
+SGBENCH_VP_KV_ONLY_QKV="${SGBENCH_VP_KV_ONLY_QKV:-0}"
+SGBENCH_VP_FOREGROUND_STREAM_PRIORITY="${SGBENCH_VP_FOREGROUND_STREAM_PRIORITY:-0}"
+SGBENCH_DECODE_VETO_TAGS="${SGBENCH_DECODE_VETO_TAGS:-}"
+SGBENCH_DECODE_VETO_TEXT_RE="${SGBENCH_DECODE_VETO_TEXT_RE:-}"
+SGBENCH_FD_VP_TRACE="${SGBENCH_FD_VP_TRACE:-0}"
+SGBENCH_FD_VP_TRACE_TIMING="${SGBENCH_FD_VP_TRACE_TIMING:-0}"
+SGBENCH_FD_VP_TRACE_EVERY="${SGBENCH_FD_VP_TRACE_EVERY:-256}"
+SGBENCH_FD_VP_TRACE_FILE="${SGBENCH_FD_VP_TRACE_FILE:-}"
+SGBENCH_FD_VP_TRACE_MASKS="${SGBENCH_FD_VP_TRACE_MASKS:-0}"
+SGBENCH_FD_VP_TRACE_MASK_CAP="${SGBENCH_FD_VP_TRACE_MASK_CAP:-4096}"
+SGBENCH_FD_VP_MIXED_DECODE_SUBBATCH="${SGBENCH_FD_VP_MIXED_DECODE_SUBBATCH:-0}"
+SGBENCH_FD_VP_DECODE_SUBBATCH_CACHE="${SGBENCH_FD_VP_DECODE_SUBBATCH_CACHE:-1}"
+SGBENCH_FD_VP_MINIMAL_KV_SUBBATCH="${SGBENCH_FD_VP_MINIMAL_KV_SUBBATCH:-0}"
+SGBENCH_FD_VP_TRITON_GPU_SUBBATCH="${SGBENCH_FD_VP_TRITON_GPU_SUBBATCH:-0}"
+SGBENCH_FD_VP_SCHED_GRAPH="${SGBENCH_FD_VP_SCHED_GRAPH:-0}"
+SGBENCH_FD_VP_ASYNC_KV="${SGBENCH_FD_VP_ASYNC_KV:-0}"
+SGBENCH_FD_VP_ASYNC_KV_DEFER_DRAIN="${SGBENCH_FD_VP_ASYNC_KV_DEFER_DRAIN:-0}"
+SGBENCH_FD_VP_ASYNC_KV_SCOPED="${SGBENCH_FD_VP_ASYNC_KV_SCOPED:-1}"
+SGBENCH_FD_VP_MIXED_DECODE_ASYNC_KV="${SGBENCH_FD_VP_MIXED_DECODE_ASYNC_KV:-0}"
+SGBENCH_FD_VP_MIXED_DECODE_ASYNC_MIN_ROWS="${SGBENCH_FD_VP_MIXED_DECODE_ASYNC_MIN_ROWS:-0}"
+SGBENCH_FD_VP_MIXED_DECODE_ASYNC_MIN_KEPT_ROWS="${SGBENCH_FD_VP_MIXED_DECODE_ASYNC_MIN_KEPT_ROWS:-0}"
+SGBENCH_FD_VP_MIXED_DECODE_ASYNC_MIN_SKIP_ROWS="${SGBENCH_FD_VP_MIXED_DECODE_ASYNC_MIN_SKIP_ROWS:-0}"
+SGBENCH_FD_VP_MIXED_DECODE_ASYNC_PATTERN_WARMUP="${SGBENCH_FD_VP_MIXED_DECODE_ASYNC_PATTERN_WARMUP:-0}"
+SGBENCH_FD_VP_MIXED_DECODE_ASYNC_PATTERN_SCOPE="${SGBENCH_FD_VP_MIXED_DECODE_ASYNC_PATTERN_SCOPE:-global}"
+SGBENCH_FD_VP_MIXED_DECODE_ASYNC_COHORT_TABLE="${SGBENCH_FD_VP_MIXED_DECODE_ASYNC_COHORT_TABLE:-0}"
+SGBENCH_FD_VP_MIXED_DECODE_ASYNC_COHORT_MAX_ENTRIES="${SGBENCH_FD_VP_MIXED_DECODE_ASYNC_COHORT_MAX_ENTRIES:-4096}"
+SGBENCH_FD_VP_GLOBAL_DECODE_SUBBATCH_CACHE="${SGBENCH_FD_VP_GLOBAL_DECODE_SUBBATCH_CACHE:-0}"
+SGBENCH_FD_VP_GLOBAL_DECODE_SUBBATCH_CACHE_MAX_ENTRIES="${SGBENCH_FD_VP_GLOBAL_DECODE_SUBBATCH_CACHE_MAX_ENTRIES:-512}"
+SGBENCH_FD_VP_MIXED_FULL_BATCH_SPLIT="${SGBENCH_FD_VP_MIXED_FULL_BATCH_SPLIT:-0}"
+SGBENCH_FD_VP_MIXED_POST_WEIGHT="${SGBENCH_FD_VP_MIXED_POST_WEIGHT:-0}"
+SGBENCH_FD_VP_MIXED_INPLACE_WEIGHT="${SGBENCH_FD_VP_MIXED_INPLACE_WEIGHT:-0}"
+SGBENCH_FD_VP_MIXED_PARALLEL_BRANCHES="${SGBENCH_FD_VP_MIXED_PARALLEL_BRANCHES:-0}"
+SGBENCH_FD_VP_MIXED_NEAR_ALL_RUN_FULL_MLP="${SGBENCH_FD_VP_MIXED_NEAR_ALL_RUN_FULL_MLP:-0}"
+SGBENCH_FD_VP_MIXED_NEAR_ALL_RUN_MAX_SKIP_ROWS="${SGBENCH_FD_VP_MIXED_NEAR_ALL_RUN_MAX_SKIP_ROWS:-1}"
+SGBENCH_FD_VP_MIXED_FULL_PROJECT_BASE="${SGBENCH_FD_VP_MIXED_FULL_PROJECT_BASE:-0}"
+SGBENCH_FD_VP_MIXED_REUSE_OUTPUT_BUFFER="${SGBENCH_FD_VP_MIXED_REUSE_OUTPUT_BUFFER:-0}"
+SGBENCH_FD_VP_MIXED_REUSE_OUTPUT_BUFFER_MAX_ENTRIES="${SGBENCH_FD_VP_MIXED_REUSE_OUTPUT_BUFFER_MAX_ENTRIES:-512}"
+SGBENCH_FD_VP_MIXED_SHAPE_LANE_BUFFERS="${SGBENCH_FD_VP_MIXED_SHAPE_LANE_BUFFERS:-0}"
+SGBENCH_FD_VP_MIXED_SHAPE_LANE_BUFFER_MAX_ENTRIES="${SGBENCH_FD_VP_MIXED_SHAPE_LANE_BUFFER_MAX_ENTRIES:-512}"
+SGBENCH_FD_VP_MIXED_SPLIT_GRAPH="${SGBENCH_FD_VP_MIXED_SPLIT_GRAPH:-0}"
+SGBENCH_FD_VP_MIXED_SPLIT_GRAPH_MAX_ENTRIES="${SGBENCH_FD_VP_MIXED_SPLIT_GRAPH_MAX_ENTRIES:-16}"
+SGBENCH_FD_VP_MIXED_SPLIT_GRAPH_MAX_ROWS="${SGBENCH_FD_VP_MIXED_SPLIT_GRAPH_MAX_ROWS:-64}"
+SGBENCH_FD_VP_MIXED_SPLIT_GRAPH_MIN_FREE_MB="${SGBENCH_FD_VP_MIXED_SPLIT_GRAPH_MIN_FREE_MB:-2048}"
+SGBENCH_FD_VP_STABLE_MIXED_SPLIT_BUFFERS="${SGBENCH_FD_VP_STABLE_MIXED_SPLIT_BUFFERS:-0}"
+SGBENCH_FD_VP_STABLE_MIXED_SPLIT_BUFFER_MAX_ENTRIES="${SGBENCH_FD_VP_STABLE_MIXED_SPLIT_BUFFER_MAX_ENTRIES:-128}"
+SGBENCH_FD_VP_ALL_SKIP_KV_ONLY_QKV="${SGBENCH_FD_VP_ALL_SKIP_KV_ONLY_QKV:-0}"
+SGBENCH_FD_VP_FUSED_ROUTER_DEC_HEAD="${SGBENCH_FD_VP_FUSED_ROUTER_DEC_HEAD:-0}"
+SGBENCH_FD_VP_ROUTER_GRAPH="${SGBENCH_FD_VP_ROUTER_GRAPH:-0}"
+SGBENCH_FD_VP_ROUTER_GRAPH_MAX_ROWS="${SGBENCH_FD_VP_ROUTER_GRAPH_MAX_ROWS:-64}"
+SGBENCH_FD_VP_ROUTER_GRAPH_MAX_ENTRIES="${SGBENCH_FD_VP_ROUTER_GRAPH_MAX_ENTRIES:-4}"
+SGBENCH_FD_VP_FUSED_PROJECT_INPUT="${SGBENCH_FD_VP_FUSED_PROJECT_INPUT:-0}"
+SGBENCH_FD_VP_STAGE_ROUTE="${SGBENCH_FD_VP_STAGE_ROUTE:-0}"
+SGBENCH_FD_VP_STAGE_ROUTE_FUSE_HOMOGENEOUS="${SGBENCH_FD_VP_STAGE_ROUTE_FUSE_HOMOGENEOUS:-0}"
+SGBENCH_FD_VP_STAGE_ROUTE_RUNAHEAD="${SGBENCH_FD_VP_STAGE_ROUTE_RUNAHEAD:-0}"
+SGBENCH_FD_VP_STAGE_ROUTE_MIN_SPLIT_SKIP_ROWS="${SGBENCH_FD_VP_STAGE_ROUTE_MIN_SPLIT_SKIP_ROWS:-1}"
+SGBENCH_FD_VP_STAGE_ROUTE_MIN_SPLIT_RUN_ROWS="${SGBENCH_FD_VP_STAGE_ROUTE_MIN_SPLIT_RUN_ROWS:-1}"
+SGBENCH_FD_VP_COALESCED_LAYER="${SGBENCH_FD_VP_COALESCED_LAYER:-0}"
+SGBENCH_FD_VP_COALESCED_MIN_SKIP_ROWS="${SGBENCH_FD_VP_COALESCED_MIN_SKIP_ROWS:-1}"
+SGBENCH_FD_VP_COALESCED_MIN_RUN_ROWS="${SGBENCH_FD_VP_COALESCED_MIN_RUN_ROWS:-1}"
+SGBENCH_MEM_FRACTION_STATIC="${SGBENCH_MEM_FRACTION_STATIC:-0.85}"
+SGBENCH_MAX_RUNNING_REQUESTS="${SGBENCH_MAX_RUNNING_REQUESTS:-}"
+SGBENCH_CHUNKED_PREFILL_SIZE="${SGBENCH_CHUNKED_PREFILL_SIZE:-4096}"
+SGBENCH_ATTENTION_BACKEND="${SGBENCH_ATTENTION_BACKEND:-}"
+SGBENCH_CUDA_GRAPH_MAX_BS_DECODE="${SGBENCH_CUDA_GRAPH_MAX_BS_DECODE:-}"
+SGBENCH_CUDA_GRAPH_MAX_BS_PREFILL="${SGBENCH_CUDA_GRAPH_MAX_BS_PREFILL:-}"
+FD_BASE_MODEL="${FD_BASE_MODEL:-NousResearch/Meta-Llama-3-8B-Instruct}"
+FD_CHECKPOINT="${FD_CHECKPOINT:-xuan-luo/FlexiDepth-Llama-3-8B-Instruct}"
+FD_WEIGHTS="${FD_WEIGHTS:-/dev/shm/flexidepth_router_weights.pt}"
+SGBENCH_SCORE_FILE="${SGBENCH_SCORE_FILE:-}"
+
+export HF_HOME="${HF_HOME:-/dev/shm/hf_vast}"
+export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-$HF_HOME}"
+export HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}"
+
+die() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+run_cmd() {
+  echo
+  echo "+ $*"
+  if [[ "$DRY_RUN" == "0" ]]; then
+    "$@"
+  fi
+}
+
+join_by() {
+  local IFS="$1"
+  shift
+  echo "$*"
+}
+
+require_vast_checkout() {
+  if [[ "${ALLOW_NON_VAST:-0}" != "1" && "$ROOT" != /workspace/sglang-vp* ]]; then
+    die "refusing to run outside /workspace/sglang-vp*; set ALLOW_NON_VAST=1 only for local dry-run/syntax checks"
+  fi
+}
+
+require_a100() {
+  if ! command -v nvidia-smi >/dev/null 2>&1; then
+    die "nvidia-smi not found; this must run on the Vast GPU node"
+  fi
+  local gpu_name
+  gpu_name="$(nvidia-smi --query-gpu=name --format=csv,noheader | head -n 1)"
+  echo "GPU: $gpu_name"
+  if [[ "${ALLOW_NON_A100:-0}" != "1" && "$gpu_name" != *"A100"* ]]; then
+    die "expected an A100 GPU; set ALLOW_NON_A100=1 only for a smoke check"
+  fi
+}
+
+require_cache_space() {
+  mkdir -p "$HF_HOME"
+  local free_kb
+  free_kb="$(df -Pk "$HF_HOME" | awk 'NR==2 {print $4}')"
+  echo "HF_HOME: $HF_HOME"
+  echo "TRANSFORMERS_CACHE: $TRANSFORMERS_CACHE"
+  echo "HF free GiB: $((free_kb / 1024 / 1024))"
+  if (( free_kb < 60 * 1024 * 1024 )); then
+    die "/dev/shm/hf has less than 60 GiB free; do not use overlay disk for Qwen3"
+  fi
+}
+
+require_profile_file() {
+  [[ -s "$PROFILE_FILE" ]] || die "missing PROFILE_FILE=$PROFILE_FILE"
+  echo "PROFILE_FILE: $PROFILE_FILE"
+}
+
+activate_env_if_present() {
+  if [[ -n "${SGLANG_VENV:-}" && -f "$SGLANG_VENV/bin/activate" ]]; then
+    # shellcheck disable=SC1091
+    source "$SGLANG_VENV/bin/activate"
+  elif [[ -f "$ROOT/.venv/bin/activate" ]]; then
+    # shellcheck disable=SC1091
+    source "$ROOT/.venv/bin/activate"
+  fi
+  export PYTHONPATH="$ROOT/python:${PYTHONPATH:-}"
+  cd "$ROOT"
+}
+
+preflight() {
+  require_vast_checkout
+  require_a100
+  require_cache_space
+  require_profile_file
+  activate_env_if_present
+  python - <<'PY'
+import os, sys
+print("python:", sys.executable)
+print("PYTHONPATH:", os.environ.get("PYTHONPATH"))
+print("HF_HOME:", os.environ.get("HF_HOME"))
+print("TRANSFORMERS_CACHE:", os.environ.get("TRANSFORMERS_CACHE"))
+PY
+}
+
+sgbench_effective_output_len() {
+  case "$SGBENCH_DATASET" in
+    random|random-ids) echo "$SGBENCH_RANDOM_OUTPUT_LEN" ;;
+    *) echo "$SGBENCH_OUTPUT_LEN" ;;
+  esac
+}
+
+validate_sgbench_protocol() {
+  local output_len
+  output_len="$(sgbench_effective_output_len)"
+  case "$SGBENCH_EVIDENCE_CLASS" in
+    smoke|diagnostic)
+      echo "NON_PERFORMANCE_RUN: evidence_class=$SGBENCH_EVIDENCE_CLASS"
+      echo "NON_PERFORMANCE_RUN: this artifact cannot accept or reject a performance candidate"
+      ;;
+    performance|headline)
+      die "$SGBENCH_EVIDENCE_CLASS evidence must use the manifested deployment plus test/vp/run_qps_evaluation.py; the generic ladder is diagnostic-only"
+      ;;
+    *)
+      die "unknown SGBENCH_EVIDENCE_CLASS=$SGBENCH_EVIDENCE_CLASS; expected smoke, diagnostic, performance, or headline"
+      ;;
+  esac
+  if [[ -n "$SGBENCH_MAX_RUNNING_REQUESTS" && "$SGBENCH_SERVER_CAP_PURPOSE" != "pressure" ]]; then
+    die "an explicit SGBENCH_MAX_RUNNING_REQUESTS requires SGBENCH_SERVER_CAP_PURPOSE=pressure"
+  fi
+}
+
+stage_qwen3() {
+  preflight
+  run_cmd python -c "from huggingface_hub import snapshot_download; print(snapshot_download('$MODEL'))"
+}
+
+stage_flexidepth() {
+  preflight
+  run_cmd python -c "from huggingface_hub import snapshot_download; print('base', snapshot_download('$FD_BASE_MODEL')); print('fd', snapshot_download('$FD_CHECKPOINT'))"
+  run_cmd env FD_W_OUT="$FD_WEIGHTS" python test/vp/extract_flexidepth_weights.py
+}
+
+smoke_decode() {
+  preflight
+  run_cmd env \
+    PROFILE_MODE=dynamic_row \
+    VP_AGREE_MODEL="$MODEL" \
+    CONC=8 \
+    MAXRUN=8 \
+    INLEN=512 \
+    NTOK=8 \
+    PROFILE_STEPS=2 \
+    PROFILE_OUT_DIR="$OUT_BASE/vp_decode_profiles_i231_smoke" \
+    PROFILE_ACTIVITIES=CPU,GPU \
+    WARMUP_CONC=8 \
+    WARMUP_NTOK=4 \
+    GRAPH=0 \
+    VP_GRAPH=1 \
+    VP_SPAN=4 \
+    DYN_DECODE_PROFILE_FILE="$PROFILE_FILE" \
+    DYN_DECODE_TOPKS=8,12,0 \
+    DYN_DECODE_POLICY=round_robin \
+    DYN_DECODE_GATHER=1 \
+    DYN_DECODE_BLOCK_SIZE=4 \
+    python test/vp/profile_decode_modes.py
+}
+
+profile_decode() {
+  preflight
+  run_cmd env \
+    PROFILE_MODE=dynamic_row \
+    VP_AGREE_MODEL="$MODEL" \
+    CONC=64 \
+    MAXRUN=128 \
+    INLEN=2048 \
+    NTOK=24 \
+    PROFILE_STEPS=8 \
+    PROFILE_OUT_DIR="$OUT_BASE/vp_decode_profiles_i231" \
+    PROFILE_ACTIVITIES=CPU,GPU \
+    WARMUP_CONC=64 \
+    WARMUP_NTOK=4 \
+    GRAPH=0 \
+    VP_GRAPH=1 \
+    VP_SPAN=4 \
+    DYN_DECODE_PROFILE_FILE="$PROFILE_FILE" \
+    DYN_DECODE_TOPKS=8,12,0 \
+    DYN_DECODE_POLICY=round_robin \
+    DYN_DECODE_GATHER=1 \
+    DYN_DECODE_BLOCK_SIZE=4 \
+    python test/vp/profile_decode_modes.py
+}
+
+ci_decode() {
+  preflight
+  run_cmd env \
+    VP_AGREE_MODEL="$MODEL" \
+    CELLS=2048:64 \
+    REPS=3 \
+    NTOK_A=8 \
+    NTOK_B=72 \
+    MAXRUN=128 \
+    GRAPH=0 \
+    VP_GRAPH=1 \
+    WARMUP_CONC=64 \
+    WARMUP_NTOK=4 \
+    VP_SPAN=4 \
+    VP_DECODE_MODE=dynamic \
+    DYN_DECODE_PROFILE_FILE="$PROFILE_FILE" \
+    DYN_DECODE_TOPKS=8,12,0 \
+    DYN_DECODE_POLICY=round_robin \
+    DYN_DECODE_GATHER=1 \
+    DYN_DECODE_BLOCK_SIZE=4 \
+    DYN_DECODE_COHORT=0 \
+    python test/vp/headline_ci.py
+}
+
+headline_gov() {
+  preflight
+  run_cmd env \
+    MODEL="$MODEL" \
+    TASKS=gov_report \
+    QN=50 \
+    MAXLEN=7000 \
+    GENLEN_CAP=64 \
+    CONC=12 \
+    REPS=3 \
+    MODES=vanilla,dynamic_all_jump \
+    DYN_SPEC_ENV=dynamic_layer_prefill \
+    SGLANG_VP_BLOCK_SIZE=1 \
+    SGLANG_VP_LAYER_PROFILE_FILE="$PROFILE_FILE" \
+    SGLANG_VP_LAYER_PROFILE_TOPKS=8,12,0 \
+    SGLANG_VP_PREFILL_POLICY=external \
+    VP_EXTERNAL_PROFILE_ASSIGN=balanced \
+    SGLANG_VP_LANEFUSE_GATHER=1 \
+    OUTDIR="$OUT_BASE/govreport_rankfile_layer_profile_topk8120_qn50_ci_i231" \
+    python test/vp/mixed_longbench_serving.py
+}
+
+headline_mixed() {
+  preflight
+  run_cmd env \
+    MODEL="$MODEL" \
+    TASKS=hotpotqa,gov_report \
+    QN=20 \
+    MAXLEN=7000 \
+    GENLEN_CAP=64 \
+    CONC=12 \
+    REPS=3 \
+    MODES=vanilla,dynamic_tag_veto \
+    DYN_SPEC_ENV=dynamic_layer_prefill \
+    SGLANG_VP_BLOCK_SIZE=1 \
+    SGLANG_VP_LAYER_PROFILE_FILE="$PROFILE_FILE" \
+    SGLANG_VP_LAYER_PROFILE_TOPKS=8,12,0 \
+    SGLANG_VP_PREFILL_POLICY=external \
+    VP_EXTERNAL_PROFILE_ASSIGN=balanced \
+    SGLANG_VP_PREFILL_VETO_TAGS=qa \
+    SGLANG_VP_LANEFUSE_GATHER=1 \
+    OUTDIR="$OUT_BASE/mixed_hotpot_gov_rankfile_tagveto_topk8120_ci_i231" \
+    python test/vp/mixed_longbench_serving.py
+}
+
+headline_multinews() {
+  preflight
+  run_cmd env \
+    MODEL="$MODEL" \
+    TASKS=multi_news \
+    QN=20 \
+    MAXLEN=7000 \
+    GENLEN_CAP=64 \
+    CONC=12 \
+    REPS=3 \
+    MODES=vanilla,dynamic_all_jump \
+    DYN_SPEC_ENV=dynamic_layer_prefill \
+    SGLANG_VP_BLOCK_SIZE=1 \
+    SGLANG_VP_LAYER_PROFILE_FILE="$PROFILE_FILE" \
+    SGLANG_VP_LAYER_PROFILE_TOPKS=8,12,0 \
+    SGLANG_VP_PREFILL_POLICY=external \
+    VP_EXTERNAL_PROFILE_ASSIGN=balanced \
+    SGLANG_VP_LANEFUSE_GATHER=1 \
+    OUTDIR="$OUT_BASE/multinews_rankfile_layer_profile_topk8120_qn20_ci_i231" \
+    python test/vp/mixed_longbench_serving.py
+}
+
+wait_sglang_ready() {
+  local port="$1"
+  local log_path="$2"
+  local timeout_s="${READY_TIMEOUT_S:-300}"
+  local deadline=$((SECONDS + timeout_s))
+  while (( SECONDS < deadline )); do
+    if [[ -n "${SERVER_PID:-}" ]] && ! kill -0 "$SERVER_PID" 2>/dev/null; then
+      echo "server exited before ready; log tail:" >&2
+      tail -80 "$log_path" >&2 || true
+      return 1
+    fi
+    if python - "$port" <<'PY' >/dev/null 2>&1
+import sys
+import urllib.request
+
+port = int(sys.argv[1])
+with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2) as resp:
+    raise SystemExit(0 if resp.status == 200 else 1)
+PY
+    then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "server did not become ready within ${timeout_s}s; log tail:" >&2
+  tail -80 "$log_path" >&2 || true
+  return 1
+}
+
+stop_sglang_server() {
+  if [[ -n "${SERVER_PID:-}" ]] && kill -0 "$SERVER_PID" 2>/dev/null; then
+    kill -TERM "-$SERVER_PID" 2>/dev/null || kill -TERM "$SERVER_PID" 2>/dev/null || true
+    for _ in $(seq 1 20); do
+      kill -0 "$SERVER_PID" 2>/dev/null || break
+      sleep 1
+    done
+    if kill -0 "$SERVER_PID" 2>/dev/null; then
+      kill -KILL "-$SERVER_PID" 2>/dev/null || kill -KILL "$SERVER_PID" 2>/dev/null || true
+    fi
+  fi
+  SERVER_PID=""
+}
+
+stop_load_sampler() {
+  if [[ -n "${LOAD_SAMPLER_PID:-}" ]] && kill -0 "$LOAD_SAMPLER_PID" 2>/dev/null; then
+    kill -TERM "$LOAD_SAMPLER_PID" 2>/dev/null || true
+    wait "$LOAD_SAMPLER_PID" 2>/dev/null || true
+  fi
+  LOAD_SAMPLER_PID=""
+}
+
+cleanup_sgbench_mode() {
+  stop_load_sampler
+  stop_sglang_server
+}
+
+capture_server_info() {
+  local port="$1"
+  local output_path="$2"
+  echo "+ capture http://127.0.0.1:${port}/server_info -> $output_path"
+  if [[ "$DRY_RUN" == "0" ]]; then
+    python - "$port" "$output_path" <<'PY'
+import json
+import sys
+import urllib.request
+
+port = int(sys.argv[1])
+output_path = sys.argv[2]
+with urllib.request.urlopen(f"http://127.0.0.1:{port}/server_info", timeout=10) as response:
+    info = json.load(response)
+with open(output_path, "w", encoding="utf-8") as output:
+    json.dump(info, output, indent=2, sort_keys=True)
+    output.write("\n")
+states = [item.get("internal_state", item) for item in info.get("internal_states") or []]
+resolved = [state.get("effective_max_running_requests_per_dp") for state in states]
+capacity = [(state.get("memory_usage") or {}).get("token_capacity") for state in states]
+print("SGBENCH_RESOLVED_MAX_RUNNING_REQUESTS_PER_DP:", resolved)
+print("SGBENCH_TOKEN_CAPACITY_PER_DP:", capacity)
+PY
+  fi
+}
+
+start_load_sampler() {
+  local port="$1"
+  local output_path="$2"
+  echo "+ python test/vp/sample_sglang_load.py --base-url http://127.0.0.1:$port --output $output_path --interval-ms $SGBENCH_LOAD_SAMPLE_INTERVAL_MS &"
+  if [[ "$DRY_RUN" == "0" ]]; then
+    python test/vp/sample_sglang_load.py \
+      --base-url "http://127.0.0.1:$port" \
+      --output "$output_path" \
+      --interval-ms "$SGBENCH_LOAD_SAMPLE_INTERVAL_MS" &
+    LOAD_SAMPLER_PID=$!
+  fi
+}
+
+launch_sglang_server() {
+  local raw_mode="$1"
+  local mode="$raw_mode"
+  local matched_vanilla=0
+  local port="$2"
+  local log_path="$3"
+  local fd_mixed_async="$SGBENCH_FD_VP_MIXED_DECODE_ASYNC_KV"
+  local fd_post_weight="$SGBENCH_FD_VP_MIXED_POST_WEIGHT"
+  local fd_inplace_weight="$SGBENCH_FD_VP_MIXED_INPLACE_WEIGHT"
+  local fd_parallel_branches="$SGBENCH_FD_VP_MIXED_PARALLEL_BRANCHES"
+  local fd_near_all_run_full_mlp="$SGBENCH_FD_VP_MIXED_NEAR_ALL_RUN_FULL_MLP"
+  local fd_full_project_base="$SGBENCH_FD_VP_MIXED_FULL_PROJECT_BASE"
+  local fd_reuse_output_buffer="$SGBENCH_FD_VP_MIXED_REUSE_OUTPUT_BUFFER"
+  local fd_shape_lane_buffers="$SGBENCH_FD_VP_MIXED_SHAPE_LANE_BUFFERS"
+  local fd_split_graph="$SGBENCH_FD_VP_MIXED_SPLIT_GRAPH"
+  local fd_stable_buffers="$SGBENCH_FD_VP_STABLE_MIXED_SPLIT_BUFFERS"
+  local fd_fused_router_dec_head="$SGBENCH_FD_VP_FUSED_ROUTER_DEC_HEAD"
+  local fd_router_graph="$SGBENCH_FD_VP_ROUTER_GRAPH"
+  local fd_fused_project_input="$SGBENCH_FD_VP_FUSED_PROJECT_INPUT"
+  local fd_stage_route="$SGBENCH_FD_VP_STAGE_ROUTE"
+  local fd_stage_route_fuse_homogeneous="$SGBENCH_FD_VP_STAGE_ROUTE_FUSE_HOMOGENEOUS"
+  local fd_stage_route_runahead="$SGBENCH_FD_VP_STAGE_ROUTE_RUNAHEAD"
+  local fd_stage_route_min_split_skip_rows="$SGBENCH_FD_VP_STAGE_ROUTE_MIN_SPLIT_SKIP_ROWS"
+  local fd_stage_route_min_split_run_rows="$SGBENCH_FD_VP_STAGE_ROUTE_MIN_SPLIT_RUN_ROWS"
+  local fd_coalesced_layer="$SGBENCH_FD_VP_COALESCED_LAYER"
+  local fd_triton_gpu_subbatch="$SGBENCH_FD_VP_TRITON_GPU_SUBBATCH"
+  local decode_stage_sched="$SGBENCH_DECODE_STAGE_SCHED"
+  local decode_stage_fuse_mixed="$SGBENCH_DECODE_STAGE_FUSE_MIXED"
+  local vp_async_kv="$SGBENCH_VP_ASYNC_KV"
+  local vp_async_kv_defer="$SGBENCH_VP_ASYNC_KV_DEFER_DRAIN"
+  local vp_async_kv_batched="$SGBENCH_VP_ASYNC_KV_BATCHED"
+  local vp_async_kv_token_launch="$SGBENCH_VP_ASYNC_KV_BATCHED_TOKEN_LAUNCH"
+  local vp_async_kv_lookahead_release="$SGBENCH_VP_ASYNC_KV_LOOKAHEAD_RELEASE"
+  local vp_kv_only_qkv="$SGBENCH_VP_KV_ONLY_QKV"
+  local vp_foreground_stream_priority="$SGBENCH_VP_FOREGROUND_STREAM_PRIORITY"
+  if [[ "$mode" == "vanilla_matched" ]]; then
+    mode=vanilla
+    matched_vanilla=1
+  fi
+  while :; do
+    case "$mode" in
+      *_no_mixed_async)
+        mode="${mode%_no_mixed_async}"
+        fd_mixed_async=0
+        ;;
+      *_mixed_async)
+        mode="${mode%_mixed_async}"
+        fd_mixed_async=1
+        ;;
+      *_no_stablebuf)
+        mode="${mode%_no_stablebuf}"
+        fd_stable_buffers=0
+        ;;
+      *_stablebuf)
+        mode="${mode%_stablebuf}"
+        fd_stable_buffers=1
+        ;;
+      *_no_postweight)
+        mode="${mode%_no_postweight}"
+        fd_post_weight=0
+        ;;
+      *_postweight)
+        mode="${mode%_postweight}"
+        fd_post_weight=1
+        ;;
+      *_no_inplaceweight)
+        mode="${mode%_no_inplaceweight}"
+        fd_inplace_weight=0
+        ;;
+      *_inplaceweight)
+        mode="${mode%_inplaceweight}"
+        fd_inplace_weight=1
+        ;;
+      *_no_parallelbranches)
+        mode="${mode%_no_parallelbranches}"
+        fd_parallel_branches=0
+        ;;
+      *_parallelbranches)
+        mode="${mode%_parallelbranches}"
+        fd_parallel_branches=1
+        ;;
+      *_no_nearallrun)
+        mode="${mode%_no_nearallrun}"
+        fd_near_all_run_full_mlp=0
+        ;;
+      *_nearallrun)
+        mode="${mode%_nearallrun}"
+        fd_near_all_run_full_mlp=1
+        ;;
+      *_no_fullprojbase)
+        mode="${mode%_no_fullprojbase}"
+        fd_full_project_base=0
+        ;;
+      *_fullprojbase)
+        mode="${mode%_fullprojbase}"
+        fd_full_project_base=1
+        ;;
+      *_no_reuseout)
+        mode="${mode%_no_reuseout}"
+        fd_reuse_output_buffer=0
+        ;;
+      *_reuseout)
+        mode="${mode%_reuseout}"
+        fd_reuse_output_buffer=1
+        ;;
+      *_no_shapelane)
+        mode="${mode%_no_shapelane}"
+        fd_shape_lane_buffers=0
+        ;;
+      *_shapelane)
+        mode="${mode%_shapelane}"
+        fd_shape_lane_buffers=1
+        ;;
+      *_no_splitgraph)
+        mode="${mode%_no_splitgraph}"
+        fd_split_graph=0
+        ;;
+      *_splitgraph)
+        mode="${mode%_splitgraph}"
+        fd_split_graph=1
+        ;;
+      *_no_routerfusion)
+        mode="${mode%_no_routerfusion}"
+        fd_fused_router_dec_head=0
+        ;;
+      *_routerfusion)
+        mode="${mode%_routerfusion}"
+        fd_fused_router_dec_head=1
+        ;;
+      *_no_routergraph)
+        mode="${mode%_no_routergraph}"
+        fd_router_graph=0
+        ;;
+      *_routergraph)
+        mode="${mode%_routergraph}"
+        fd_router_graph=1
+        ;;
+      *_no_projfusion)
+        mode="${mode%_no_projfusion}"
+        fd_fused_project_input=0
+        ;;
+      *_projfusion)
+        mode="${mode%_projfusion}"
+        fd_fused_project_input=1
+        ;;
+      *_no_fdstageroute)
+        mode="${mode%_no_fdstageroute}"
+        fd_stage_route=0
+        ;;
+      *_fdstageroute)
+        mode="${mode%_fdstageroute}"
+        fd_stage_route=1
+        decode_stage_sched=1
+        decode_stage_fuse_mixed=0
+        ;;
+      *_no_fusehomroute)
+        mode="${mode%_no_fusehomroute}"
+        fd_stage_route_fuse_homogeneous=0
+        ;;
+      *_fusehomroute)
+        mode="${mode%_fusehomroute}"
+        fd_stage_route_fuse_homogeneous=1
+        ;;
+      *_no_routerunahead)
+        mode="${mode%_no_routerunahead}"
+        fd_stage_route_runahead=0
+        ;;
+      *_routerunahead)
+        mode="${mode%_routerunahead}"
+        fd_stage_route_runahead=1
+        ;;
+      *_no_stageinline)
+        mode="${mode%_no_stageinline}"
+        fd_stage_route_min_split_skip_rows=1
+        fd_stage_route_min_split_run_rows=1
+        ;;
+      *_stageinline)
+        mode="${mode%_stageinline}"
+        ;;
+      *_no_layercoalesce)
+        mode="${mode%_no_layercoalesce}"
+        fd_coalesced_layer=0
+        ;;
+      *_layercoalesce)
+        mode="${mode%_layercoalesce}"
+        fd_coalesced_layer=1
+        ;;
+      *_no_gpusubbatch)
+        mode="${mode%_no_gpusubbatch}"
+        fd_triton_gpu_subbatch=0
+        ;;
+      *_gpusubbatch)
+        mode="${mode%_gpusubbatch}"
+        fd_triton_gpu_subbatch=1
+        ;;
+      *_no_scopedasync)
+        mode="${mode%_no_scopedasync}"
+        vp_async_kv=0
+        vp_async_kv_defer=0
+        vp_async_kv_batched=0
+        vp_async_kv_token_launch=0
+        vp_async_kv_lookahead_release=0
+        ;;
+      *_scopedasync)
+        mode="${mode%_scopedasync}"
+        vp_async_kv=1
+        vp_async_kv_defer=1
+        vp_async_kv_batched=0
+        vp_async_kv_token_launch=0
+        vp_async_kv_lookahead_release=0
+        ;;
+      *_batchedasync)
+        mode="${mode%_batchedasync}"
+        vp_async_kv=1
+        vp_async_kv_defer=1
+        vp_async_kv_batched=1
+        vp_async_kv_token_launch=0
+        vp_async_kv_lookahead_release=0
+        ;;
+      *_tokenasync)
+        mode="${mode%_tokenasync}"
+        vp_async_kv=1
+        vp_async_kv_defer=1
+        vp_async_kv_batched=1
+        vp_async_kv_token_launch=1
+        vp_async_kv_lookahead_release=0
+        ;;
+      *_no_lookaheadasync)
+        mode="${mode%_no_lookaheadasync}"
+        vp_async_kv_lookahead_release=0
+        ;;
+      *_lookaheadasync)
+        mode="${mode%_lookaheadasync}"
+        vp_async_kv=1
+        vp_async_kv_defer=1
+        vp_async_kv_batched=1
+        vp_async_kv_token_launch=0
+        vp_async_kv_lookahead_release=1
+        ;;
+      *_streamasync)
+        mode="${mode%_streamasync}"
+        vp_async_kv=1
+        vp_async_kv_defer=1
+        vp_async_kv_batched=0
+        vp_async_kv_token_launch=0
+        vp_async_kv_lookahead_release=0
+        ;;
+      *_no_kvonly)
+        mode="${mode%_no_kvonly}"
+        vp_kv_only_qkv=0
+        ;;
+      *_kvonly)
+        mode="${mode%_kvonly}"
+        vp_kv_only_qkv=1
+        ;;
+      *_no_fgpriority)
+        mode="${mode%_no_fgpriority}"
+        vp_foreground_stream_priority=0
+        ;;
+      *_fgpriority)
+        mode="${mode%_fgpriority}"
+        vp_foreground_stream_priority=-1
+        ;;
+      *_no_fusemixed)
+        mode="${mode%_no_fusemixed}"
+        decode_stage_fuse_mixed=0
+        ;;
+      *_fusemixed)
+        mode="${mode%_fusemixed}"
+        decode_stage_fuse_mixed=1
+        ;;
+      *_no_stagesched)
+        mode="${mode%_no_stagesched}"
+        decode_stage_sched=0
+        ;;
+      *_stagesched)
+        mode="${mode%_stagesched}"
+        decode_stage_sched=1
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+  if [[ "$vp_async_kv_lookahead_release" == "1" && "$vp_async_kv_batched" != "1" ]]; then
+    die "VP lookahead K/V release requires batched K/V"
+  fi
+  if [[ "$vp_async_kv_lookahead_release" == "1" && "$vp_async_kv_token_launch" == "1" ]]; then
+    die "VP lookahead and token-boundary K/V release are mutually exclusive"
+  fi
+  local env_args=(
+    HF_HOME="$HF_HOME"
+    TRANSFORMERS_CACHE="$TRANSFORMERS_CACHE"
+    HF_HUB_DISABLE_XET="$HF_HUB_DISABLE_XET"
+    PYTHONPATH="$ROOT/python:${PYTHONPATH:-}"
+    SGLANG_FD_WEIGHTS=
+    SGLANG_FD_VP_PROJECT=
+    SGLANG_FD_VP_TRACE=
+    SGLANG_FD_VP_TRACE_TIMING=
+    SGLANG_FD_VP_TRACE_EVERY=
+    SGLANG_FD_VP_TRACE_FILE=
+    SGLANG_FD_VP_TRACE_MASKS=
+    SGLANG_FD_VP_TRACE_MASK_CAP=
+    SGLANG_FD_VP_MIXED_DECODE_SUBBATCH=
+    SGLANG_FD_VP_DECODE_SUBBATCH_CACHE=
+    SGLANG_FD_VP_MINIMAL_KV_SUBBATCH=
+    SGLANG_FD_VP_TRITON_GPU_SUBBATCH=
+    SGLANG_FD_VP_ASYNC_KV=
+    SGLANG_FD_VP_ASYNC_KV_DEFER_DRAIN=
+    SGLANG_FD_VP_ASYNC_KV_SCOPED=
+    SGLANG_FD_VP_MIXED_DECODE_ASYNC_KV=
+    SGLANG_FD_VP_MIXED_DECODE_ASYNC_MIN_ROWS=
+    SGLANG_FD_VP_MIXED_DECODE_ASYNC_MIN_KEPT_ROWS=
+    SGLANG_FD_VP_MIXED_DECODE_ASYNC_MIN_SKIP_ROWS=
+    SGLANG_FD_VP_MIXED_DECODE_ASYNC_PATTERN_WARMUP=
+    SGLANG_FD_VP_MIXED_DECODE_ASYNC_PATTERN_SCOPE=
+    SGLANG_FD_VP_MIXED_DECODE_ASYNC_COHORT_TABLE=
+    SGLANG_FD_VP_MIXED_DECODE_ASYNC_COHORT_MAX_ENTRIES=
+    SGLANG_FD_VP_GLOBAL_DECODE_SUBBATCH_CACHE=
+    SGLANG_FD_VP_GLOBAL_DECODE_SUBBATCH_CACHE_MAX_ENTRIES=
+    SGLANG_FD_VP_MIXED_FULL_BATCH_SPLIT=
+    SGLANG_FD_VP_MIXED_POST_WEIGHT=
+    SGLANG_FD_VP_MIXED_INPLACE_WEIGHT=
+    SGLANG_FD_VP_MIXED_PARALLEL_BRANCHES=
+    SGLANG_FD_VP_MIXED_NEAR_ALL_RUN_FULL_MLP=
+    SGLANG_FD_VP_MIXED_NEAR_ALL_RUN_MAX_SKIP_ROWS=
+    SGLANG_FD_VP_MIXED_FULL_PROJECT_BASE=
+    SGLANG_FD_VP_MIXED_REUSE_OUTPUT_BUFFER=
+    SGLANG_FD_VP_MIXED_REUSE_OUTPUT_BUFFER_MAX_ENTRIES=
+    SGLANG_FD_VP_MIXED_SHAPE_LANE_BUFFERS=
+    SGLANG_FD_VP_MIXED_SHAPE_LANE_BUFFER_MAX_ENTRIES=
+    SGLANG_FD_VP_MIXED_SPLIT_GRAPH=
+    SGLANG_FD_VP_MIXED_SPLIT_GRAPH_MAX_ENTRIES=
+    SGLANG_FD_VP_MIXED_SPLIT_GRAPH_MAX_ROWS=
+    SGLANG_FD_VP_MIXED_SPLIT_GRAPH_MIN_FREE_MB=
+    SGLANG_FD_VP_STABLE_MIXED_SPLIT_BUFFERS=
+    SGLANG_FD_VP_STABLE_MIXED_SPLIT_BUFFER_MAX_ENTRIES=
+    SGLANG_FD_VP_ALL_SKIP_KV_ONLY_QKV=
+    SGLANG_FD_VP_FUSED_ROUTER_DEC_HEAD=
+    SGLANG_FD_VP_ROUTER_GRAPH=
+    SGLANG_FD_VP_ROUTER_GRAPH_MAX_ROWS=
+    SGLANG_FD_VP_ROUTER_GRAPH_MAX_ENTRIES=
+    SGLANG_FD_VP_FUSED_PROJECT_INPUT=
+    SGLANG_FD_VP_STAGE_ROUTE=
+    SGLANG_FD_VP_STAGE_ROUTE_FUSE_HOMOGENEOUS=
+    SGLANG_FD_VP_STAGE_ROUTE_RUNAHEAD=
+    SGLANG_FD_VP_STAGE_ROUTE_MIN_SPLIT_SKIP_ROWS=
+    SGLANG_FD_VP_STAGE_ROUTE_MIN_SPLIT_RUN_ROWS=
+    SGLANG_FD_VP_COALESCED_LAYER=
+    SGLANG_FD_VP_COALESCED_MIN_SKIP_ROWS=
+    SGLANG_FD_VP_COALESCED_MIN_RUN_ROWS=
+    SGLANG_VP_MODE=
+    SGLANG_VP_BLOCK_SIZE=
+    SGLANG_VP_SCHED=
+    SGLANG_VP_SPAN=
+    SGLANG_VP_GRAPH=
+    SGLANG_VP_GRAPH_SPAN_STARTS=
+    SGLANG_VP_HIT_RATE=
+    SGLANG_VP_DISABLE_ROUTER=
+    SGLANG_VP_DET_LAYER_PATTERN=
+    SGLANG_VP_DET_LAYER_PATTERN_FILE=
+    SGLANG_VP_LANESPLIT=
+    SGLANG_VP_LANEFUSE=
+    SGLANG_VP_LANEFUSE_GATHER=
+    SGLANG_VP_LAYER_PROFILE_FILE=
+    SGLANG_VP_LAYER_PROFILE_TOPKS=
+    SGLANG_VP_PREFILL_POLICY=
+    SGLANG_VP_PREFILL_VETO_TAGS=
+    SGLANG_VP_PREFILL_VETO_TEXT_RE=
+    SGLANG_VP_DECODE_LAYER_PROFILE_SPECS=
+    SGLANG_VP_DECODE_LAYER_PROFILE_FILE=
+    SGLANG_VP_DECODE_LAYER_PROFILE_TOPKS=
+    SGLANG_VP_DECODE_PROFILE_POLICY=
+    SGLANG_VP_DECODE_PROFILE_COHORT=
+    SGLANG_VP_DECODE_VETO_TAGS=
+    SGLANG_VP_DECODE_VETO_TEXT_RE=
+    SGLANG_VP_STAGE_SCHED=
+    SGLANG_VP_STAGE_POLICY=
+    SGLANG_VP_STAGE_BLOCK_SYNC=
+    SGLANG_VP_STAGE_FUSE_MIXED=
+    SGLANG_VP_ASYNC_KV=
+    SGLANG_VP_ASYNC_KV_DEFER_DRAIN=
+    SGLANG_VP_ASYNC_KV_SCOPED=
+    SGLANG_VP_ASYNC_KV_BATCHED=
+    SGLANG_VP_ASYNC_KV_BATCHED_MAX_ROWS=
+    SGLANG_VP_ASYNC_KV_BATCHED_TOKEN_LAUNCH=
+    SGLANG_VP_ASYNC_KV_LOOKAHEAD_RELEASE=
+    SGLANG_VP_ASYNC_KV_RELEASE_LAYER=
+    SGLANG_VP_KV_ONLY_QKV=
+    SGLANG_VP_FOREGROUND_STREAM_PRIORITY=
+  )
+  if [[ "$vp_foreground_stream_priority" != "0" ]]; then
+    env_args+=(
+      SGLANG_VP_FOREGROUND_STREAM_PRIORITY="$vp_foreground_stream_priority"
+    )
+  fi
+  if [[ "$mode" == "dynamic" || "$mode" == "dynamic_both" ]]; then
+    if [[ "$mode" == "dynamic_both" && "$SGBENCH_PREFILL_BLOCK_SIZE" != "$SGBENCH_DECODE_BLOCK_SIZE" ]]; then
+      die "dynamic_both uses one global SGLANG_VP_BLOCK_SIZE; set SGBENCH_PREFILL_BLOCK_SIZE and SGBENCH_DECODE_BLOCK_SIZE equal"
+    fi
+    env_args+=(
+      SGLANG_VP_MODE=dynamic_layer_prefill
+      SGLANG_VP_BLOCK_SIZE="$SGBENCH_PREFILL_BLOCK_SIZE"
+      SGLANG_VP_LAYER_PROFILE_FILE="$PROFILE_FILE"
+      SGLANG_VP_LAYER_PROFILE_TOPKS="$SGBENCH_PREFILL_TOPKS"
+      SGLANG_VP_PREFILL_POLICY="$SGBENCH_PREFILL_POLICY"
+      SGLANG_VP_PREFILL_VETO_TAGS="$SGBENCH_PREFILL_VETO_TAGS"
+      SGLANG_VP_PREFILL_VETO_TEXT_RE="$SGBENCH_PREFILL_VETO_TEXT_RE"
+      SGLANG_VP_LANEFUSE_GATHER=1
+    )
+  fi
+  if [[ "$mode" == "dynamic_decode" || "$mode" == "dynamic_both" ]]; then
+    if [[ "$vp_async_kv" != "$vp_async_kv_defer" ]]; then
+      die "generic VP async K/V currently requires ASYNC_KV=1 and DEFER_DRAIN=1 together"
+    fi
+    if [[ "$vp_async_kv_batched" == "1" && "$vp_async_kv" != "1" ]]; then
+      die "generic VP batched K/V requires scoped async K/V"
+    fi
+    if [[ "$vp_async_kv_token_launch" == "1" && "$vp_async_kv_batched" != "1" ]]; then
+      die "generic VP token-boundary K/V launch requires batched K/V"
+    fi
+    if [[ "$vp_async_kv_lookahead_release" == "1" && "$vp_async_kv_batched" != "1" ]]; then
+      die "generic VP lookahead K/V release requires batched K/V"
+    fi
+    env_args+=(
+      SGLANG_VP_SCHED=1
+      SGLANG_VP_SPAN="$SGBENCH_DECODE_SPAN"
+      SGLANG_VP_BLOCK_SIZE="$SGBENCH_DECODE_BLOCK_SIZE"
+      SGLANG_VP_GRAPH="$SGBENCH_DECODE_VP_GRAPH"
+      SGLANG_VP_DECODE_LAYER_PROFILE_FILE="$PROFILE_FILE"
+      SGLANG_VP_DECODE_LAYER_PROFILE_TOPKS="$SGBENCH_DECODE_TOPKS"
+      SGLANG_VP_DECODE_PROFILE_POLICY="$SGBENCH_DECODE_POLICY"
+      SGLANG_VP_DECODE_PROFILE_COHORT="$SGBENCH_DECODE_COHORT"
+      SGLANG_VP_DECODE_VETO_TAGS="$SGBENCH_DECODE_VETO_TAGS"
+      SGLANG_VP_DECODE_VETO_TEXT_RE="$SGBENCH_DECODE_VETO_TEXT_RE"
+      SGLANG_VP_LANEFUSE_GATHER="$SGBENCH_DECODE_GATHER"
+      SGLANG_VP_STAGE_SCHED="$decode_stage_sched"
+      SGLANG_VP_STAGE_POLICY="$SGBENCH_DECODE_STAGE_POLICY"
+      SGLANG_VP_STAGE_BLOCK_SYNC="$SGBENCH_DECODE_STAGE_BLOCK_SYNC"
+      SGLANG_VP_STAGE_FUSE_MIXED="$decode_stage_fuse_mixed"
+    )
+    if [[ "$vp_async_kv" == "1" ]]; then
+      env_args+=(SGLANG_VP_ASYNC_KV=1)
+    fi
+    if [[ "$vp_async_kv_defer" == "1" ]]; then
+      env_args+=(
+        SGLANG_VP_ASYNC_KV_DEFER_DRAIN=1
+        SGLANG_VP_ASYNC_KV_SCOPED="$SGBENCH_VP_ASYNC_KV_SCOPED"
+      )
+    fi
+    if [[ "$vp_async_kv_batched" == "1" ]]; then
+      env_args+=(
+        SGLANG_VP_ASYNC_KV_BATCHED=1
+        SGLANG_VP_ASYNC_KV_BATCHED_MAX_ROWS="$SGBENCH_VP_ASYNC_KV_BATCHED_MAX_ROWS"
+      )
+    fi
+    if [[ "$vp_async_kv_token_launch" == "1" ]]; then
+      env_args+=(SGLANG_VP_ASYNC_KV_BATCHED_TOKEN_LAUNCH=1)
+    fi
+    if [[ "$vp_async_kv_lookahead_release" == "1" ]]; then
+      env_args+=(
+        SGLANG_VP_ASYNC_KV_LOOKAHEAD_RELEASE=1
+        SGLANG_VP_ASYNC_KV_RELEASE_LAYER="$SGBENCH_VP_ASYNC_KV_RELEASE_LAYER"
+      )
+    fi
+    if [[ "$vp_kv_only_qkv" == "1" ]]; then
+      env_args+=(SGLANG_VP_KV_ONLY_QKV=1)
+    fi
+    if [[ "$vp_async_kv" == "1" && "$SGBENCH_FD_VP_TRACE" == "1" ]]; then
+      local generic_trace_file="${SGBENCH_FD_VP_TRACE_FILE:-${log_path%.log}.vp_async_trace.jsonl}"
+      env_args+=(
+        SGLANG_FD_VP_TRACE=1
+        SGLANG_FD_VP_TRACE_TIMING="$SGBENCH_FD_VP_TRACE_TIMING"
+        SGLANG_FD_VP_TRACE_EVERY="$SGBENCH_FD_VP_TRACE_EVERY"
+        SGLANG_FD_VP_TRACE_FILE="$generic_trace_file"
+      )
+    fi
+  fi
+  if [[ "$mode" == "flexidepth_vp_sched" || "$mode" == "flexidepth_vp_sched_async" ]]; then
+    env_args+=(
+      SGLANG_VP_SCHED=1
+      SGLANG_VP_SPAN="$SGBENCH_DECODE_SPAN"
+      SGLANG_VP_BLOCK_SIZE="$SGBENCH_DECODE_BLOCK_SIZE"
+      SGLANG_VP_GRAPH="$SGBENCH_FD_VP_SCHED_GRAPH"
+      SGLANG_VP_HIT_RATE=0.0
+      SGLANG_VP_DISABLE_ROUTER=1
+      SGLANG_VP_LANEFUSE_GATHER="$SGBENCH_DECODE_GATHER"
+      SGLANG_VP_STAGE_SCHED="$decode_stage_sched"
+      SGLANG_VP_STAGE_POLICY="$SGBENCH_DECODE_STAGE_POLICY"
+      SGLANG_VP_STAGE_BLOCK_SYNC="$SGBENCH_DECODE_STAGE_BLOCK_SYNC"
+      SGLANG_VP_STAGE_FUSE_MIXED="$decode_stage_fuse_mixed"
+    )
+  fi
+  if [[ "$mode" == "flexidepth" || "$mode" == "flexidepth_vp" || "$mode" == "flexidepth_vp_async" || "$mode" == "flexidepth_vp_sched" || "$mode" == "flexidepth_vp_sched_async" ]]; then
+    [[ -s "$FD_WEIGHTS" ]] || die "missing FD_WEIGHTS=$FD_WEIGHTS; run ACTION=stage-flexidepth first"
+    env_args+=(
+      SGLANG_FD_WEIGHTS="$FD_WEIGHTS"
+    )
+    if [[ "$mode" == "flexidepth_vp" || "$mode" == "flexidepth_vp_async" || "$mode" == "flexidepth_vp_sched" || "$mode" == "flexidepth_vp_sched_async" ]]; then
+      local trace_file="${SGBENCH_FD_VP_TRACE_FILE:-${log_path%.log}.fdvp_trace.jsonl}"
+      env_args+=(
+        SGLANG_FD_VP_PROJECT=1
+      )
+      local fd_async="$SGBENCH_FD_VP_ASYNC_KV"
+      local fd_defer="$SGBENCH_FD_VP_ASYNC_KV_DEFER_DRAIN"
+      if [[ "$mode" == "flexidepth_vp_async" || "$mode" == "flexidepth_vp_sched_async" ]]; then
+        fd_async=1
+        fd_defer=1
+      fi
+      if [[ "$fd_async" == "1" ]]; then
+        env_args+=(SGLANG_FD_VP_ASYNC_KV=1)
+      fi
+      if [[ "$fd_defer" == "1" ]]; then
+        env_args+=(
+          SGLANG_FD_VP_ASYNC_KV_DEFER_DRAIN=1
+          SGLANG_FD_VP_ASYNC_KV_SCOPED="$SGBENCH_FD_VP_ASYNC_KV_SCOPED"
+        )
+      fi
+      if [[ "$vp_async_kv_batched" == "1" ]]; then
+        if [[ "$fd_async" != "1" || "$fd_defer" != "1" ]]; then
+          die "FDVP batched K/V requires async K/V and deferred drain"
+        fi
+        env_args+=(
+          SGLANG_VP_ASYNC_KV_BATCHED=1
+          SGLANG_VP_ASYNC_KV_BATCHED_MAX_ROWS="$SGBENCH_VP_ASYNC_KV_BATCHED_MAX_ROWS"
+        )
+      fi
+      if [[ "$vp_async_kv_token_launch" == "1" ]]; then
+        env_args+=(SGLANG_VP_ASYNC_KV_BATCHED_TOKEN_LAUNCH=1)
+      fi
+      if [[ "$vp_async_kv_lookahead_release" == "1" ]]; then
+        env_args+=(
+          SGLANG_VP_ASYNC_KV_LOOKAHEAD_RELEASE=1
+          SGLANG_VP_ASYNC_KV_RELEASE_LAYER="$SGBENCH_VP_ASYNC_KV_RELEASE_LAYER"
+        )
+      fi
+      if [[ "$fd_mixed_async" == "1" ]]; then
+        env_args+=(
+          SGLANG_FD_VP_MIXED_DECODE_ASYNC_KV=1
+          SGLANG_FD_VP_MIXED_DECODE_ASYNC_MIN_ROWS="$SGBENCH_FD_VP_MIXED_DECODE_ASYNC_MIN_ROWS"
+          SGLANG_FD_VP_MIXED_DECODE_ASYNC_MIN_KEPT_ROWS="$SGBENCH_FD_VP_MIXED_DECODE_ASYNC_MIN_KEPT_ROWS"
+          SGLANG_FD_VP_MIXED_DECODE_ASYNC_MIN_SKIP_ROWS="$SGBENCH_FD_VP_MIXED_DECODE_ASYNC_MIN_SKIP_ROWS"
+          SGLANG_FD_VP_MIXED_DECODE_ASYNC_PATTERN_WARMUP="$SGBENCH_FD_VP_MIXED_DECODE_ASYNC_PATTERN_WARMUP"
+          SGLANG_FD_VP_MIXED_DECODE_ASYNC_PATTERN_SCOPE="$SGBENCH_FD_VP_MIXED_DECODE_ASYNC_PATTERN_SCOPE"
+          SGLANG_FD_VP_MIXED_DECODE_ASYNC_COHORT_TABLE="$SGBENCH_FD_VP_MIXED_DECODE_ASYNC_COHORT_TABLE"
+          SGLANG_FD_VP_MIXED_DECODE_ASYNC_COHORT_MAX_ENTRIES="$SGBENCH_FD_VP_MIXED_DECODE_ASYNC_COHORT_MAX_ENTRIES"
+          SGLANG_FD_VP_GLOBAL_DECODE_SUBBATCH_CACHE="$SGBENCH_FD_VP_GLOBAL_DECODE_SUBBATCH_CACHE"
+          SGLANG_FD_VP_GLOBAL_DECODE_SUBBATCH_CACHE_MAX_ENTRIES="$SGBENCH_FD_VP_GLOBAL_DECODE_SUBBATCH_CACHE_MAX_ENTRIES"
+        )
+      fi
+      if [[ "$SGBENCH_FD_VP_ALL_SKIP_KV_ONLY_QKV" == "1" ]]; then
+        env_args+=(SGLANG_FD_VP_ALL_SKIP_KV_ONLY_QKV=1)
+      fi
+      if [[ "$SGBENCH_FD_VP_MIXED_FULL_BATCH_SPLIT" == "1" ]]; then
+        env_args+=(SGLANG_FD_VP_MIXED_FULL_BATCH_SPLIT=1)
+      fi
+      env_args+=(SGLANG_FD_VP_MIXED_POST_WEIGHT="$fd_post_weight")
+      env_args+=(SGLANG_FD_VP_MIXED_INPLACE_WEIGHT="$fd_inplace_weight")
+      env_args+=(SGLANG_FD_VP_MIXED_PARALLEL_BRANCHES="$fd_parallel_branches")
+      env_args+=(
+        SGLANG_FD_VP_MIXED_NEAR_ALL_RUN_FULL_MLP="$fd_near_all_run_full_mlp"
+        SGLANG_FD_VP_MIXED_NEAR_ALL_RUN_MAX_SKIP_ROWS="$SGBENCH_FD_VP_MIXED_NEAR_ALL_RUN_MAX_SKIP_ROWS"
+      )
+      env_args+=(SGLANG_FD_VP_MIXED_FULL_PROJECT_BASE="$fd_full_project_base")
+      env_args+=(SGLANG_FD_VP_FUSED_ROUTER_DEC_HEAD="$fd_fused_router_dec_head")
+      env_args+=(
+        SGLANG_FD_VP_ROUTER_GRAPH="$fd_router_graph"
+        SGLANG_FD_VP_ROUTER_GRAPH_MAX_ROWS="$SGBENCH_FD_VP_ROUTER_GRAPH_MAX_ROWS"
+        SGLANG_FD_VP_ROUTER_GRAPH_MAX_ENTRIES="$SGBENCH_FD_VP_ROUTER_GRAPH_MAX_ENTRIES"
+      )
+      env_args+=(SGLANG_FD_VP_FUSED_PROJECT_INPUT="$fd_fused_project_input")
+      env_args+=(SGLANG_FD_VP_STAGE_ROUTE="$fd_stage_route")
+      env_args+=(
+        SGLANG_FD_VP_STAGE_ROUTE_FUSE_HOMOGENEOUS="$fd_stage_route_fuse_homogeneous"
+        SGLANG_FD_VP_STAGE_ROUTE_RUNAHEAD="$fd_stage_route_runahead"
+        SGLANG_FD_VP_STAGE_ROUTE_MIN_SPLIT_SKIP_ROWS="$fd_stage_route_min_split_skip_rows"
+        SGLANG_FD_VP_STAGE_ROUTE_MIN_SPLIT_RUN_ROWS="$fd_stage_route_min_split_run_rows"
+      )
+      env_args+=(SGLANG_FD_VP_COALESCED_LAYER="$fd_coalesced_layer")
+      env_args+=(
+        SGLANG_FD_VP_COALESCED_MIN_SKIP_ROWS="$SGBENCH_FD_VP_COALESCED_MIN_SKIP_ROWS"
+        SGLANG_FD_VP_COALESCED_MIN_RUN_ROWS="$SGBENCH_FD_VP_COALESCED_MIN_RUN_ROWS"
+      )
+      env_args+=(
+        SGLANG_FD_VP_MIXED_REUSE_OUTPUT_BUFFER="$fd_reuse_output_buffer"
+        SGLANG_FD_VP_MIXED_REUSE_OUTPUT_BUFFER_MAX_ENTRIES="$SGBENCH_FD_VP_MIXED_REUSE_OUTPUT_BUFFER_MAX_ENTRIES"
+      )
+      env_args+=(
+        SGLANG_FD_VP_MIXED_SHAPE_LANE_BUFFERS="$fd_shape_lane_buffers"
+        SGLANG_FD_VP_MIXED_SHAPE_LANE_BUFFER_MAX_ENTRIES="$SGBENCH_FD_VP_MIXED_SHAPE_LANE_BUFFER_MAX_ENTRIES"
+      )
+      env_args+=(
+        SGLANG_FD_VP_MIXED_SPLIT_GRAPH="$fd_split_graph"
+        SGLANG_FD_VP_MIXED_SPLIT_GRAPH_MAX_ENTRIES="$SGBENCH_FD_VP_MIXED_SPLIT_GRAPH_MAX_ENTRIES"
+        SGLANG_FD_VP_MIXED_SPLIT_GRAPH_MAX_ROWS="$SGBENCH_FD_VP_MIXED_SPLIT_GRAPH_MAX_ROWS"
+        SGLANG_FD_VP_MIXED_SPLIT_GRAPH_MIN_FREE_MB="$SGBENCH_FD_VP_MIXED_SPLIT_GRAPH_MIN_FREE_MB"
+      )
+      if [[ "$fd_stable_buffers" == "1" ]]; then
+        env_args+=(
+          SGLANG_FD_VP_STABLE_MIXED_SPLIT_BUFFERS=1
+          SGLANG_FD_VP_STABLE_MIXED_SPLIT_BUFFER_MAX_ENTRIES="$SGBENCH_FD_VP_STABLE_MIXED_SPLIT_BUFFER_MAX_ENTRIES"
+        )
+      fi
+      if [[ "$SGBENCH_FD_VP_TRACE" == "1" ]]; then
+        env_args+=(
+          SGLANG_FD_VP_TRACE=1
+          SGLANG_FD_VP_TRACE_TIMING="$SGBENCH_FD_VP_TRACE_TIMING"
+          SGLANG_FD_VP_TRACE_EVERY="$SGBENCH_FD_VP_TRACE_EVERY"
+          SGLANG_FD_VP_TRACE_FILE="$trace_file"
+        )
+        if [[ "$SGBENCH_FD_VP_TRACE_MASKS" == "1" ]]; then
+          env_args+=(
+            SGLANG_FD_VP_TRACE_MASKS=1
+            SGLANG_FD_VP_TRACE_MASK_CAP="$SGBENCH_FD_VP_TRACE_MASK_CAP"
+          )
+        fi
+      fi
+      if [[ "$SGBENCH_FD_VP_MIXED_DECODE_SUBBATCH" == "1" ]]; then
+        env_args+=(
+          SGLANG_FD_VP_MIXED_DECODE_SUBBATCH=1
+        )
+      fi
+      env_args+=(
+        SGLANG_FD_VP_DECODE_SUBBATCH_CACHE="$SGBENCH_FD_VP_DECODE_SUBBATCH_CACHE"
+      )
+      if [[ "$SGBENCH_FD_VP_MINIMAL_KV_SUBBATCH" == "1" ]]; then
+        env_args+=(SGLANG_FD_VP_MINIMAL_KV_SUBBATCH=1)
+      fi
+      if [[ "$fd_triton_gpu_subbatch" == "1" ]]; then
+        env_args+=(SGLANG_FD_VP_TRITON_GPU_SUBBATCH=1)
+      fi
+    fi
+  elif [[ "$mode" != "vanilla" && "$mode" != "dynamic" && "$mode" != "dynamic_decode" && "$mode" != "dynamic_both" ]]; then
+    die "unknown SGBENCH mode $raw_mode; expected vanilla, vanilla_matched, dynamic, dynamic_decode, dynamic_both, flexidepth, flexidepth_vp, flexidepth_vp_async, flexidepth_vp_sched, flexidepth_vp_sched_async, or FDVP modes with override suffixes"
+  fi
+
+  local server_profile="$SGBENCH_CANDIDATE_SERVER_PROFILE"
+  if [[ "$mode" == "vanilla" && "$matched_vanilla" == "0" ]]; then
+    server_profile="$SGBENCH_BASELINE_SERVER_PROFILE"
+  fi
+  local server_profile_args=()
+  case "$server_profile" in
+    production)
+      ;;
+    graphless_overlap)
+      # Dynamic data-dependent routing is not capturable by SGLang's stock
+      # decode/prefill CUDA graphs, but it can still retain the production
+      # overlap scheduler and radix cache. This profile isolates that graph
+      # constraint from the stricter matched-eager debugging control below.
+      server_profile_args+=(
+        --disable-cuda-graph
+      )
+      ;;
+    breakable_dynamic)
+      # Capture fixed model regions while FlexiDepth routed layers execute at
+      # explicit eager graph breaks. This retains production overlap/radix and
+      # is the first production-graph compatibility gate for dynamic routing.
+      server_profile_args+=(
+        --cuda-graph-backend-decode breakable
+        --cuda-graph-backend-prefill breakable
+      )
+      ;;
+    matched_eager)
+      server_profile_args+=(
+        --disable-cuda-graph
+        --disable-radix-cache
+        --disable-overlap-schedule
+      )
+      ;;
+    *)
+      die "unknown server profile $server_profile; expected production, breakable_dynamic, graphless_overlap, or matched_eager"
+      ;;
+  esac
+
+  local cmd=(
+    env "${env_args[@]}"
+    python -m sglang.launch_server
+    --model-path "$MODEL"
+    --port "$port"
+    --host 127.0.0.1
+    --mem-fraction-static "$SGBENCH_MEM_FRACTION_STATIC"
+  )
+  if [[ -n "$SGBENCH_MAX_RUNNING_REQUESTS" ]]; then
+    cmd+=(--max-running-requests "$SGBENCH_MAX_RUNNING_REQUESTS")
+  fi
+  cmd+=("${server_profile_args[@]}")
+  if [[ -n "$SGBENCH_CHUNKED_PREFILL_SIZE" ]]; then
+    cmd+=(--chunked-prefill-size "$SGBENCH_CHUNKED_PREFILL_SIZE")
+  fi
+  if [[ -n "$SGBENCH_ATTENTION_BACKEND" ]]; then
+    cmd+=(--attention-backend "$SGBENCH_ATTENTION_BACKEND")
+  fi
+  if [[ -n "$SGBENCH_CUDA_GRAPH_MAX_BS_DECODE" ]]; then
+    cmd+=(--cuda-graph-max-bs-decode "$SGBENCH_CUDA_GRAPH_MAX_BS_DECODE")
+  fi
+  if [[ -n "$SGBENCH_CUDA_GRAPH_MAX_BS_PREFILL" ]]; then
+    cmd+=(--cuda-graph-max-bs-prefill "$SGBENCH_CUDA_GRAPH_MAX_BS_PREFILL")
+  fi
+
+  echo
+  echo "+ setsid $(join_by ' ' "${cmd[@]}") > $log_path 2>&1 &"
+  if [[ "$DRY_RUN" == "0" ]]; then
+    setsid "${cmd[@]}" >"$log_path" 2>&1 &
+    SERVER_PID=$!
+    wait_sglang_ready "$port" "$log_path"
+  fi
+}
+
+write_sgbench_manifest() {
+  local manifest="$SGBENCH_OUT_DIR/run_manifest.txt"
+  mkdir -p "$SGBENCH_OUT_DIR"
+  {
+    echo "created_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "root=$ROOT"
+    echo "git_head=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+    echo "python=$(command -v python)"
+    python --version
+    echo
+    echo "[git-status]"
+    git -C "$ROOT" status --short 2>/dev/null || echo "unavailable (no git checkout)"
+    echo
+    echo "[source-sha256]"
+    sha256sum \
+      "$ROOT"/python/sglang/srt/vp/*.py \
+      "$ROOT"/python/sglang/srt/model_executor/forward_batch_info.py \
+      "$ROOT"/python/sglang/srt/model_executor/model_runner.py \
+      "$ROOT"/python/sglang/srt/mem_cache/common.py \
+      "$ROOT"/python/sglang/srt/managers/scheduler.py \
+      "$ROOT"/python/sglang/srt/managers/tp_worker.py \
+      "$ROOT"/python/sglang/srt/models/llama.py \
+      "$ROOT"/python/sglang/srt/models/qwen2.py \
+      "$ROOT"/python/sglang/srt/models/qwen3.py \
+      "$ROOT"/test/vp/analyze_sgbench_pairs.py \
+      "$ROOT"/test/vp/sample_sglang_load.py \
+      "$ROOT"/test/vp/vast_a100_ladder.sh
+    echo
+    echo "[sgbench-config]"
+    echo "MODEL=$MODEL"
+    echo "PROFILE_FILE=$PROFILE_FILE"
+    declare -p | sort | awk '/^declare .* (SGBENCH_|SGLANG_|FD_)/'
+    env | sort | awk '/^(HF_HOME|TRANSFORMERS_CACHE|HF_HUB_DISABLE_XET)=/'
+    echo
+    echo "[gpu]"
+    nvidia-smi --query-gpu=name,uuid,driver_version,memory.total --format=csv,noheader
+  } >"$manifest"
+  echo "SGBENCH_MANIFEST: $manifest"
+}
+
+sgbench_dataset_args() {
+  case "$SGBENCH_DATASET" in
+    longbench_v2)
+      local args=(--dataset-name longbench_v2 --sharegpt-output-len "$SGBENCH_OUTPUT_LEN")
+      [[ -n "$SGBENCH_CONTEXT_LEN" ]] && args+=(--sharegpt-context-len "$SGBENCH_CONTEXT_LEN")
+      echo "${args[@]}"
+      ;;
+    sharegpt)
+      local args=(--dataset-name sharegpt --sharegpt-output-len "$SGBENCH_OUTPUT_LEN")
+      [[ -n "$SGBENCH_CONTEXT_LEN" ]] && args+=(--sharegpt-context-len "$SGBENCH_CONTEXT_LEN")
+      echo "${args[@]}"
+      ;;
+    random|random-ids)
+      echo --dataset-name "$SGBENCH_DATASET" --random-input-len "$SGBENCH_RANDOM_INPUT_LEN" --random-output-len "$SGBENCH_RANDOM_OUTPUT_LEN" --random-range-ratio "$SGBENCH_RANDOM_RANGE_RATIO"
+      ;;
+    autobench)
+      [[ -n "$SGBENCH_DATASET_PATH" ]] || die "SGBENCH_DATASET_PATH is required for SGBENCH_DATASET=autobench"
+      local args=(--dataset-name autobench --dataset-path "$SGBENCH_DATASET_PATH")
+      if [[ -n "$SGBENCH_OUTPUT_LEN_WAS_SET" ]]; then
+        args+=(--sharegpt-output-len "$SGBENCH_OUTPUT_LEN")
+      fi
+      echo "${args[@]}"
+      ;;
+    *)
+      die "unsupported SGBENCH_DATASET=$SGBENCH_DATASET; use longbench_v2, sharegpt, autobench, random, or random-ids"
+      ;;
+  esac
+}
+
+sgbench_mode_once() {
+  local mode="$1"
+  local rep="$2"
+  local port="$SGBENCH_PORT"
+  local label="${SGBENCH_DATASET}_${mode}_rep${rep}"
+  local profile_output_dir=""
+  if [[ -n "$SGBENCH_PROFILE_OUTPUT_DIR" ]]; then
+    profile_output_dir="${SGBENCH_PROFILE_OUTPUT_DIR%/}/$label"
+  fi
+  local log_path="$SGBENCH_OUT_DIR/server_${label}.log"
+  local output_file="$SGBENCH_OUT_DIR/${label}.jsonl"
+  local server_info_file="$SGBENCH_OUT_DIR/server_info_${label}.json"
+  local load_file="$SGBENCH_OUT_DIR/load_${label}.jsonl"
+  mkdir -p "$SGBENCH_OUT_DIR"
+  SERVER_PID=""
+  LOAD_SAMPLER_PID=""
+  trap cleanup_sgbench_mode EXIT
+  launch_sglang_server "$mode" "$port" "$log_path"
+  capture_server_info "$port" "$server_info_file"
+  local dataset_args
+  read -r -a dataset_args <<<"$(sgbench_dataset_args)"
+  local bench_cmd=(
+    python -m sglang.benchmark.serving
+    --backend "$SGBENCH_BACKEND"
+    --host 127.0.0.1
+    --port "$port"
+    --model "$MODEL"
+    --tokenizer "$MODEL"
+    --num-prompts "$SGBENCH_NUM_PROMPTS"
+    --request-rate "$SGBENCH_REQUEST_RATE"
+    --seed "$SGBENCH_SEED"
+    --warmup-requests "$SGBENCH_WARMUP_REQUESTS"
+    --ready-check-timeout-sec 300
+    --disable-tqdm
+    --output-details
+    --output-file "$output_file"
+    "${dataset_args[@]}"
+  )
+  if [[ -n "$SGBENCH_MAX_CONCURRENCY" ]]; then
+    bench_cmd+=(--max-concurrency "$SGBENCH_MAX_CONCURRENCY")
+  fi
+  if [[ -n "$SGBENCH_EXTRA_REQUEST_BODY" ]]; then
+    bench_cmd+=(--extra-request-body "$SGBENCH_EXTRA_REQUEST_BODY")
+  fi
+  if [[ "$SGBENCH_PROFILE" == "1" ]]; then
+    bench_cmd+=(--profile)
+    if [[ "$SGBENCH_PROFILE_BY_STAGE" == "1" ]]; then
+      bench_cmd+=(--profile-by-stage)
+    fi
+    if [[ -n "$SGBENCH_PROFILE_NUM_STEPS" ]]; then
+      bench_cmd+=(--profile-num-steps "$SGBENCH_PROFILE_NUM_STEPS")
+    fi
+    if [[ -n "$profile_output_dir" ]]; then
+      bench_cmd+=(--profile-output-dir "$profile_output_dir")
+    fi
+    if [[ -n "$SGBENCH_PROFILE_PREFIX" ]]; then
+      bench_cmd+=(--profile-prefix "$SGBENCH_PROFILE_PREFIX")
+    fi
+  fi
+  start_load_sampler "$port" "$load_file"
+  run_cmd "${bench_cmd[@]}"
+  stop_load_sampler
+  stop_sglang_server
+  trap - EXIT
+}
+
+sgbench() {
+  preflight
+  validate_sgbench_protocol
+  echo "SGBENCH_OUT_DIR: $SGBENCH_OUT_DIR"
+  echo "SGBENCH_DATASET: $SGBENCH_DATASET"
+  echo "SGBENCH_MODES: $SGBENCH_MODES"
+  echo "SGBENCH_NUM_PROMPTS: $SGBENCH_NUM_PROMPTS"
+  echo "SGBENCH_MAX_CONCURRENCY: $SGBENCH_MAX_CONCURRENCY"
+  echo "SGBENCH_REPS: $SGBENCH_REPS"
+  echo "SGBENCH_EVIDENCE_CLASS: $SGBENCH_EVIDENCE_CLASS"
+  echo "SGBENCH_MAX_RUNNING_REQUESTS: ${SGBENCH_MAX_RUNNING_REQUESTS:-auto}"
+  echo "SGBENCH_PROFILE: $SGBENCH_PROFILE"
+  echo "SGBENCH_PROFILE_BY_STAGE: $SGBENCH_PROFILE_BY_STAGE"
+  echo "SGBENCH_PROFILE_NUM_STEPS: $SGBENCH_PROFILE_NUM_STEPS"
+  echo "SGBENCH_PROFILE_OUTPUT_DIR: $SGBENCH_PROFILE_OUTPUT_DIR"
+  echo "SGBENCH_PROFILE_PREFIX: $SGBENCH_PROFILE_PREFIX"
+  echo "SGBENCH_ORDER_POLICY: $SGBENCH_ORDER_POLICY"
+  echo "SGBENCH_BASELINE_SERVER_PROFILE: $SGBENCH_BASELINE_SERVER_PROFILE"
+  echo "SGBENCH_CANDIDATE_SERVER_PROFILE: $SGBENCH_CANDIDATE_SERVER_PROFILE"
+  echo "SGBENCH_PREFILL_POLICY: $SGBENCH_PREFILL_POLICY"
+  echo "SGBENCH_PREFILL_BLOCK_SIZE: $SGBENCH_PREFILL_BLOCK_SIZE"
+  echo "SGBENCH_PREFILL_VETO_TAGS: $SGBENCH_PREFILL_VETO_TAGS"
+  echo "SGBENCH_PREFILL_VETO_TEXT_RE: $SGBENCH_PREFILL_VETO_TEXT_RE"
+  echo "SGBENCH_DECODE_TOPKS: $SGBENCH_DECODE_TOPKS"
+  echo "SGBENCH_DECODE_POLICY: $SGBENCH_DECODE_POLICY"
+  echo "SGBENCH_DECODE_SPAN: $SGBENCH_DECODE_SPAN"
+  echo "SGBENCH_DECODE_BLOCK_SIZE: $SGBENCH_DECODE_BLOCK_SIZE"
+  echo "SGBENCH_DECODE_GATHER: $SGBENCH_DECODE_GATHER"
+  echo "SGBENCH_DECODE_COHORT: $SGBENCH_DECODE_COHORT"
+  echo "SGBENCH_DECODE_VP_GRAPH: $SGBENCH_DECODE_VP_GRAPH"
+  echo "SGBENCH_DECODE_STAGE_SCHED: $SGBENCH_DECODE_STAGE_SCHED"
+  echo "SGBENCH_DECODE_STAGE_POLICY: $SGBENCH_DECODE_STAGE_POLICY"
+  echo "SGBENCH_DECODE_STAGE_BLOCK_SYNC: $SGBENCH_DECODE_STAGE_BLOCK_SYNC"
+  echo "SGBENCH_DECODE_STAGE_FUSE_MIXED: $SGBENCH_DECODE_STAGE_FUSE_MIXED"
+  echo "SGBENCH_VP_ASYNC_KV: $SGBENCH_VP_ASYNC_KV"
+  echo "SGBENCH_VP_ASYNC_KV_DEFER_DRAIN: $SGBENCH_VP_ASYNC_KV_DEFER_DRAIN"
+  echo "SGBENCH_VP_ASYNC_KV_SCOPED: $SGBENCH_VP_ASYNC_KV_SCOPED"
+  echo "SGBENCH_VP_ASYNC_KV_BATCHED: $SGBENCH_VP_ASYNC_KV_BATCHED"
+  echo "SGBENCH_VP_ASYNC_KV_BATCHED_MAX_ROWS: $SGBENCH_VP_ASYNC_KV_BATCHED_MAX_ROWS"
+  echo "SGBENCH_VP_ASYNC_KV_BATCHED_TOKEN_LAUNCH: $SGBENCH_VP_ASYNC_KV_BATCHED_TOKEN_LAUNCH"
+  echo "SGBENCH_VP_ASYNC_KV_LOOKAHEAD_RELEASE: $SGBENCH_VP_ASYNC_KV_LOOKAHEAD_RELEASE"
+  echo "SGBENCH_VP_ASYNC_KV_RELEASE_LAYER: $SGBENCH_VP_ASYNC_KV_RELEASE_LAYER"
+  echo "SGBENCH_VP_KV_ONLY_QKV: $SGBENCH_VP_KV_ONLY_QKV"
+  echo "SGBENCH_VP_FOREGROUND_STREAM_PRIORITY: $SGBENCH_VP_FOREGROUND_STREAM_PRIORITY"
+  echo "SGBENCH_DECODE_VETO_TAGS: $SGBENCH_DECODE_VETO_TAGS"
+  echo "SGBENCH_DECODE_VETO_TEXT_RE: $SGBENCH_DECODE_VETO_TEXT_RE"
+  echo "SGBENCH_FD_VP_TRACE: $SGBENCH_FD_VP_TRACE"
+  echo "SGBENCH_FD_VP_TRACE_TIMING: $SGBENCH_FD_VP_TRACE_TIMING"
+  echo "SGBENCH_FD_VP_TRACE_EVERY: $SGBENCH_FD_VP_TRACE_EVERY"
+  echo "SGBENCH_FD_VP_TRACE_FILE: $SGBENCH_FD_VP_TRACE_FILE"
+  echo "SGBENCH_FD_VP_TRACE_MASKS: $SGBENCH_FD_VP_TRACE_MASKS"
+  echo "SGBENCH_FD_VP_TRACE_MASK_CAP: $SGBENCH_FD_VP_TRACE_MASK_CAP"
+  echo "SGBENCH_FD_VP_MIXED_DECODE_SUBBATCH: $SGBENCH_FD_VP_MIXED_DECODE_SUBBATCH"
+  echo "SGBENCH_FD_VP_DECODE_SUBBATCH_CACHE: $SGBENCH_FD_VP_DECODE_SUBBATCH_CACHE"
+  echo "SGBENCH_FD_VP_MINIMAL_KV_SUBBATCH: $SGBENCH_FD_VP_MINIMAL_KV_SUBBATCH"
+  echo "SGBENCH_FD_VP_SCHED_GRAPH: $SGBENCH_FD_VP_SCHED_GRAPH"
+  echo "SGBENCH_FD_VP_ASYNC_KV: $SGBENCH_FD_VP_ASYNC_KV"
+  echo "SGBENCH_FD_VP_ASYNC_KV_DEFER_DRAIN: $SGBENCH_FD_VP_ASYNC_KV_DEFER_DRAIN"
+  echo "SGBENCH_FD_VP_ASYNC_KV_SCOPED: $SGBENCH_FD_VP_ASYNC_KV_SCOPED"
+  echo "SGBENCH_FD_VP_MIXED_DECODE_ASYNC_KV: $SGBENCH_FD_VP_MIXED_DECODE_ASYNC_KV"
+  echo "SGBENCH_FD_VP_MIXED_DECODE_ASYNC_MIN_ROWS: $SGBENCH_FD_VP_MIXED_DECODE_ASYNC_MIN_ROWS"
+  echo "SGBENCH_FD_VP_MIXED_DECODE_ASYNC_MIN_KEPT_ROWS: $SGBENCH_FD_VP_MIXED_DECODE_ASYNC_MIN_KEPT_ROWS"
+  echo "SGBENCH_FD_VP_MIXED_DECODE_ASYNC_MIN_SKIP_ROWS: $SGBENCH_FD_VP_MIXED_DECODE_ASYNC_MIN_SKIP_ROWS"
+  echo "SGBENCH_FD_VP_MIXED_DECODE_ASYNC_PATTERN_WARMUP: $SGBENCH_FD_VP_MIXED_DECODE_ASYNC_PATTERN_WARMUP"
+  echo "SGBENCH_FD_VP_MIXED_DECODE_ASYNC_PATTERN_SCOPE: $SGBENCH_FD_VP_MIXED_DECODE_ASYNC_PATTERN_SCOPE"
+  echo "SGBENCH_FD_VP_MIXED_DECODE_ASYNC_COHORT_TABLE: $SGBENCH_FD_VP_MIXED_DECODE_ASYNC_COHORT_TABLE"
+  echo "SGBENCH_FD_VP_MIXED_DECODE_ASYNC_COHORT_MAX_ENTRIES: $SGBENCH_FD_VP_MIXED_DECODE_ASYNC_COHORT_MAX_ENTRIES"
+  echo "SGBENCH_FD_VP_GLOBAL_DECODE_SUBBATCH_CACHE: $SGBENCH_FD_VP_GLOBAL_DECODE_SUBBATCH_CACHE"
+  echo "SGBENCH_FD_VP_GLOBAL_DECODE_SUBBATCH_CACHE_MAX_ENTRIES: $SGBENCH_FD_VP_GLOBAL_DECODE_SUBBATCH_CACHE_MAX_ENTRIES"
+  echo "SGBENCH_FD_VP_MIXED_FULL_BATCH_SPLIT: $SGBENCH_FD_VP_MIXED_FULL_BATCH_SPLIT"
+  echo "SGBENCH_FD_VP_MIXED_POST_WEIGHT: $SGBENCH_FD_VP_MIXED_POST_WEIGHT"
+  echo "SGBENCH_FD_VP_MIXED_INPLACE_WEIGHT: $SGBENCH_FD_VP_MIXED_INPLACE_WEIGHT"
+  echo "SGBENCH_FD_VP_MIXED_PARALLEL_BRANCHES: $SGBENCH_FD_VP_MIXED_PARALLEL_BRANCHES"
+  echo "SGBENCH_FD_VP_MIXED_NEAR_ALL_RUN_FULL_MLP: $SGBENCH_FD_VP_MIXED_NEAR_ALL_RUN_FULL_MLP"
+  echo "SGBENCH_FD_VP_MIXED_NEAR_ALL_RUN_MAX_SKIP_ROWS: $SGBENCH_FD_VP_MIXED_NEAR_ALL_RUN_MAX_SKIP_ROWS"
+  echo "SGBENCH_FD_VP_MIXED_FULL_PROJECT_BASE: $SGBENCH_FD_VP_MIXED_FULL_PROJECT_BASE"
+  echo "SGBENCH_FD_VP_MIXED_REUSE_OUTPUT_BUFFER: $SGBENCH_FD_VP_MIXED_REUSE_OUTPUT_BUFFER"
+  echo "SGBENCH_FD_VP_MIXED_REUSE_OUTPUT_BUFFER_MAX_ENTRIES: $SGBENCH_FD_VP_MIXED_REUSE_OUTPUT_BUFFER_MAX_ENTRIES"
+  echo "SGBENCH_FD_VP_MIXED_SHAPE_LANE_BUFFERS: $SGBENCH_FD_VP_MIXED_SHAPE_LANE_BUFFERS"
+  echo "SGBENCH_FD_VP_MIXED_SHAPE_LANE_BUFFER_MAX_ENTRIES: $SGBENCH_FD_VP_MIXED_SHAPE_LANE_BUFFER_MAX_ENTRIES"
+  echo "SGBENCH_FD_VP_MIXED_SPLIT_GRAPH: $SGBENCH_FD_VP_MIXED_SPLIT_GRAPH"
+  echo "SGBENCH_FD_VP_MIXED_SPLIT_GRAPH_MAX_ENTRIES: $SGBENCH_FD_VP_MIXED_SPLIT_GRAPH_MAX_ENTRIES"
+  echo "SGBENCH_FD_VP_MIXED_SPLIT_GRAPH_MAX_ROWS: $SGBENCH_FD_VP_MIXED_SPLIT_GRAPH_MAX_ROWS"
+  echo "SGBENCH_FD_VP_MIXED_SPLIT_GRAPH_MIN_FREE_MB: $SGBENCH_FD_VP_MIXED_SPLIT_GRAPH_MIN_FREE_MB"
+  echo "SGBENCH_FD_VP_STABLE_MIXED_SPLIT_BUFFERS: $SGBENCH_FD_VP_STABLE_MIXED_SPLIT_BUFFERS"
+  echo "SGBENCH_FD_VP_STABLE_MIXED_SPLIT_BUFFER_MAX_ENTRIES: $SGBENCH_FD_VP_STABLE_MIXED_SPLIT_BUFFER_MAX_ENTRIES"
+  echo "SGBENCH_FD_VP_ALL_SKIP_KV_ONLY_QKV: $SGBENCH_FD_VP_ALL_SKIP_KV_ONLY_QKV"
+  echo "SGBENCH_FD_VP_FUSED_ROUTER_DEC_HEAD: $SGBENCH_FD_VP_FUSED_ROUTER_DEC_HEAD"
+  echo "SGBENCH_FD_VP_ROUTER_GRAPH: $SGBENCH_FD_VP_ROUTER_GRAPH"
+  echo "SGBENCH_FD_VP_ROUTER_GRAPH_MAX_ROWS: $SGBENCH_FD_VP_ROUTER_GRAPH_MAX_ROWS"
+  echo "SGBENCH_FD_VP_ROUTER_GRAPH_MAX_ENTRIES: $SGBENCH_FD_VP_ROUTER_GRAPH_MAX_ENTRIES"
+  echo "SGBENCH_FD_VP_FUSED_PROJECT_INPUT: $SGBENCH_FD_VP_FUSED_PROJECT_INPUT"
+  echo "SGBENCH_FD_VP_STAGE_ROUTE: $SGBENCH_FD_VP_STAGE_ROUTE"
+  echo "SGBENCH_FD_VP_STAGE_ROUTE_FUSE_HOMOGENEOUS: $SGBENCH_FD_VP_STAGE_ROUTE_FUSE_HOMOGENEOUS"
+  echo "SGBENCH_FD_VP_STAGE_ROUTE_RUNAHEAD: $SGBENCH_FD_VP_STAGE_ROUTE_RUNAHEAD"
+  echo "SGBENCH_FD_VP_STAGE_ROUTE_MIN_SPLIT_SKIP_ROWS: $SGBENCH_FD_VP_STAGE_ROUTE_MIN_SPLIT_SKIP_ROWS"
+  echo "SGBENCH_FD_VP_STAGE_ROUTE_MIN_SPLIT_RUN_ROWS: $SGBENCH_FD_VP_STAGE_ROUTE_MIN_SPLIT_RUN_ROWS"
+  echo "SGBENCH_FD_VP_COALESCED_LAYER: $SGBENCH_FD_VP_COALESCED_LAYER"
+  echo "SGBENCH_FD_VP_COALESCED_MIN_SKIP_ROWS: $SGBENCH_FD_VP_COALESCED_MIN_SKIP_ROWS"
+  echo "SGBENCH_FD_VP_COALESCED_MIN_RUN_ROWS: $SGBENCH_FD_VP_COALESCED_MIN_RUN_ROWS"
+  echo "FD_WEIGHTS: $FD_WEIGHTS"
+  write_sgbench_manifest
+  local reps="$SGBENCH_REPS"
+  IFS=',' read -r -a modes <<<"$SGBENCH_MODES"
+  for rep in $(seq 1 "$reps"); do
+    local run_modes=("${modes[@]}")
+    if [[ "$SGBENCH_ORDER_POLICY" == "counterbalanced" && $((rep % 2)) -eq 0 ]]; then
+      run_modes=()
+      for ((i=${#modes[@]}-1; i>=0; i--)); do
+        run_modes+=("${modes[i]}")
+      done
+    elif [[ "$SGBENCH_ORDER_POLICY" != "fixed" && "$SGBENCH_ORDER_POLICY" != "counterbalanced" ]]; then
+      die "unknown SGBENCH_ORDER_POLICY=$SGBENCH_ORDER_POLICY; expected fixed or counterbalanced"
+    fi
+    echo "SGBENCH_REP_${rep}_ORDER: ${run_modes[*]}"
+    for raw_mode in "${run_modes[@]}"; do
+      mode="$(echo "$raw_mode" | xargs)"
+      [[ -n "$mode" ]] || continue
+      sgbench_mode_once "$mode" "$rep"
+    done
+  done
+}
+
+sgbench_smoke() {
+  SGBENCH_EVIDENCE_CLASS=smoke
+  SGBENCH_DATASET=random
+  SGBENCH_NUM_PROMPTS=8
+  SGBENCH_MAX_CONCURRENCY=8
+  SGBENCH_RANDOM_INPUT_LEN=512
+  SGBENCH_RANDOM_OUTPUT_LEN=8
+  SGBENCH_REPS=1
+  sgbench
+}
+
+sgbench_flexidepth() {
+  MODEL="$FD_BASE_MODEL"
+  [[ -z "${SGBENCH_MODES_WAS_SET:-}" ]] && \
+    SGBENCH_MODES="vanilla,vanilla_matched,flexidepth,flexidepth_vp"
+  [[ -z "${SGBENCH_DATASET_WAS_SET:-}" ]] && SGBENCH_DATASET="sharegpt"
+  [[ -z "${SGBENCH_BACKEND_WAS_SET:-}" ]] && SGBENCH_BACKEND="sglang"
+  [[ -z "${SGBENCH_NUM_PROMPTS_WAS_SET:-}" ]] && SGBENCH_NUM_PROMPTS=1024
+  [[ -z "${SGBENCH_MAX_CONCURRENCY_WAS_SET:-}" ]] && SGBENCH_MAX_CONCURRENCY=256
+  [[ -z "${SGBENCH_OUTPUT_LEN_WAS_SET:-}" ]] && SGBENCH_OUTPUT_LEN=256
+  [[ -z "${SGBENCH_CONTEXT_LEN_WAS_SET:-}" ]] && SGBENCH_CONTEXT_LEN=""
+  [[ -z "${SGBENCH_MAX_RUNNING_REQUESTS_WAS_SET:-}" ]] && SGBENCH_MAX_RUNNING_REQUESTS=""
+  [[ -z "${SGBENCH_CHUNKED_PREFILL_SIZE_WAS_SET:-}" ]] && SGBENCH_CHUNKED_PREFILL_SIZE=""
+  sgbench
+}
+
+sgbench_score() {
+  preflight
+  [[ "$SGBENCH_DATASET" == "longbench_v2" ]] || die "sgbench-score currently supports SGBENCH_DATASET=longbench_v2"
+  [[ -n "$SGBENCH_SCORE_FILE" ]] || die "set SGBENCH_SCORE_FILE=/path/to/longbench_v2_*.jsonl"
+  run_cmd python test/vp/score_sgbench_longbench_v2.py \
+    --bench-jsonl "$SGBENCH_SCORE_FILE" \
+    --model "$MODEL" \
+    --num-prompts "$SGBENCH_NUM_PROMPTS" \
+    --sharegpt-output-len "$SGBENCH_OUTPUT_LEN" \
+    --sharegpt-context-len "$SGBENCH_CONTEXT_LEN" \
+    --seed "$SGBENCH_SEED"
+}
+
+all() {
+  stage_qwen3
+  smoke_decode
+  profile_decode
+  ci_decode
+  sgbench
+}
+
+case "$ACTION" in
+  preflight) preflight ;;
+  stage-qwen3) stage_qwen3 ;;
+  stage-flexidepth) stage_flexidepth ;;
+  smoke-decode) smoke_decode ;;
+  profile-decode) profile_decode ;;
+  ci-decode) ci_decode ;;
+  headline-gov) headline_gov ;;
+  headline-mixed) headline_mixed ;;
+  headline-multinews) headline_multinews ;;
+  sgbench) sgbench ;;
+  sgbench-smoke) sgbench_smoke ;;
+  sgbench-flexidepth) sgbench_flexidepth ;;
+  sgbench-score) sgbench_score ;;
+  all) all ;;
+  *)
+    cat >&2 <<'EOF'
+Usage:
+  ACTION=preflight|stage-qwen3|stage-flexidepth|smoke-decode|profile-decode|ci-decode|headline-gov|headline-mixed|headline-multinews|sgbench|sgbench-smoke|sgbench-flexidepth|sgbench-score|all \
+  DRY_RUN=1 bash test/vp/vast_a100_ladder.sh
+
+Set DRY_RUN=0 only after the Vast A100 instance is intentionally running.
+This script never starts, stops, recycles, or destroys a Vast instance.
+For official SGLang serving runs, use ACTION=sgbench and --output-details files
+under SGBENCH_OUT_DIR. ACTION=sgbench is diagnostic-only and cannot support a
+performance decision. Use test/vp/launch_qps_server.py plus
+test/vp/run_qps_evaluation.py for the open-loop labeled workload and omit
+client max-concurrency. Each diagnostic
+run still saves `/server_info` and sampled running/waiting request occupancy.
+Explicit SGBENCH_MAX_RUNNING_REQUESTS values are allowed only with
+SGBENCH_SERVER_CAP_PURPOSE=pressure and are never headline evidence.
+Set SGBENCH_ATTENTION_BACKEND to compare an explicit SGLang attention backend;
+leave it empty to retain SGLang's model/hardware default.
+SGBENCH_MODES supports vanilla,vanilla_matched,dynamic,dynamic_decode,dynamic_both,flexidepth,flexidepth_vp,flexidepth_vp_async,flexidepth_vp_sched,flexidepth_vp_sched_async.
+vanilla uses SGBENCH_BASELINE_SERVER_PROFILE; vanilla_matched uses the same
+SGBENCH_CANDIDATE_SERVER_PROFILE as the skipper mode.
+FDVP modes also accept _mixed_async/_no_mixed_async, _stablebuf/_no_stablebuf,
+_postweight/_no_postweight, and _inplaceweight/_no_inplaceweight suffixes to
+override the corresponding SGBENCH_FD_VP knobs for that mode label. They also
+accept _nearallrun/_no_nearallrun for
+SGBENCH_FD_VP_MIXED_NEAR_ALL_RUN_FULL_MLP and
+_fullprojbase/_no_fullprojbase for
+SGBENCH_FD_VP_MIXED_FULL_PROJECT_BASE, plus _reuseout/_no_reuseout for
+SGBENCH_FD_VP_MIXED_REUSE_OUTPUT_BUFFER and _shapelane/_no_shapelane for
+SGBENCH_FD_VP_MIXED_SHAPE_LANE_BUFFERS. They also accept
+_splitgraph/_no_splitgraph for SGBENCH_FD_VP_MIXED_SPLIT_GRAPH. Suffixes can
+be composed. Use _routerfusion/_no_routerfusion for
+SGBENCH_FD_VP_FUSED_ROUTER_DEC_HEAD.
+Use _routergraph/_no_routergraph for exact per-layer router CUDA graphs keyed by
+the repeated row shape; bound them with SGBENCH_FD_VP_ROUTER_GRAPH_MAX_ROWS and
+SGBENCH_FD_VP_ROUTER_GRAPH_MAX_ENTRIES.
+Use _projfusion/_no_projfusion for the cached merged gate/down input projection
+inside the FlexiDepth compensation adapter.
+Use _fdstageroute/_no_fdstageroute for the scheduler-owned two-phase
+FlexiDepth route and homogeneous RUN/JUMP stage path.
+Use _fusehomroute/_no_fusehomroute to execute homogeneous route decisions in
+the route dispatch instead of scheduling a second execution dispatch.
+Use _routerunahead/_no_routerunahead to continue through consecutive routed
+layers until a profitable mixed split or the final-logits barrier.
+Use _stageinline with SGBENCH_FD_VP_STAGE_ROUTE_MIN_SPLIT_{SKIP,RUN}_ROWS to
+keep undersized mixed cohorts on the exact inline path; _no_stageinline resets
+both split thresholds to one for a matched control.
+Use _layercoalesce/_no_layercoalesce for in-model scheduler-owned homogeneous
+RUN/JUMP cohorts that rejoin at each routed layer.
+Use _gpusubbatch/_no_gpusubbatch to build dynamic retained/skip decode
+subbatches entirely on GPU when SGBENCH_ATTENTION_BACKEND=triton.
+Use _parallelbranches/_no_parallelbranches to isolate concurrent exact
+RUN-MLP and compensation execution for mixed FlexiDepth layers.
+Set SGBENCH_CANDIDATE_SERVER_PROFILE=graphless_overlap to keep the production
+overlap scheduler and radix cache while disabling only stock CUDA graphs for
+data-dependent routed models. matched_eager disables all three for mechanism
+controls.
+Set SGBENCH_CANDIDATE_SERVER_PROFILE=breakable_dynamic to capture fixed model
+regions and run routed FlexiDepth layers at explicit eager graph breaks.
+Use SGBENCH_CUDA_GRAPH_MAX_BS_DECODE and
+SGBENCH_CUDA_GRAPH_MAX_BS_PREFILL to bound graph capture on smaller GPUs.
+Dynamic decode modes accept `_stagesched` / `_no_stagesched` to isolate the
+production virtual-stage queue bridge. Compose `_scopedasync` or
+`_no_scopedasync` to select generic request-scoped asynchronous Project-Only
+K/V completion independently of the stage policy. Use `_fusemixed` or
+`_no_fusemixed` to select one shared-QKV mixed dispatch versus split lanes.
+`_batchedasync` also applies to FDVP async modes and defers repeated same-layer
+K/V completion into the request-scoped batching queue.
+Use `_batchedasync` for dependency-triggered layer-batched completion and
+`_tokenasync` to launch retained work after the current token's foreground
+work is queued. `_lookaheadasync` retains stable repair inputs and releases
+prior-token work inside routed layer `SGBENCH_VP_ASYNC_KV_RELEASE_LAYER` of the
+next decode, reusing its existing eager graph break; `_streamasync` remains the
+immediate side-stream ablation.
+Compose `_kvonly` to project only K/V rows from a supported fused-QKV weight.
+Compose `_fgpriority` to run foreground model work on CUDA priority -1 while
+the asynchronous K/V repair stream remains at default priority; use
+`_no_fgpriority` for the matched control.
+For FlexiDepth without training, run ACTION=stage-flexidepth once, then
+ACTION=sgbench-flexidepth with MODEL=NousResearch/Meta-Llama-3-8B-Instruct.
+EOF
+    exit 2
+    ;;
+esac
