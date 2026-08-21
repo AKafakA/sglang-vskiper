@@ -89,6 +89,12 @@ from sglang.srt.utils import (
     require_attn_tp_gather,
     require_mlp_tp_gather,
 )
+from sglang.srt.vpipe.attestation import (
+    full_graph_capture_synthetic_request_ids,
+)
+from sglang.srt.vpipe.config import (
+    full_graph_request_identity_required,
+)
 
 # Suppress Dynamo warning about tracing through lru_cache-wrapped functions.
 warnings.filterwarnings("ignore", message=".*lru_cache.*", module="torch._dynamo")
@@ -96,6 +102,10 @@ logger = logging.getLogger(__name__)
 
 _is_hip = is_hip()
 _use_aiter = get_bool_env_var("SGLANG_USE_AITER") and _is_hip
+# Boot-constant, same idiom as runner_utils/buffers.py: True when the
+# full-graph policy or route evidence (DEVICE_ROUTE_DIGEST) keys per-request
+# state by forward_batch.rids_int.
+_VP_REQUEST_IDENTITY_REQUIRED = full_graph_request_identity_required()
 
 
 def prefill_failure_msg(backend_name: str) -> str:
@@ -247,6 +257,25 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
         self._prefill_static_buffers: Optional[Dict[str, torch.Tensor]] = None
         self.static_draft_hidden_states: Optional[torch.Tensor] = None
         self.layer_model = None
+        # D-R2 (2026-08-05 V-rich-c3 boot failure): with
+        # SGLANG_FD_FULL_GRAPH_DEVICE_ROUTE_DIGEST=1 the route-digest/tape
+        # plumbing keys per-request evidence by forward_batch.rids_int and
+        # fails closed ("full-graph skipper requires stable logical request
+        # IDs") — capture-time dummy batches carried none, so prefill graph
+        # capture killed the boot at literal default (prefill graphs ON).
+        # Give capture a static int64 buffer of deterministic synthetic ids;
+        # load_batch overwrites [:bs] with the live hashed rids before every
+        # replay, and ModelRunner init zeroes the digest counters after all
+        # graph capture, so the synthetic ids never reach runtime accounting.
+        # Initialized BEFORE backend construction for the same reason as
+        # _prefill_static_buffers: TcPiecewise's compile pass calls
+        # capture_prepare during __init__. None when identity is not
+        # required -> byte-identical non-FD / digest-off boots.
+        self.static_rids_int: Optional[torch.Tensor] = None
+        if _VP_REQUEST_IDENTITY_REQUIRED:
+            self.static_rids_int = full_graph_capture_synthetic_request_ids(
+                self.max_bs, device=self.device
+            )
         try:
             self.backend = resolve_prefill_backend(self)
         except RuntimeError as e:
@@ -689,6 +718,14 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
                 global_forward_mode=ForwardMode.EXTEND,
                 lora_ids=None,
                 return_pooled_hidden_states=self.capture_return_pooled_hidden_states,
+                # D-R2: synthetic stable request ids so the route-digest
+                # plumbing captures valid per-request keying; replay
+                # overwrites the buffer head with live rids in load_batch.
+                rids_int=(
+                    self.static_rids_int[:bs]
+                    if self.static_rids_int is not None
+                    else None
+                ),
             )
             self.tbo_plugin.capture_one_batch_size(forward_batch, num_tokens=num_tokens)
         return forward_batch, self.model_runner.attn_backend
@@ -754,7 +791,11 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
         self.backend.capture_one(
             ShapeKey(size=num_tokens),
             run_once,
-            dummies=None,
+            dummies=(
+                forward_batch
+                if isinstance(self.backend, BreakableCudaGraphBackend)
+                else None
+            ),
             post_warmup_hook=post_warmup_hook,
         )
 
@@ -776,6 +817,18 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
             raw_num_tokens=num_tokens,
             padded_num_tokens=static_num_tokens,
         )
+
+        # D-R2: refresh the static rid buffer with the live hashed rids so
+        # replay never runs the digest plumbing on capture-time synthetic
+        # identities. Fail-closed like the decode path
+        # (runner_utils/buffers.py populate_from_forward_batch).
+        if self.static_rids_int is not None:
+            if forward_batch.rids_int is None:
+                raise RuntimeError(
+                    "full-graph policy or route evidence requires "
+                    "stable request IDs"
+                )
+            self.static_rids_int[:bs].copy_(forward_batch.rids_int)
 
         registry = self.buffer_registry
 
@@ -873,6 +926,13 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
             return_pooled_hidden_states=(
                 self.capture_return_pooled_hidden_states
                 or forward_batch.return_pooled_hidden_states
+            ),
+            # D-R2: same static buffer the captured/traced digest plumbing
+            # saw at capture, refreshed above with the live hashed rids.
+            rids_int=(
+                self.static_rids_int[:bs]
+                if self.static_rids_int is not None
+                else None
             ),
         )
 

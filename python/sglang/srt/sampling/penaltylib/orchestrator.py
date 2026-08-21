@@ -52,6 +52,16 @@ class BatchedPenalizerOrchestrator:
         for penalizer in self.penalizers.values():
             penalizer.cumulate_output_tokens(output_ids=output_ids)
 
+    def cumulate_output_tokens_selected(
+        self, output_ids: torch.Tensor, selected_indices: torch.Tensor
+    ) -> None:
+        """Advance penalty history for an independently admitted row subset."""
+
+        for penalizer in self.penalizers.values():
+            penalizer.cumulate_output_tokens_selected(
+                output_ids=output_ids, selected_indices=selected_indices
+            )
+
     def apply(self, logits: torch.Tensor, repeat: Optional[int] = None):
         """
         Apply all penalizers to the logits in-place.
@@ -215,6 +225,15 @@ class _BatchedPenalizer(abc.ABC):
 
         self._cumulate_output_tokens(output_ids=output_ids)
 
+    def cumulate_output_tokens_selected(
+        self, output_ids: torch.Tensor, selected_indices: torch.Tensor
+    ) -> None:
+        if not self._is_prepared:
+            return
+        self._cumulate_output_tokens_selected(
+            output_ids=output_ids, selected_indices=selected_indices
+        )
+
     def apply(self, logits: torch.Tensor) -> torch.Tensor:
         if not self._is_prepared:
             return
@@ -256,6 +275,14 @@ class _BatchedPenalizer(abc.ABC):
         Cumulate the output tokens.
         Orchestrator will call this function to feed the output tokens to the penalizer.
         """
+        pass
+
+    @abc.abstractmethod
+    def _cumulate_output_tokens_selected(
+        self, output_ids: torch.Tensor, selected_indices: torch.Tensor
+    ) -> None:
+        """Cumulate one token for only the selected batch rows."""
+
         pass
 
     @abc.abstractmethod

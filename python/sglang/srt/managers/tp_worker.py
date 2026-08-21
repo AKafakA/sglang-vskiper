@@ -519,6 +519,14 @@ class TpModelWorker(BaseTpWorker):
             batch_result = GenerationBatchResult(
                 logits_output=logits_output,
                 can_run_cuda_graph=can_run_cuda_graph,
+                vp_rebatching_completion=out.vp_rebatching_completion,
+                vp_rebatching_pending=out.vp_rebatching_pending,
+                vp_route_mask=out.vp_route_mask,
+                vp_route_executed=out.vp_route_executed,
+                vp_route_is_project=out.vp_route_is_project,
+                vp_route_advance_count=out.vp_route_advance_count,
+                vp_route_layer=out.vp_route_layer,
+                vp_route_used_attention=out.vp_route_used_attention,
                 expert_distribution_metrics=out.expert_distribution_metrics,
                 routed_experts_output=out.routed_experts_output,
                 indexer_topk_output=out.indexer_topk_output,
@@ -526,6 +534,26 @@ class TpModelWorker(BaseTpWorker):
 
             if is_verify:
                 # Skip sampling; spec_v2 worker fires its own publish post-verify.
+                return batch_result
+
+            if out.vp_rebatching_pending:
+                if (
+                    out.vp_rebatching_completion is not None
+                    or logits_output is not None
+                ):
+                    raise RuntimeError(
+                        "pending rebatching round cannot publish completion logits"
+                    )
+                return batch_result
+
+            if out.vp_rebatching_completion is not None:
+                if logits_output is None:
+                    raise RuntimeError(
+                        "rebatching completion reached the worker without logits"
+                    )
+                # Completion order can differ from the incoming parent batch.
+                # The scheduler resolves exact work IDs and builds the matching
+                # sampling subset before processing this result.
                 return batch_result
 
             if (
@@ -544,10 +572,15 @@ class TpModelWorker(BaseTpWorker):
                 return batch_result
 
             if not forward_batch.is_prefill_only:
-                # For normal requests, sample the next token ids.
-                batch_result.next_token_ids = self.model_runner.sample(
-                    logits_output, forward_batch
-                )
+                if logits_output is None:
+                    # Virtual Pipelining intermediate block: no logits, no token this
+                    # forward. Leave next_token_ids=None -> has_sampled_token_ids False.
+                    pass
+                else:
+                    # For normal requests, sample the next token ids.
+                    batch_result.next_token_ids = self.model_runner.sample(
+                        logits_output, forward_batch
+                    )
             else:
                 # For prefill-only requests, create dummy token IDs on CPU
                 # The size should match the batch size (number of sequences), not total tokens

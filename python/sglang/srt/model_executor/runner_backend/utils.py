@@ -82,6 +82,24 @@ def resolve_decode_backend(
 
         return FullXPUGraphBackend(cuda_graph_runner)
 
+    from sglang.srt.vpipe.attestation import (
+        full_graph_conditional_graph_enabled,
+    )
+
+    if full_graph_conditional_graph_enabled():
+        if backend_name != Backend.FULL:
+            raise ValueError(
+                "FlexiDepth conditional graphs require the full decode backend"
+            )
+        from sglang.srt.vpipe.graph_backend import (
+            FlexiDepthConditionalCudaGraphBackend,
+        )
+
+        return FlexiDepthConditionalCudaGraphBackend(
+            cuda_graph_runner,
+            enable_memory_saver=enable_memory_saver,
+        )
+
     if backend_name == Backend.BREAKABLE:
         return BreakableCudaGraphBackend(
             cuda_graph_runner,

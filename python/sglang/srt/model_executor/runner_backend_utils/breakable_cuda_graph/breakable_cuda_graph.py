@@ -46,6 +46,7 @@ __all__ = [
     "BreakableCUDAGraph",
     "BreakableCUDAGraphCapture",
     "break_graph",
+    "is_capturing_breakable_cuda_graph",
 ]
 
 
@@ -76,6 +77,12 @@ def get_current_stream(device: torch.device | None = None) -> torch.cuda.Stream:
     if stream is None:
         return torch.cuda.current_stream(device)
     return stream
+
+
+def is_capturing_breakable_cuda_graph() -> bool:
+    """Return whether this thread is constructing a segmented CUDA graph."""
+
+    return _current_capture_var.get() is not None
 
 
 def _capture_status(stream_ptr: int) -> "rt.cudaStreamCaptureStatus":
@@ -197,6 +204,21 @@ def _copy_output(dst: Any, src: Any) -> Any:
             else:
                 dst[key] = src_val
         return dst
+
+    if isinstance(dst, list) and isinstance(src, list) and len(dst) == len(src):
+        for idx, (dst_val, src_val) in enumerate(zip(dst, src)):
+            dst[idx] = _copy_output(dst_val, src_val)
+        return dst
+
+    if isinstance(dst, tuple) and isinstance(src, tuple) and len(dst) == len(src):
+        copied = tuple(
+            _copy_output(dst_val, src_val)
+            for dst_val, src_val in zip(dst, src)
+        )
+        # Tensor-only tuples, including decoder-layer (hidden, residual), are
+        # updated in place so later captured segments keep their stable input
+        # addresses. Fall back to a rebuilt tuple for immutable scalar fields.
+        return dst if all(new is old for new, old in zip(copied, dst)) else copied
 
     return src
 

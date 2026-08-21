@@ -150,6 +150,26 @@ class EnvBool(EnvField):
         raise ValueError(f'"{value}" is not a valid boolean value')
 
 
+class EnvBoolStrict(EnvBool):
+    """EnvBool whose `get()` FAILS on an invalid value instead of warning and
+    falling back to the default.
+
+    The base `EnvField.get()` swallows `ValueError` from `parse()` — acceptable
+    for tuning knobs, but wrong for safety-critical switches where a typo must
+    not silently select a behavior (the (c3) coverage kill switch: garbage
+    input silently becoming default-ON would violate its fail-closed contract).
+    """
+
+    def get(self) -> Any:
+        value = os.getenv(self.name)
+        if self._set_to_none:
+            assert value == str(None)
+            return None
+        if value is None:
+            return self._resolve_default()
+        return self.parse(value)
+
+
 class EnvInt(EnvField):
     def parse(self, value: str) -> int:
         try:
@@ -1006,6 +1026,26 @@ class Envs:
     SGLANG_KV_CANARY_ENABLE_VERIFY_TOKEN_ASSERT = EnvBool(False)
     SGLANG_KV_CANARY_SWA_DIVERGENCE_STATS_INTERVAL = EnvInt(0)
     SGLANG_KV_CANARY_ENABLE_MHA_V = EnvBool(False)
+
+    # ===================================================================
+    # Virtual Pipelining (VP) / FlexiDepth conditional-depth serving
+    # ===================================================================
+    # Eager (bs>256) FlexiDepth decode skip body: replace the nonzero() MLP
+    # gather/scatter (~32 device->host syncs/step) with device-resident route
+    # maps + mapped_swiglu compaction (Candidate A). Fail-closed OFF; A/B only.
+    SGLANG_FD_EAGER_DEVICE_COMPACT = EnvBool(False)
+    # (c3) coverage-aware body selection kill switch (debug-only, default ON;
+    # never set OFF in a measured cell). OFF jointly disables the C-A coverage
+    # stamp, the C-C seam band observe, AND the C-D self-sized capture ladder
+    # (F14 joint scope) so an OFF boot byte-matches the parent tag. See
+    # vPipe-doc/codex/asplos-plan/2026-08-04-c3-coverage-aware-admission-design.md.
+    SGLANG_VP_COVERAGE_DENSE = EnvBoolStrict(True)
+    # (c3) C-D capture-ladder memory reserve in BYTES (F7): a declared,
+    # per-platform, attested constant with a measured basis (set from the
+    # capture-profile boot); protects runtime latency headroom, not
+    # correctness (the OOM-descent protects correctness independently).
+    # Safe at the default 0 until the profile sets it.
+    SGLANG_VP_COVERAGE_RESERVE_BYTES = EnvInt(0)
 
 
 envs = Envs()

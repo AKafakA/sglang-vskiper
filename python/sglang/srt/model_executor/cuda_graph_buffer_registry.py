@@ -33,6 +33,9 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 import torch
 
 from sglang.srt.model_executor.input_buffers import share_input_buffer
+from sglang.srt.vpipe.config import (
+    full_graph_request_identity_required,
+)
 
 if TYPE_CHECKING:
     from sglang.srt.model_executor.forward_batch_info import ForwardBatch
@@ -759,9 +762,20 @@ def build_decode_registry(
                     bind=_backing,
                 )
 
-        # KV-canary id buffers (off by default): plain bs-axis FB copies,
-        # adopt-only when the source carries them. Head [:raw_bs] is copied;
-        # the tail keeps its init (rids_int 0, bootstrap_room_ids_int -1).
+        # Stable request IDs and KV-canary bootstrap IDs are opt-in bs-axis
+        # copies. Policy or route-evidence consumers make request IDs mandatory
+        # so a missing source cannot replay stale graph-buffer contents.
+        identity_required = full_graph_request_identity_required()
+
+        def _required_request_ids(fb, _ctx):
+            request_ids = getattr(fb, "rids_int", None)
+            if request_ids is None:
+                raise RuntimeError(
+                    "full-graph policy or route evidence requires "
+                    "stable request IDs"
+                )
+            return request_ids
+
         for _cname in ("rids_int", "bootstrap_room_ids_int"):
             canary = getattr(source, _cname, None)
             if canary is not None:
@@ -771,6 +785,11 @@ def build_decode_registry(
                         shape_fn=lambda _bs, _mt, _s=tuple(canary.shape): _s,
                         dtype=canary.dtype,
                         axis="bs",
+                        source_fn=(
+                            _required_request_ids
+                            if _cname == "rids_int" and identity_required
+                            else None
+                        ),
                     ),
                     bind=canary,
                 )
