@@ -530,21 +530,26 @@ class LlamaDecoderLayer(nn.Module):
                 self.fd_proj,
             )
         if self.fd_router is not None and flexidepth_phase_enabled(forward_batch):
-            # The eager FlexiDepth bodies (fd_layer_forward,
-            # fd_layer_forward_vp{,_coalesced}, fd_layer_forward_eager_compact)
-            # are NOT part of this implementation. Every supported arm sets
-            # SGLANG_FD_EXECUTION_MODE=full_graph and is served by
-            # fd_layer_forward_full_graph above; coverage over all four
-            # canonical arms recorded zero entries into any eager body.
+            # direct_eager: the quality-attribution reference. It answers whether
+            # a quality result is the checkpoint's or vPipe's execution of it, so
+            # it is a gate instrument, never a performance path.
             #
-            # Fail closed rather than delete silently: if a configuration ever
-            # does reach here, that is a posture this build cannot serve, and
-            # the server must refuse instead of quietly running a different
-            # body than the one attested.
-            raise RuntimeError(
-                "routed layer reached the eager FlexiDepth dispatch, which this "
-                "build does not implement; set SGLANG_FD_EXECUTION_MODE=full_graph "
-                f"(layer {self.layer_id}, mode={self.fd_execution_mode!r})"
+            # Only the plain body is carried. The pre-refactor tree also had
+            # fd_layer_forward_vp{,_coalesced} (gated on SGLANG_FD_VP_PROJECT,
+            # the removed V1 path) and fd_layer_forward_eager_compact (gated on
+            # the inert Candidate-A flag, which D-2026-07-25 showed never
+            # executed in any measured cell). Neither is needed to attribute
+            # quality, and both are omitted.
+            from sglang.srt.vpipe.eager import fd_layer_forward_eager
+
+            return fd_layer_forward_eager(
+                self,
+                positions,
+                hidden_states,
+                forward_batch,
+                residual,
+                self.fd_router,
+                self.fd_proj,
             )
         # KV-complete dense fall-through — also the W1 regime-forced-dense
         # prefill body. For routed layers 16-31 as well, self_attn below writes
@@ -980,12 +985,15 @@ class LlamaForCausalLM(nn.Module):
             if getattr(layer, "fd_router", None) is not None
         ]
         routed_layers = list(self.model._fd_full_graph_route_layer_order)
+        from sglang.srt.server_args import get_global_server_args
+
         validate_full_graph_model_configuration(
             loaded_layers=routed_layers,
             loaded_flexidepth_layers=loaded_fd_layers,
             tp_size=get_parallel().tp_size,
             pp_size=self.pp_group.world_size,
             quant_config=quant_config,
+            cuda_graph_enabled=not get_global_server_args().disable_cuda_graph,
         )
         # Llama 3.2 1B Instruct set tie_word_embeddings to True
         # Llama 3.1 8B Instruct set tie_word_embeddings to False
