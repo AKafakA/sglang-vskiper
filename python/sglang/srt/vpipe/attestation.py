@@ -92,14 +92,14 @@ from sglang.srt.vpipe.common import (
     full_graph_compact_q_proj_enabled,
 )
 from sglang.srt.vpipe.coverage import (
-    _c3_ladder,
     coverage_dense_armed,
+)
+from sglang.srt.vpipe.coverage import (
+    coverage_dense_counters,
+    coverage_ladder_record,
 )
 from sglang.srt.vpipe.regime import (
     regime_switch_zero_counters,
-)
-from sglang.srt.vpipe.coverage import (
-    _c3_counters,
 )
 
 
@@ -173,22 +173,22 @@ def coverage_dense_runtime_attestation(model_runner: Any) -> Optional[dict[str, 
         if decode_capture_bs_max is not None and pool_size
         else 0.0
     )
-    counters = _c3_counters
+    counters = coverage_dense_counters()
     return {
         "enabled": True,
         "kill_switch_env": "SGLANG_VP_COVERAGE_DENSE",
         "ladder": {
-            "ladder_source": _c3_ladder.ladder_source,
+            "ladder_source": coverage_ladder_record().ladder_source,
             "decode_capture_bs_max": decode_capture_bs_max,
             "capture_bs": capture_bs,
             "per_boot_ladder_hash": ladder_hash,
-            "capture_trim_events": list(_c3_ladder.capture_trim_events),
+            "capture_trim_events": list(coverage_ladder_record().capture_trim_events),
             "req_to_token_pool_size": pool_size,
             "coverage_ratio": coverage_ratio,
-            "stop_reason": _c3_ladder.stop_reason,
-            "target_max_bs": _c3_ladder.target_max_bs,
-            "reserve_bytes": _c3_ladder.reserve_bytes,
-            "reserve_provenance": _c3_ladder.reserve_provenance,
+            "stop_reason": coverage_ladder_record().stop_reason,
+            "target_max_bs": coverage_ladder_record().target_max_bs,
+            "reserve_bytes": coverage_ladder_record().reserve_bytes,
+            "reserve_provenance": coverage_ladder_record().reserve_provenance,
             "cuda_graph_padding_enabled": (
                 not model_runner.server_args.disable_cuda_graph_padding
             ),
