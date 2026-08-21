@@ -663,6 +663,8 @@ def release_kv_cache(req: Req, tree_cache: BasePrefixCache, is_insert: bool = Tr
     )
     if scoped_async_enabled:
 
+        from sglang.srt.vpipe.common import fdvp_scoped_async_kv_enabled
+
         if fdvp_scoped_async_kv_enabled():
             from sglang.srt.vpipe.kv_commit import (
                 flush_request,

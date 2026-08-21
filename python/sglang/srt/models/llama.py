@@ -20,6 +20,7 @@
 
 import logging
 import os
+from functools import lru_cache
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 import torch
@@ -366,6 +367,26 @@ class LlamaAttention(nn.Module):
         return output
 
 
+@lru_cache(maxsize=1)
+def _load_fd_weights(path: str):
+    """Deserialize the FlexiDepth checkpoint ONCE for all routed layers.
+
+    Every routed layer needs a different slice of the same ~400 MB file, and
+    each LlamaDecoderLayer.__init__ used to torch.load it again -- 16 full
+    deserializations per TP worker at boot. Cached on the path and released by
+    _release_fd_weights_cache() as soon as the layers are built, so the payload
+    does not outlive construction.
+    """
+
+    import torch as _t
+
+    return _t.load(path, map_location="cpu")
+
+
+def _release_fd_weights_cache() -> None:
+    _load_fd_weights.cache_clear()
+
+
 class LlamaDecoderLayer(nn.Module):
     def __init__(
         self,
@@ -446,13 +467,12 @@ class LlamaDecoderLayer(nn.Module):
         self.fd_proj = None
         _fdw = os.environ.get("SGLANG_FD_WEIGHTS", "")
         if _fdw and 16 <= layer_id <= 31:
-            import torch as _t
             from sglang.srt.vpipe.routing import (
                 FDProj,
                 FDRouter,
             )
 
-            _sd = _t.load(_fdw, map_location="cpu")
+            _sd = _load_fd_weights(_fdw)
             _fd_reduction = getattr(config, "router_reduction_factor", 16)
             self.fd_router = FDRouter(
                 config.hidden_size,
@@ -626,6 +646,7 @@ class LlamaModel(nn.Module):
             pp_size=self.pp_group.world_size,
             prefix="model.layers",
         )
+        _release_fd_weights_cache()
         self.fd_execution_mode = flexidepth_execution_mode()
         full_graph_skipper = resolve_full_graph_skipper()
         loaded_fd_layers = [
