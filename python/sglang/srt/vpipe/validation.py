@@ -214,6 +214,22 @@ def validate_full_graph_model_configuration(
             f"{skipper_adapter.name} must not load FlexiDepth weights"
         )
     execution_mode = flexidepth_execution_mode(values)
+    # The eager FlexiDepth bodies are not in this build (llama.py fails closed
+    # if a routed layer reaches that dispatch). direct_eager is nonetheless the
+    # DEFAULT of flexidepth_execution_mode(), so a routed deployment that does
+    # not set the mode explicitly used to die later -- at CUDA-graph capture, or
+    # on the first routed request when graphs are disabled. Refuse at STARTUP
+    # instead: same outcome, but at the point where the operator can act on it,
+    # and before any request is accepted.
+    if (
+        skipper_adapter.requires_flexidepth_weights
+        and execution_mode != FD_EXECUTION_FULL_GRAPH
+    ):
+        raise ValueError(
+            f"{FD_EXECUTION_MODE_ENV}={execution_mode!r} cannot serve routed "
+            "FlexiDepth layers: the eager execution bodies are not part of this "
+            f"build. Set {FD_EXECUTION_MODE_ENV}={FD_EXECUTION_FULL_GRAPH}."
+        )
     if (
         skipper_adapter.requires_stable_request_ids
         and execution_mode != FD_EXECUTION_FULL_GRAPH

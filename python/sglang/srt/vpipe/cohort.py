@@ -52,8 +52,17 @@ from sglang.srt.vpipe.kv_commit import (
 _FDVP_FULL_METADATA_STALE = False
 _FDVP_ASYNC_KV_STREAMS = {}
 _FDVP_ASYNC_KV_DEFERRED_EVENTS = {}
-_KV_READINESS_TRACKERS: dict[int, KVReadinessTracker] = {}
-_BATCHED_KV_QUEUES: dict[tuple[int, int], list[BatchedKVWork]] = {}
+# Import the CANONICAL containers rather than defining a second pair. They were
+# duplicated here, so tracker_for_device() (the only producer) registered into
+# cohort's dict while drain_request_kv_work()/reset_kv_readiness_trackers() in
+# kv_commit.py iterated kv_commit's -- writer and reader on different objects.
+# Same defect class as the _graph_lifecycle_depth split fixed earlier.
+# Safe to bind by reference: both are mutated in place (setdefault/pop/clear)
+# and never rebound.
+from sglang.srt.vpipe.kv_commit import (
+    _BATCHED_KV_QUEUES,
+    _KV_READINESS_TRACKERS,
+)
 _MATMUL_CONFIGS = [
     triton.Config(
         {"BLOCK_M": 16, "BLOCK_N": 64, "BLOCK_K": 32},
