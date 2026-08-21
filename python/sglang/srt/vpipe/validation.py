@@ -221,8 +221,16 @@ def validate_full_graph_model_configuration(
     # on the first routed request when graphs are disabled. Refuse at STARTUP
     # instead: same outcome, but at the point where the operator can act on it,
     # and before any request is accepted.
+    # Gate on ROUTED LAYERS ACTUALLY LOADED, not on the adapter's declared
+    # requirement. resolve_full_graph_skipper() returns the FlexiDepth adapter by
+    # default and FullGraphSkipperAdapter.requires_flexidepth_weights defaults to
+    # True, so keying off the adapter would fire for a VANILLA Llama server with
+    # no vPipe configuration at all -- this validator runs unconditionally from
+    # LlamaForCausalLM.__init__ and has no early return. No canonical arm covers
+    # that case, so nothing downstream would have caught it.
     if (
-        skipper_adapter.requires_flexidepth_weights
+        loaded_flexidepth_layers
+        and skipper_adapter.requires_flexidepth_weights
         and execution_mode != FD_EXECUTION_FULL_GRAPH
     ):
         raise ValueError(
