@@ -58,7 +58,6 @@ from sglang.srt.vpipe.coverage import (
     vp_graph_lifecycle_mark,
 )
 
-EXPECTATIONS_DIR = Path(__file__).parent / "runtime_expectations"
 
 
 @pytest.fixture(autouse=True)
