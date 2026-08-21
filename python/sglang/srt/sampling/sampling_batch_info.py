@@ -423,71 +423,7 @@ class SamplingBatchInfo:
             self.update_penalties()
         return dataclasses.replace(self, penalizer_orchestrator=None)
 
-    def cumulate_output_tokens_selected(
-        self, output_ids: torch.Tensor, selected_indices: torch.Tensor
-    ) -> None:
-        """Advance state for rows admitted to a new decode-token epoch."""
 
-        if self.penalizer_orchestrator is not None:
-            self.penalizer_orchestrator.cumulate_output_tokens_selected(
-                output_ids=output_ids, selected_indices=selected_indices
-            )
-
-    def copy_for_subset(
-        self,
-        keep_indices: List[int],
-        keep_indices_device: torch.Tensor,
-        reqs: List[Any],
-    ) -> SamplingBatchInfo:
-        """Build a read-only forward view without mutating batched history.
-
-        V2 final cohorts can contain requests at different token epochs. Their
-        authoritative penalty state remains in the running super-batch; this
-        method selects the already-accumulated buffers for one stage cohort.
-        """
-
-        self.update_penalties()
-
-        custom_logit_processor = None
-        custom_params = None
-        has_custom_logit_processor = self.has_custom_logit_processor and any(
-            req.custom_logit_processor for req in reqs
-        )
-        if has_custom_logit_processor:
-            custom_logit_processor = {
-                key: (processor, mask[keep_indices_device])
-                for key, (processor, mask) in self.custom_logit_processor.items()
-            }
-            custom_params = [self.custom_params[index] for index in keep_indices]
-
-        def select(value):
-            return value[keep_indices_device] if value is not None else None
-
-        return dataclasses.replace(
-            self,
-            temperatures=select(self.temperatures),
-            top_ps=select(self.top_ps),
-            top_ks=select(self.top_ks),
-            min_ps=select(self.min_ps),
-            sampling_seed=select(self.sampling_seed),
-            is_all_greedy=all(req.sampling_params.top_k <= 1 for req in reqs),
-            need_top_p_sampling=any(req.sampling_params.top_p != 1.0 for req in reqs),
-            need_top_k_sampling=any(
-                req.sampling_params.top_k != TOP_K_ALL for req in reqs
-            ),
-            need_min_p_sampling=any(req.sampling_params.min_p > 0 for req in reqs),
-            grammars=[req.grammar for req in reqs] if any(req.grammar for req in reqs) else None,
-            rids_int=None,
-            bootstrap_room_ids_int=None,
-            vocab_mask=None,
-            penalizer_orchestrator=None,
-            acc_additive_penalties=select(self.acc_additive_penalties),
-            acc_scaling_penalties=select(self.acc_scaling_penalties),
-            has_custom_logit_processor=has_custom_logit_processor,
-            custom_params=custom_params,
-            custom_logit_processor=custom_logit_processor,
-            logit_bias=select(self.logit_bias),
-        )
 
 
 def merge_bias_tensor(
