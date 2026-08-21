@@ -428,11 +428,6 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
     lora_ids: Optional[List[str]] = None
     # For dumper: request IDs for cross-step sequence tracking
     rids: Optional[List[str]] = None
-    # CPU identities for deferred VP K/V work. These avoid synchronizing GPU
-    # request/cache tensors merely to build dependency keys.
-    vp_req_pool_indices_cpu: Optional[List[int]] = None
-    vp_token_epochs: Optional[List[int]] = None
-    vp_kv_positions: Optional[List[int]] = None
     # Device route mask bound around one full-graph FlexiDepth attention call.
     fd_full_graph_attention_run_mask: Optional[torch.Tensor] = None
     # Host-static component action for fixed-profile sublayer adapters.
@@ -775,7 +770,6 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
             # baseline, where nothing consumes them (every consumer lives under
             # vp/ and getattr-defaults to None). Stock path keeps the dataclass
             # defaults verbatim.
-            **_vp_batch_metadata(batch.reqs),
             # Compound (carry their own device tensors)
             sampling_info=batch.sampling_info,
             spec_info=batch.spec_info,
@@ -1641,31 +1635,5 @@ def _stable_hash_str_to_i64(rid: str) -> int:
     return int.from_bytes(digest, "little", signed=True)
 
 
-from sglang.srt.vpipe.attestation import (
-    vp_runtime_enabled,
-)
 
 
-def _vp_batch_metadata(reqs) -> dict:
-    """Five VP per-request lists, or {} when the VP runtime is inactive.
-
-    Gated on the boot-cached activation predicate (D-251): the no-skip
-    baseline must not pay O(batch) CPU work for machinery it never runs.
-    Consumers (vp/skip_plan, vp/kv_readiness, vp/flexidepth) all tolerate the
-    absent-field default of None via getattr.
-    """
-
-    if not vp_runtime_enabled():
-        return {}
-    return {
-        "vp_req_pool_indices_cpu": [
-            int(req.req_pool_idx) if req.req_pool_idx is not None else -1
-            for req in reqs
-        ],
-        "vp_token_epochs": [
-            int(getattr(req, "decode_batch_idx", 0)) for req in reqs
-        ],
-        "vp_kv_positions": [
-            len(req.origin_input_ids) + len(req.output_ids) - 1 for req in reqs
-        ],
-    }

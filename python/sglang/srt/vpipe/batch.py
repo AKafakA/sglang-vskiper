@@ -12,7 +12,6 @@ eager collapse.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Optional
 import torch
@@ -20,24 +19,7 @@ from sglang.srt.vpipe.common import (
     full_graph_decode_enabled,
 )
 from sglang.srt.vpipe.env import (
-    FD_ACTIVE_PHASES_ENV,
-    FD_COMPACT_CAPACITY_FRACTION_ENV,
-    FD_COMPACT_CAPACITY_MULTIPLE_ENV,
-    FD_COMPACT_ENABLED_ENV,
-    FD_COMPACT_MIN_ROWS_ENV,
-    FD_COMPACT_PHASES_ENV,
-    FD_EXECUTION_DIRECT_EAGER,
     FD_EXECUTION_FULL_GRAPH,
-    FD_EXECUTION_MODE_ENV,
-    FD_LOW_ROW_MAX_ROWS_ENV,
-    FD_LOW_ROW_POLICY_ENV,
-    FD_SCHEDULER_CONVERGENCE_ENV,
-    _VALID_ACTIVE_PHASES,
-    _VALID_EXECUTION_MODES,
-    _VALID_LOW_ROW_POLICIES,
-)
-from sglang.srt.vpipe.common import (
-    regime_switch_config,
 )
 from sglang.srt.vpipe.common import (
     FullGraphDeviceRouteTape,

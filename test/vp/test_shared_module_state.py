@@ -1,5 +1,9 @@
 """Assert that state shared between vpipe modules is ONE object, not two.
 
+Updated after the async K/V removal: the K/V containers are asserted ABSENT
+rather than shared, so this file fails loudly if that subsystem is reimplemented
+without restoring a single-owner check.
+
 Three split-mutable-state defects were found in this refactor: a module global
 defined in two places so the reader saw a counter nothing incremented; an
 attestation module holding pre-reset objects; and K/V containers whose producer
@@ -25,12 +29,17 @@ def same(a, b, label):
 
 from sglang.srt.vpipe import cohort, kv_commit, coverage, attestation
 
-# F4: the producer (cohort.tracker_for_device) and the drain
-# (kv_commit.drain_request_kv_work) must share one container each.
-same(cohort._KV_READINESS_TRACKERS, kv_commit._KV_READINESS_TRACKERS,
-     "_KV_READINESS_TRACKERS shared by cohort and kv_commit")
-same(cohort._BATCHED_KV_QUEUES, kv_commit._BATCHED_KV_QUEUES,
-     "_BATCHED_KV_QUEUES shared by cohort and kv_commit")
+# The K/V readiness tracker and batched queues were REMOVED with the async K/V
+# subsystem (see the removed-feature register). Assert they are gone rather than
+# leaving a check that would silently pass on nothing.
+for mod, nm in ((cohort, "_KV_READINESS_TRACKERS"), (kv_commit, "_KV_READINESS_TRACKERS"),
+                (cohort, "_BATCHED_KV_QUEUES"), (kv_commit, "_BATCHED_KV_QUEUES")):
+    if hasattr(mod, nm):
+        print(f"  RESURRECTED {mod.__name__}.{nm} -- if async K/V is reimplemented, "
+              "put the container in ONE module and restore the identity assertion")
+        failures.append(f"{mod.__name__}.{nm} came back without a shared-state check")
+    else:
+        print(f"  OK    {mod.__name__}.{nm} absent (removed with async K/V)")
 
 # F2: attestation must observe a reset, i.e. read through accessors rather than
 # holding the pre-reset objects.
@@ -74,4 +83,6 @@ same(coverage._c3_counters, coverage.coverage_dense_counters(),
      "coverage._c3_counters is what the accessor returns")
 
 print("SHARED STATE:", "PASS" if not failures else f"FAIL {failures}")
-sys.exit(0 if not failures else 1)
+
+if __name__ == "__main__":
+    sys.exit(0 if not failures else 1)

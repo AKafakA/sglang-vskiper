@@ -401,16 +401,6 @@ class LlamaDecoderLayer(nn.Module):
         self.fd_execution_mode = flexidepth_execution_mode()
         self.vp_full_graph_routed = False
         self.vp_full_graph_attention_routed = False
-        self.vp_async_kv_lookahead_release = False
-        if os.environ.get("SGLANG_VP_ASYNC_KV_LOOKAHEAD_RELEASE", "0") == "1":
-            release_layer = int(
-                os.environ.get("SGLANG_VP_ASYNC_KV_RELEASE_LAYER", "16") or "16"
-            )
-            if release_layer < 0 or release_layer >= config.num_hidden_layers:
-                raise ValueError(
-                    "SGLANG_VP_ASYNC_KV_RELEASE_LAYER must name a Llama layer"
-                )
-            self.vp_async_kv_lookahead_release = layer_id == release_layer
         self.hidden_size = config.hidden_size
         rope_parameters = getattr(config, "rope_parameters", None)
         if rope_parameters is not None:
@@ -503,10 +493,6 @@ class LlamaDecoderLayer(nn.Module):
             # fails CUDA-graph capture outright.
             self.fd_router.requires_grad_(False).eval()
             self.fd_proj.requires_grad_(False).eval()
-        if self.vp_async_kv_lookahead_release and self.fd_router is None:
-            raise ValueError(
-                "SGLANG_VP_ASYNC_KV_RELEASE_LAYER must name a FlexiDepth routed layer"
-            )
 
     def forward(
         self,
@@ -1366,17 +1352,6 @@ class LlamaForCausalLM(nn.Module):
             input_embeds,
             pp_proxy_tensors=pp_proxy_tensors,
         )
-        if os.environ.get("SGLANG_FD_VP_ASYNC_KV", "0") == "1":
-            from sglang.srt.vpipe.common import (
-                fdvp_async_kv_defer_drain_enabled,
-            )
-            from sglang.srt.vpipe.kv_commit import (
-                fdvp_drain_async_kv,
-            )
-
-            if not fdvp_async_kv_defer_drain_enabled():
-                fdvp_drain_async_kv(forward_batch)
-
         aux_hidden_states = None
         if self.capture_aux_hidden_states:
             hidden_states, aux_hidden_states = hidden_states

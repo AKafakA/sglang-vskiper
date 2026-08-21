@@ -19,7 +19,6 @@ No torch.compile.
 from __future__ import annotations
 
 import dataclasses
-import os
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
@@ -76,10 +75,6 @@ class BreakableCudaGraphBackend(DedupedCudaGraphMixin, BaseCudaGraphBackend):
         self._tp_group = cuda_graph_runner.model_runner.tp_group
         self._capture_stream: Optional[torch.cuda.Stream] = None
         self._debug_eager = debug_eager
-        self._bind_vp_runtime_identity = (
-            os.environ.get("SGLANG_VP_ASYNC_KV", "0") == "1"
-            or os.environ.get("SGLANG_FD_VP_ASYNC_KV", "0") == "1"
-        )
         self._shared_output_buffer: Optional[Any] = None
         self._memory_saver_adapter: Optional[Any] = TorchMemorySaverAdapter.create(
             enable=enable_memory_saver
@@ -123,10 +118,6 @@ class BreakableCudaGraphBackend(DedupedCudaGraphMixin, BaseCudaGraphBackend):
             forward_fn()
             if post_warmup_hook is not None:
                 post_warmup_hook()
-            if self._bind_vp_runtime_identity:
-                self._device_module.synchronize()
-                _reset_vp_async_runtime_state()
-
         graph = BreakableCUDAGraph(self.deduped_cuda_graph)
         captured_fn = (
             eager_on_graph(True)(forward_fn) if self._debug_eager else forward_fn
@@ -140,10 +131,6 @@ class BreakableCudaGraphBackend(DedupedCudaGraphMixin, BaseCudaGraphBackend):
             out = captured_fn()
             if self._shared_output_buffer is not None:
                 self._copy_output_to_buffer(out, self._shared_output_buffer, size)
-
-        if self._bind_vp_runtime_identity:
-            self._device_module.synchronize()
-            _reset_vp_async_runtime_state()
 
         if self._shared_output_buffer is None:
             self._shared_output_buffer = out
@@ -247,13 +234,6 @@ class BreakableCudaGraphBackend(DedupedCudaGraphMixin, BaseCudaGraphBackend):
         static_forward_batch: ForwardBatch,
         **kwargs,
     ) -> Any:
-        if self._bind_vp_runtime_identity:
-            captured_forward_batch = self._static_forward_batches.get(shape_key)
-            if captured_forward_batch is not None:
-                _bind_vp_runtime_identity(
-                    captured_forward_batch,
-                    static_forward_batch,
-                )
         self._graphs[shape_key].replay()
         return self._outputs[shape_key]
 
@@ -266,68 +246,5 @@ class BreakableCudaGraphBackend(DedupedCudaGraphMixin, BaseCudaGraphBackend):
         self._shared_output_buffer = None
 
 
-_VP_RUNTIME_IDENTITY_FIELDS = (
-    "rids",
-    "vp_req_pool_indices_cpu",
-    "vp_token_epochs",
-    "vp_kv_positions",
-)
 
 
-def _reset_vp_async_runtime_state() -> None:
-    """Discard synthetic warmup/capture repair ownership before serving."""
-
-    from sglang.srt.vpipe.kv_commit import (
-        reset_batched_kv_queues,
-    )
-    from sglang.srt.vpipe.kv_commit import (
-        reset_kv_readiness_trackers,
-    )
-
-    reset_batched_kv_queues()
-    reset_kv_readiness_trackers()
-
-
-def _bind_vp_runtime_identity(captured_forward_batch: Any, runtime_batch: Any) -> None:
-    """Bind request-scoped K/V identity to a captured decode batch.
-
-    Breakable graph closures execute against the capture-time ``ForwardBatch``.
-    GPU inputs are refreshed through the graph buffer registry, but VP readiness
-    also needs four CPU lists from the live batch. Keep synthetic padded rows
-    stable and advance their epoch with the real token so dummy-only work cannot
-    accumulate indefinitely in the readiness tracker.
-    """
-
-    mode = getattr(captured_forward_batch, "forward_mode", None)
-    try:
-        if mode is None or not mode.is_decode():
-            return
-    except Exception:
-        return
-
-    values = [getattr(runtime_batch, name, None) for name in _VP_RUNTIME_IDENTITY_FIELDS]
-    if any(value is None for value in values):
-        for name in _VP_RUNTIME_IDENTITY_FIELDS:
-            setattr(captured_forward_batch, name, None)
-        return
-
-    raw_bs = int(getattr(runtime_batch, "batch_size", len(values[0])))
-    padded_bs = int(getattr(captured_forward_batch, "batch_size", raw_bs))
-    if raw_bs < 0 or raw_bs > padded_bs or any(len(value) < raw_bs for value in values):
-        for name in _VP_RUNTIME_IDENTITY_FIELDS:
-            setattr(captured_forward_batch, name, None)
-        return
-
-    rids, slots, epochs, positions = (list(value[:raw_bs]) for value in values)
-    pad_epoch = max((int(value) for value in epochs), default=0)
-    pad_position = max((int(value) for value in positions), default=0)
-    for row in range(raw_bs, padded_bs):
-        rids.append(f"__fdvp_bcg_padding_{padded_bs}_{row}")
-        slots.append(-(row + 1))
-        epochs.append(pad_epoch)
-        positions.append(pad_position)
-
-    captured_forward_batch.rids = rids
-    captured_forward_batch.vp_req_pool_indices_cpu = [int(value) for value in slots]
-    captured_forward_batch.vp_token_epochs = [int(value) for value in epochs]
-    captured_forward_batch.vp_kv_positions = [int(value) for value in positions]

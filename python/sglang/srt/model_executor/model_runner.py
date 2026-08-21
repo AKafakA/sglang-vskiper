@@ -3319,38 +3319,6 @@ class ModelRunner(ModelRunnerKVCacheMixin):
 
         self._vp_runtime_enabled = vp_runtime_enabled()
 
-    def _maybe_drain_fdvp_deferred_async_kv(
-        self, forward_batch: ForwardBatch
-    ) -> None:
-        if (
-            os.environ.get("SGLANG_VP_ASYNC_KV", "0") != "1"
-            and os.environ.get("SGLANG_FD_VP_ASYNC_KV", "0") != "1"
-        ):
-            return
-        from sglang.srt.vpipe.common import (
-            fdvp_async_kv_defer_drain_enabled,
-        )
-
-        if not fdvp_async_kv_defer_drain_enabled():
-            return
-        from sglang.srt.vpipe.cohort import (
-            fdvp_wait_for_slot_conflicts,
-        )
-        from sglang.srt.vpipe.common import (
-            fdvp_scoped_async_kv_enabled,
-        )
-
-        if fdvp_scoped_async_kv_enabled():
-            # Same-request dependencies are fenced immediately before the
-            # layer's attention read. Only stale request-slot reuse is handled
-            # at forward entry.
-            return
-
-        from sglang.srt.vpipe.cohort import (
-            fdvp_drain_deferred_async_kv,
-        )
-
-        fdvp_drain_deferred_async_kv(self.device)
 
     def _forward_raw(
         self,
@@ -3364,9 +3332,6 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         else:
             ctx_mgr = forward_context(ForwardContext(attn_backend=self.attn_backend))
         with ctx_mgr:
-            if self._vp_runtime_enabled:
-                self._maybe_drain_fdvp_deferred_async_kv(forward_batch)
-
             mode_check = (
                 forward_batch.forward_mode.is_cpu_graph
                 if self.device == "cpu"
@@ -3436,8 +3401,6 @@ class ModelRunner(ModelRunnerKVCacheMixin):
                         forward_batch,
                         pp_proxy_tensors=pp_proxy_tensors,
                     )
-                    if self._vp_runtime_enabled:
-                        self._maybe_launch_vp_token_boundary_kv(ret)
                     return ModelRunnerOutput(logits_output=ret, can_run_graph=can_run_graph)
 
                 # DP / MLP-sync padding + attn-tp normalization. Only the decode
@@ -3498,9 +3461,6 @@ class ModelRunner(ModelRunnerKVCacheMixin):
                 ):
                     forward_batch.post_forward_mlp_sync_batch(ret)
 
-                if self._vp_runtime_enabled:
-                    self._maybe_launch_vp_token_boundary_kv(ret)
-
                 return ModelRunnerOutput(
                     logits_output=ret,
                     can_run_graph=can_run_graph,
@@ -3512,21 +3472,6 @@ class ModelRunner(ModelRunnerKVCacheMixin):
                 if coverage_stamped:
                     reset_coverage_stamps(forward_batch)
 
-    def _maybe_launch_vp_token_boundary_kv(self, model_output) -> None:
-        if (
-            model_output is None
-            or os.environ.get(
-                "SGLANG_VP_ASYNC_KV_BATCHED_TOKEN_LAUNCH", "0"
-            )
-            != "1"
-        ):
-            return
-
-        from sglang.srt.vpipe.cohort import (
-            launch_token_boundary_async,
-        )
-
-        launch_token_boundary_async(self.device)
 
     def _preprocess_logits(
         self, logits_output: LogitsProcessorOutput, sampling_info: SamplingBatchInfo
@@ -3578,19 +3523,6 @@ class ModelRunner(ModelRunnerKVCacheMixin):
             ),
         )
         self.maybe_update_ngram_token_table(next_token_ids, forward_batch)
-        if (
-            os.environ.get("SGLANG_VP_ASYNC_KV", "0") == "1"
-            or os.environ.get("SGLANG_FD_VP_ASYNC_KV", "0") == "1"
-        ):
-            from sglang.srt.vpipe.common import (
-                fdvp_async_kv_defer_drain_enabled,
-            )
-            from sglang.srt.vpipe.kv_commit import (
-                fdvp_drain_async_kv,
-            )
-
-            if not fdvp_async_kv_defer_drain_enabled():
-                fdvp_drain_async_kv(forward_batch)
         return next_token_ids
 
     def compute_logprobs_only(
