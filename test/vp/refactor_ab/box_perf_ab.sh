@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Paired performance A/B: rewritten vpipe tree vs frozen vp tree.
+#
+# Answers ONE question -- did the refactor regress performance -- by holding
+# everything else fixed: same box, same suite, same decode config, same request
+# count and concurrency, both trees carrying the identical requires_grad fix.
+#
+# OPEN-LOOP per the evaluation law: the offered rate is the load control, never
+# a client concurrency cap. Every submitted request is awaited and counted.
+#
+# NOT a headline instrument: this is sm75, and it drives the server with a local
+# client rather than the sealed runner (whose contract/manifest/workload
+# apparatus lives on CSD3, not here). Absolute numbers are not citable. What IS
+# valid is the RELATIVE comparison, because the only variable between the two
+# arms is the refactor itself.
+#
+# Usage: box_perf_ab.sh <arm_name> <tree_root>
+set -uo pipefail
+ARM="${1:?usage: box_perf_ab.sh <arm> <tree_root>}"
+TREE="${2:?usage: box_perf_ab.sh <arm> <tree_root>}"
+W=/local/scratch/tmp/wd312
+V=$W/serve-venv-d248/bin/python
+PORT=30260
+OUT=$W/perf-ab/$ARM
+rm -rf "$OUT"; mkdir -p "$OUT"
+
+# --- identical decode posture for both arms (the box T0 config) ---
+export SGLANG_IS_FLASHINFER_AVAILABLE=false
+export SGLANG_FD_ACTIVE_PHASES=decode
+export SGLANG_FD_WEIGHTS=$W/flexidepth_router_weights.pt
+export SGLANG_FD_EXECUTION_MODE=full_graph
+export SGLANG_FD_FULL_GRAPH_COMPACT=1
+export SGLANG_FD_FULL_GRAPH_DEVICE_ROUTE_TAPE=1
+export SGLANG_FD_FULL_GRAPH_ROUTE_ACCOUNTING=1
+export SGLANG_FD_VP_FUSED_PROJECT_INPUT=1
+export SGLANG_FD_FULL_GRAPH_DEFER_PROJECT_KV=1
+export SGLANG_FD_FULL_GRAPH_CONDITIONAL_GRAPH=1
+export SGLANG_FD_FULL_GRAPH_MASKED_DECODE_ATTENTION=1
+export SGLANG_FD_FULL_GRAPH_SCHEDULER_CONVERGENCE=1
+export SGLANG_FD_FULL_GRAPH_DEVICE_ROUTE_DIGEST=1
+export SGLANG_FD_FULL_GRAPH_CONDITIONAL_GRAPH_HELPER=$W/helper-sm75/libvpipe_cuda_conditional_graph.so
+export PYTHONPATH="$TREE/python"
+
+echo "=== PERF-AB $ARM  tree=$TREE  $(date -u +%FT%TZ)" | tee "$OUT/run.log"
+$V -m sglang.launch_server --model-path $W/models/Meta-Llama-3-8B-Instruct-53346005 \
+  --port $PORT --dtype float16 \
+  --attention-backend triton --prefill-attention-backend triton --decode-attention-backend triton \
+  --disable-radix-cache > "$OUT/server.log" 2>&1 &
+SPID=$!
+for _ in $(seq 1 160); do
+  curl -sf -m 3 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && break
+  kill -0 $SPID 2>/dev/null || break
+  sleep 6
+done
+if ! curl -sf -m 3 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
+  echo "$ARM SERVER FAILED" | tee -a "$OUT/run.log"; tail -20 "$OUT/server.log" | tee -a "$OUT/run.log"
+  kill $SPID 2>/dev/null; exit 3
+fi
+curl -s -m 10 "http://127.0.0.1:$PORT/server_info" > "$OUT/server_info.json"
+
+# --- the timed workload: identical for both arms ---
+$V $W/perf_client.py --url "http://127.0.0.1:$PORT" \
+  --requests-jsonl $W/suites/gsm8k.first100.requests.jsonl \
+  --n 60 --rate 0.5 --max-new-tokens 128 \
+  --out "$OUT/metrics.json" 2>&1 | tee -a "$OUT/run.log"
+
+curl -s -m 10 "http://127.0.0.1:$PORT/server_info" > "$OUT/server_info.after.json"
+kill $SPID 2>/dev/null; sleep 8; kill -9 $SPID 2>/dev/null
+echo "=== PERF-AB $ARM done $(date -u +%FT%TZ)" | tee -a "$OUT/run.log"
