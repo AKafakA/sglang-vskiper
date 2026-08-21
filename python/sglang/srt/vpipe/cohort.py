@@ -1033,24 +1033,6 @@ def fd_parity_trace_advance(layer_id: int, forward_batch) -> None:
         and mode.is_decode()
     ):
         _FD_PARITY_EPOCHS[target] = int(_FD_PARITY_EPOCHS.get(target, 0)) + 1
-def fdvp_stage_route_fuse_homogeneous_enabled():
-    return os.environ.get(
-        "SGLANG_FD_VP_STAGE_ROUTE_FUSE_HOMOGENEOUS", "0"
-    ).strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-def fdvp_stage_route_runahead_enabled():
-    return os.environ.get(
-        "SGLANG_FD_VP_STAGE_ROUTE_RUNAHEAD", "0"
-    ).strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
 def _fdvp_stage_route_min_split_skip_rows():
     try:
         return max(
@@ -1075,27 +1057,6 @@ def _fdvp_stage_route_min_split_run_rows():
         )
     except ValueError:
         return 1
-def fdvp_stage_route_should_execute_inline(route: "FDLayerRoute") -> bool:
-    """Keep an unprofitable mixed route together instead of rebatching it."""
-
-    if route.branch != "mixed":
-        return False
-    skip_rows = int(route.skip.numel())
-    return (
-        skip_rows < _fdvp_stage_route_min_split_skip_rows()
-        or route.kept_rows < _fdvp_stage_route_min_split_run_rows()
-    )
-def fdvp_record_stage_route(route: FDLayerRoute) -> None:
-    """Record scheduler-owned route production without counting branch execution."""
-
-    if not _fdvp_trace_enabled():
-        return
-    _fdvp_record_cache_counter("stage_route_calls")
-    _fdvp_record_cache_counter("stage_route_rows", int(route.hidden.shape[0]))
-    _fdvp_record_cache_counter("stage_route_run_rows", route.kept_rows)
-    _fdvp_record_cache_counter(
-        "stage_route_skip_rows", int(route.hidden.shape[0]) - route.kept_rows
-    )
 def fd_prepare_qkv_private(attn, positions, hidden_states):
     """Project own-layer rotated Q/K/V without mutating the live cache."""
 
@@ -1245,16 +1206,6 @@ def fdvp_wait_for_slot_conflicts(forward_batch):
     return count
 def fdvp_drain_deferred_async_kv(device=None):
     return fdvp_drain_deferred_async_kv_until_layer(device, None)
-def _fdvp_mark_full_metadata_stale(forward_batch):
-    global _FDVP_FULL_METADATA_STALE
-    _FDVP_FULL_METADATA_STALE = True
-    try:
-        setattr(forward_batch, "_fdvp_full_attn_metadata_ready", False)
-        setattr(forward_batch, "forward_metadata_ready", False)
-        setattr(forward_batch, "forward_metadata_planned_bs", None)
-        setattr(forward_batch, "forward_metadata_planned_num_tokens", None)
-    except Exception:
-        pass
 class BatchedCommitPlan(msgspec.Struct, frozen=True):
     """Capture-frozen launch arguments for the batched commit kernel."""
 

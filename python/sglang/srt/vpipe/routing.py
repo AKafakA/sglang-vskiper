@@ -442,14 +442,6 @@ class FDProj(nn.Module):
             gate = self.gate_proj(x)
             down = self.down_proj(x)
         return self.up_proj(self.act_fn(gate) * down)
-@dataclass
-class FDLayerExecution:
-    """Result of executing one previously prepared FlexiDepth route."""
-
-    output: torch.Tensor
-    residual: torch.Tensor
-    timings: dict
-    end_time: float
 def _fdvp_cuda_stream_capture_active():
     if is_capturing_breakable_cuda_graph():
         return True
