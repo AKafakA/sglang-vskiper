@@ -13,11 +13,12 @@ Case A is the regression guard. Run as a script; exits non-zero on failure.
 import sys
 from sglang.srt.vpipe.validation import validate_full_graph_model_configuration
 
-def call(loaded, fd, env, label):
+def call(loaded, fd, env, label, graphs=False):
     try:
         validate_full_graph_model_configuration(
             loaded_layers=loaded, loaded_flexidepth_layers=fd,
             tp_size=1, pp_size=1, quant_config=None, environ=env,
+            cuda_graph_enabled=graphs,
         )
         return ("no-raise", label)
     except Exception as e:
@@ -26,14 +27,19 @@ def call(loaded, fd, env, label):
 ROUTED = list(range(16, 32))
 results = []
 # A: vanilla Llama -- no vPipe config, no routed layers. MUST NOT RAISE.
-results.append(call([], [], {}, "A vanilla (no FD, no env)"))
+results.append(call([], [], {}, "A vanilla (no FD, no env)", graphs=True))
 # B: routed FD layers loaded, execution mode left at its direct_eager default.
 #    MUST RAISE with the actionable message.
-results.append(call(ROUTED, ROUTED, {"SGLANG_FD_WEIGHTS": "/x.pt"}, "B routed + default mode"))
+# direct_eager + graphs is impossible (data-dependent gather under capture).
+results.append(call(ROUTED, ROUTED, {"SGLANG_FD_WEIGHTS": "/x.pt"},
+                    "B routed + eager + graphs", graphs=True))
+# direct_eager WITHOUT graphs is the supported quality-reference posture.
+results.append(call(ROUTED, ROUTED, {"SGLANG_FD_WEIGHTS": "/x.pt"},
+                    "D routed + eager + NO graphs", graphs=False))
 # C: routed FD layers with full_graph explicitly set -- the canonical arms.
 results.append(call(ROUTED, ROUTED,
                     {"SGLANG_FD_WEIGHTS": "/x.pt", "SGLANG_FD_EXECUTION_MODE": "full_graph"},
-                    "C routed + full_graph"))
+                    "C routed + full_graph", graphs=True))
 
 ok = True
 for outcome, label in results:
@@ -41,7 +47,9 @@ for outcome, label in results:
 for (outcome, label) in results:
     if label.startswith("A") and outcome != "no-raise":
         print("FAIL: vanilla deployment would be BROKEN"); ok = False
-    if label.startswith("B") and "cannot serve routed" not in outcome:
-        print("FAIL: direct_eager default not refused at startup"); ok = False
+    if label.startswith("B") and "cannot run with CUDA" not in outcome:
+        print("FAIL: eager+graphs not refused at startup"); ok = False
+    if label.startswith("D") and outcome != "no-raise":
+        print("FAIL: the quality-reference posture (eager, no graphs) is BLOCKED"); ok = False
 print("VALIDATOR CASES:", "PASS" if ok else "FAIL")
 sys.exit(0 if ok else 1)

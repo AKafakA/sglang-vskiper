@@ -156,6 +156,7 @@ def validate_full_graph_model_configuration(
     pp_size: int,
     quant_config: Any,
     environ: Optional[Mapping[str, str]] = None,
+    cuda_graph_enabled: Optional[bool] = None,
 ) -> None:
     """Fail closed on configurations not covered by the first V3 kernel."""
 
@@ -221,23 +222,32 @@ def validate_full_graph_model_configuration(
     # on the first routed request when graphs are disabled. Refuse at STARTUP
     # instead: same outcome, but at the point where the operator can act on it,
     # and before any request is accepted.
+    # direct_eager IS supported (it is the quality-attribution reference), but it
+    # cannot coexist with CUDA graphs: its routed-row gather is data-dependent,
+    # which is a device->host sync and illegal under stream capture. The
+    # pre-refactor tree failed the same way, at capture, with
+    # cudaErrorStreamCaptureUnsupported. Refuse the combination HERE so the
+    # operator gets an actionable message at startup instead of a capture abort.
+    #
     # Gate on ROUTED LAYERS ACTUALLY LOADED, not on the adapter's declared
-    # requirement. resolve_full_graph_skipper() returns the FlexiDepth adapter by
-    # default and FullGraphSkipperAdapter.requires_flexidepth_weights defaults to
-    # True, so keying off the adapter would fire for a VANILLA Llama server with
-    # no vPipe configuration at all -- this validator runs unconditionally from
-    # LlamaForCausalLM.__init__ and has no early return. No canonical arm covers
-    # that case, so nothing downstream would have caught it.
+    # requirement: resolve_full_graph_skipper() returns the FlexiDepth adapter by
+    # default and requires_flexidepth_weights defaults to True, so keying off the
+    # adapter would fire for a VANILLA Llama server with no vPipe configuration.
+    # This validator runs unconditionally from LlamaForCausalLM.__init__ with no
+    # early return, and no canonical arm covers that case.
     if (
         loaded_flexidepth_layers
         and skipper_adapter.requires_flexidepth_weights
         and execution_mode != FD_EXECUTION_FULL_GRAPH
     ):
-        raise ValueError(
-            f"{FD_EXECUTION_MODE_ENV}={execution_mode!r} cannot serve routed "
-            "FlexiDepth layers: the eager execution bodies are not part of this "
-            f"build. Set {FD_EXECUTION_MODE_ENV}={FD_EXECUTION_FULL_GRAPH}."
-        )
+        if cuda_graph_enabled:
+            raise ValueError(
+                f"{FD_EXECUTION_MODE_ENV}={execution_mode!r} cannot run with CUDA "
+                "graphs: its routed-row gather is data-dependent and illegal "
+                "under stream capture. Run the eager reference with "
+                "--disable-cuda-graph, or set "
+                f"{FD_EXECUTION_MODE_ENV}={FD_EXECUTION_FULL_GRAPH} to serve."
+            )
     if (
         skipper_adapter.requires_stable_request_ids
         and execution_mode != FD_EXECUTION_FULL_GRAPH
