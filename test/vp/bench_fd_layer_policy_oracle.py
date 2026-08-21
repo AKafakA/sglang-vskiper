@@ -19,14 +19,16 @@ from bench_fd_conditional_oracle import (
     _route_partition,
 )
 from sglang.srt.server_args import ServerArgs, set_global_server_args_for_scheduler
-from sglang.srt.vp.flexidepth_full_graph import (
+from sglang.srt.vpipe.mlp import (
     _dense_filtered_project_mlp,
     _full_dual_mlp,
-    _mapped_asymmetric_compact_mlp,
     _mapped_project_base_mlp,
     _mapped_run_base_mlp,
     _project_filtered_run_mlp,
     fd_conditional_mlp_full_graph,
+)
+from sglang.srt.vpipe.mlp_compact import (
+    _mapped_asymmetric_compact_mlp,
 )
 
 

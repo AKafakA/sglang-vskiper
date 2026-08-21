@@ -10,7 +10,7 @@ import sys
 
 import torch
 
-from sglang.srt.vp.binary_cohort_kernels import count_matmul
+from sglang.srt.vpipe.kernel import count_matmul_gridexit
 
 SENTINEL = 7777.0
 
@@ -34,7 +34,7 @@ def main() -> int:
             count = torch.tensor(
                 count_value, dtype=torch.int32, device=device
             )
-            count_matmul(a, w, count, c)
+            count_matmul_gridexit(a, w, count, c)
             want = (
                 a[:count_value].float() @ w.float().T
             ).to(dtype)

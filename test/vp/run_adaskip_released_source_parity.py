@@ -25,24 +25,36 @@ import torch
 import torch.nn.functional as F
 
 from sglang.srt.server_args import ServerArgs, set_global_server_args_for_scheduler
-from sglang.srt.vp.adaskip_profile import (
+from sglang.srt.vpipe.adaskip_profile import (
     ADASKIP_CALIBRATION_SCHEMA,
-    ADASKIP_OFFICIAL_SOURCE_REVISION,
     AdaSkipCalibration,
     profile_from_calibration,
     selected_sublayer_ids,
 )
-from sglang.srt.vp.flexidepth_full_graph import (
-    FullGraphPreparedLayerRoute,
+from sglang.srt.vpipe.skipper import (
+    ADASKIP_OFFICIAL_SOURCE_REVISION,
+)
+from sglang.srt.vpipe.executor import (
     _execute_sublayer_route_full_graph,
+)
+from sglang.srt.vpipe.mlp_compact import (
     _one_expert_mlp,
 )
-from sglang.srt.vp.full_graph_skipper import (
-    SUBLAYER_EXECUTION,
-    FullGraphActionBatch,
+from sglang.srt.vpipe.routing import (
+    FullGraphPreparedLayerRoute,
+)
+from sglang.srt.vpipe.common import (
     resolve_full_graph_skipper,
 )
-from sglang.srt.vp.v2.types import LogicalAction
+from sglang.srt.vpipe.env import (
+    SUBLAYER_EXECUTION,
+)
+from sglang.srt.vpipe.types import (
+    FullGraphActionBatch,
+)
+from sglang.srt.vpipe.types import (
+    LogicalAction,
+)
 
 
 OFFICIAL_E2E_MODEL_SHA256 = (

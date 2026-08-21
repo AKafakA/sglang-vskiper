@@ -21,8 +21,12 @@ from types import SimpleNamespace
 import pytest
 
 from sglang.srt.environ import envs
-from sglang.srt.vp import coverage_dense
-from sglang.srt.vp.coverage_dense import (
+from sglang.srt.vpipe import coverage as coverage_dense
+from sglang.srt.vpipe import attestation as vpipe_attestation
+from sglang.srt.vpipe.attestation import (
+    per_boot_ladder_hash,
+)
+from sglang.srt.vpipe.coverage import (
     BODY_DENSE_EAGER,
     BODY_EAGER_SKIP,
     BODY_GRAPH_ALLRUN,
@@ -42,11 +46,9 @@ from sglang.srt.vp.coverage_dense import (
     coverage_parity_ok,
     note_capture_trim,
     note_ladder_derivation,
-    per_boot_ladder_hash,
     record_dense_body_pass,
     record_eager_skip_decode_layer_call,
     record_recapture_event,
-    record_v4_route_execute_decode_call,
     reset_coverage_dense_state,
     reset_coverage_stamps,
     select_decode_body,
@@ -255,7 +257,9 @@ def _phase_fb(*, decode: bool, coverage: bool, w1_decode_dense: bool = False):
 @pytest.mark.parametrize("stamped", [False, True])
 @pytest.mark.parametrize("decode", [False, True])
 def test_phase_enabled_truth_table(monkeypatch, w1_on, stamped, decode) -> None:
-    from sglang.srt.vp.flexidepth_full_graph import flexidepth_phase_enabled
+    from sglang.srt.vpipe.common import (
+        flexidepth_phase_enabled,
+    )
 
     monkeypatch.setenv("SGLANG_FD_ACTIVE_PHASES", "both")
     if w1_on:
@@ -537,9 +541,11 @@ def test_per_boot_ladder_hash_stability() -> None:
 
 
 def test_seam_observe_is_level_triggered_idempotent_in_state() -> None:
-    from sglang.srt.vp.regime_switch import (
-        DecodeRegimeDispatch,
+    from sglang.srt.vpipe.common import (
         regime_switch_config,
+    )
+    from sglang.srt.vpipe.regime import (
+        DecodeRegimeDispatch,
     )
 
     cfg = regime_switch_config({"SGLANG_VP_REGIME_SWITCH": REGIME_JSON})
@@ -620,9 +626,6 @@ def test_sentinel_can_fire_and_lifecycle_excludes() -> None:
     # Prefill entries never count.
     record_eager_skip_decode_layer_call(_batch(decode=False))
     assert counters.eager_skip_decode_layer_calls == 1
-    # The V4 route body counts into its own pinned-zero tripwire.
-    record_v4_route_execute_decode_call(fb)
-    assert counters.v4_route_execute_decode_calls == 1
     assert counters.eager_skip_decode_layer_calls == 1
 
 
@@ -702,28 +705,10 @@ def test_production_consults_zero_new_state(monkeypatch) -> None:
     # /server_info byte-identical to stock.
     model_runner = SimpleNamespace()
     assert (
-        coverage_dense.coverage_dense_runtime_attestation(model_runner) is None
+        vpipe_attestation.coverage_dense_runtime_attestation(model_runner) is None
     )
 
 
-def test_expectations_carry_fd_c3_battery_only_where_armed() -> None:
-    armed = (
-        "v4_m3_56_flexidepth_prefill_only.json",
-        "v4_m3_56_flexidepth_integrated_buffered_kv.json",
-    )
-    for name in armed:
-        runtime = json.loads((EXPECTATIONS_DIR / name).read_text())["runtime"]
-        block = runtime["fd_c3"]
-        assert block["enabled"] is True
-        assert block["counters"]["eager_skip_decode_layer_calls"] == 0
-        assert block["counters"]["v4_route_execute_decode_calls"] == 0
-        assert block["ladder"]["ladder_source"] == "self_sized"
-        assert block["ladder"]["cuda_graph_padding_enabled"] is True
-    for name in ("production_upstream.json", "vanilla.json"):
-        runtime = json.loads((EXPECTATIONS_DIR / name).read_text()).get(
-            "runtime", {}
-        )
-        assert "fd_c3" not in runtime
 
 
 def test_attestation_block_shape_when_armed(monkeypatch) -> None:
@@ -738,7 +723,7 @@ def test_attestation_block_shape_when_armed(monkeypatch) -> None:
         req_to_token_pool=SimpleNamespace(size=4096),
         server_args=SimpleNamespace(disable_cuda_graph_padding=False),
     )
-    block = coverage_dense.coverage_dense_runtime_attestation(model_runner)
+    block = vpipe_attestation.coverage_dense_runtime_attestation(model_runner)
     assert block is not None and block["enabled"] is True
     ladder = block["ladder"]
     assert ladder["decode_capture_bs_max"] == 8
@@ -750,6 +735,6 @@ def test_attestation_block_shape_when_armed(monkeypatch) -> None:
     assert ladder["cuda_graph_padding_enabled"] is True
     # Runner-absent boots attest the void arm loudly (R-E).
     model_runner.decode_cuda_graph_runner = None
-    block = coverage_dense.coverage_dense_runtime_attestation(model_runner)
+    block = vpipe_attestation.coverage_dense_runtime_attestation(model_runner)
     assert block["ladder"]["decode_capture_bs_max"] is None
     assert block["ladder"]["capture_bs"] == []

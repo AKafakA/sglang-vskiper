@@ -19,14 +19,22 @@ import torch
 import torch.nn.functional as F
 
 from sglang.srt.server_args import ServerArgs, set_global_server_args_for_scheduler
-from sglang.srt.vp.compact_cohort import (
-    build_route_maps,
+from sglang.srt.vpipe.cohort import (
     pack_cohort,
     scatter_cohort,
 )
-from sglang.srt.vp.flexidepth_full_graph import fd_conditional_mlp_full_graph
-from sglang.srt.vp.flexidepth_full_graph import _aligned_branch_partition
-from sglang.srt.vp.flexidepth_full_graph import _bounded_compact_mlp
+from sglang.srt.vpipe.routing import (
+    build_route_maps,
+)
+from sglang.srt.vpipe.mlp import (
+    fd_conditional_mlp_full_graph,
+)
+from sglang.srt.vpipe.mlp_compact import (
+    _aligned_branch_partition,
+)
+from sglang.srt.vpipe.mlp_compact import (
+    _bounded_compact_mlp,
+)
 
 
 class _Projector:

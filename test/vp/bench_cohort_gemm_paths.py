@@ -23,7 +23,9 @@ import torch
 
 from sglang.srt.layers.moe.moe_runner.triton_utils import override_config
 from sglang.srt.server_args import ServerArgs, set_global_server_args_for_scheduler
-from sglang.srt.vp.flexidepth_full_graph import _one_expert_mlp
+from sglang.srt.vpipe.mlp_compact import (
+    _one_expert_mlp,
+)
 
 
 def _time(fn, *, warmups: int, replays: int, trials: int) -> float:

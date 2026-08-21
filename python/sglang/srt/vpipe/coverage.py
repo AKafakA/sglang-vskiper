@@ -48,9 +48,6 @@ class CoverageDenseCounters(msgspec.Struct):
     dense_body_rows: int = 0
     # Negative witnesses (invariant: exactly 0 in serving; >0 => cell VOID).
     eager_skip_decode_layer_calls: int = 0
-    # V4/V2 scheduler-owned route body (F3 tripwire; pinned 0 while the V4
-    # decode scheduler is disabled — nonzero forces the C-E obligation).
-    v4_route_execute_decode_calls: int = 0
     # Body-mix accounting per SS5 (token == decode row here).
     fd_tokens_skip_body: int = 0
     fd_tokens_prod_allrun_band: int = 0
@@ -347,3 +344,86 @@ def reset_coverage_stamps(forward_batch: Any) -> None:
     forward_batch.vp_fd_coverage_counted = False
     forward_batch.fd_full_graph_force_production_attention = False
 _c3_ladder = CoverageLadderRecord.create()
+
+
+BODY_GRAPH_SKIP = "graph_skip"
+BODY_GRAPH_ALLRUN = "graph_allrun"
+BODY_DENSE_EAGER = "dense_eager"
+BODY_EAGER_SKIP = "eager_skip"
+
+
+def coverage_dense_counters() -> CoverageDenseCounters:
+    return _c3_counters
+
+def coverage_ladder_record() -> CoverageLadderRecord:
+    return _c3_ladder
+
+def reset_coverage_dense_state() -> None:
+    """Reset all module state (CPU tests only; serving never resets)."""
+
+    global _c3_counters, _c3_ladder, _graph_lifecycle_depth
+    global _fd_skip_decode_deployed_cache
+    _c3_counters = CoverageDenseCounters.create()
+    _c3_ladder = CoverageLadderRecord.create()
+    _graph_lifecycle_depth = 0
+    _fd_skip_decode_deployed_cache = None
+
+def coverage_parity_ok(counters: Optional[CoverageDenseCounters] = None) -> bool:
+    """Two-site parity gate: decisions==passes and rows==rows (SS5)."""
+
+    value = _c3_counters if counters is None else counters
+    return (
+        value.dense_overflow_decisions == value.dense_body_passes
+        and value.dense_overflow_rows == value.dense_body_rows
+    )
+
+def cdopt_skip_only_bucket_legal(
+    capture_bs: Sequence[int], bucket: int, enter_rows: int
+) -> bool:
+    """Corrected C-D-opt legality (F6): a skip-only capture of ``bucket`` is
+    legal only when the bucket's MINIMUM mapped raw row count (previous bucket
+    + 1) is at or above the W1 ``enter_rows`` — the band advances from RAW
+    rows while the replay key uses the PADDED bucket, so any raw count mapping
+    to this bucket below ``enter_rows`` would compose (bucket, prod_allrun)
+    against a missing graph and crash at replay.  The halver itself stays
+    deferred (SS2.4); only the predicate ships, so the corrected premise is
+    executable evidence.
+    """
+
+    ordered = sorted(int(value) for value in capture_bs)
+    if int(bucket) not in ordered:
+        raise ValueError(f"bucket {bucket} is not in the capture ladder")
+    index = ordered.index(int(bucket))
+    min_mapped_raw = 1 if index == 0 else ordered[index - 1] + 1
+    return min_mapped_raw >= int(enter_rows)
+
+def select_decode_body(
+    rows: int,
+    max_bs: Optional[int],
+    oracle_ok: bool,
+    fd_enabled: bool,
+    band_state: Optional[str],
+    w1_enabled: bool,
+) -> str:
+    """Pure mirror of the total per-pass body composition, strict priority
+    coverage > band:
+
+    - not covered (rows above the realized cap, oracle unavailable, or no
+      runner) -> stock dense eager (fail-closed, R-E);
+    - covered, W1 low band -> captured production all-RUN body;
+    - covered otherwise -> captured skip body.
+
+    ``EAGER_SKIP`` is not a reachable output for ANY input (R-A totality).
+    ``band_state`` is the W1 hysteresis state (``prod_allrun``/``skip``) and
+    only selects among CAPTURED bodies — band staleness can never produce
+    eager skip.
+    """
+
+    covered = oracle_ok and max_bs is not None and int(rows) <= int(max_bs)
+    if not covered:
+        return BODY_DENSE_EAGER
+    if not fd_enabled:
+        return BODY_GRAPH_ALLRUN
+    if w1_enabled and band_state == "prod_allrun":
+        return BODY_GRAPH_ALLRUN
+    return BODY_GRAPH_SKIP
