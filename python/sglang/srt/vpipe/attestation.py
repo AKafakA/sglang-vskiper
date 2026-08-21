@@ -1,0 +1,1712 @@
+"""Runtime attestation — prove what EXECUTED, not what was configured.
+
+A set flag is not an active treatment and an unset flag is not an inactive
+mechanism. These surfaces publish realised counters and route digests through
+/server_info so a deployment's posture is evidence rather than inference.
+
+Mutable counters must never enter the deployment identity hash: they advance
+during warmup and capture, so a manifest snapshot and a later re-read can never
+agree. The config-deterministic half stays in the identity; the counters stay
+visible beside it."""
+
+from __future__ import annotations
+
+from typing import Mapping, Sequence
+import hashlib
+import json
+import math
+import triton
+import os
+from dataclasses import dataclass, replace
+from typing import Any, Callable, Optional
+import torch
+from sglang.srt.vpipe.common import (
+    regime_switch_config,
+)
+from sglang.srt.vpipe.env import (
+    FD_ACTIVE_PHASES_ENV,
+    FD_COMMIT_OVERLAP_ENV,
+    FD_COMPACT_CAPACITY_FRACTION_ENV,
+    FD_COMPACT_CAPACITY_MULTIPLE_ENV,
+    FD_COMPACT_ENABLED_ENV,
+    FD_COMPACT_MIN_ROWS_ENV,
+    FD_COMPACT_O_PROJ_ENV,
+    FD_COMPACT_O_PROJ_LAYERS_ENV,
+    FD_COMPACT_O_PROJ_MIN_ROWS_ENV,
+    FD_COMPACT_PHASES_ENV,
+    FD_COMPACT_Q_PROJ_ENV,
+    FD_COMPACT_ROUTED_QKV_ENV,
+    FD_CONDITIONAL_BRANCH_COUNTERS_ENV,
+    FD_CONDITIONAL_GRAPH_ENV,
+    FD_CONDITIONAL_GRAPH_HELPER_ENV,
+    FD_CONDITIONAL_MAX_ROWS_ENV,
+    FD_CONDITIONAL_PRODUCTION_ALL_RUN_ENV,
+    FD_CONTIGUOUS_ROUTED_QKV_ENV,
+    FD_DEFER_PROJECT_KV_DIAGNOSTIC_STAGE_ENV,
+    FD_DEFER_PROJECT_KV_ENV,
+    FD_DEVICE_ROUTE_DIGEST_ENV,
+    FD_DEVICE_ROUTE_TAPE_ENV,
+    FD_DUAL_COMPACT_MIN_ROWS_ENV,
+    FD_EAGER_SEMANTIC_DEBUG_ENV,
+    FD_EXECUTION_DIRECT_EAGER,
+    FD_EXECUTION_FULL_GRAPH,
+    FD_EXECUTION_MODE_ENV,
+    FD_FORCED_ALL_RUN_FASTPATH_ENV,
+    FD_FORCED_ALL_RUN_PRODUCTION_ATTN_ENV,
+    FD_FORCE_ROUTE_ENV,
+    FD_FUSED_EVIDENCE_ENV,
+    FD_LAYER_COUNTERS_ENV,
+    FD_LAYER_POLICIES_ENV,
+    FD_LOW_ROW_MAX_ROWS_ENV,
+    FD_LOW_ROW_POLICY_ENV,
+    FD_MAPPED_DECODE_ATTN_ENV,
+    FD_MASKED_DECODE_ATTN_ENV,
+    FD_PREFILL_GROUPED_MLP_ENV,
+    FD_REPAIR_GROUP_SIZE_ENV,
+    FD_ROUTED_QKV_CAPACITIES_ENV,
+    FD_ROUTED_QKV_CAPACITY_MULTIPLE_ENV,
+    FD_ROUTED_QKV_MIN_ROWS_ENV,
+    FD_ROUTE_ACCOUNTING_ENV,
+    FD_SCHEDULER_CONVERGENCE_ENV,
+    FD_VIRTUAL_COHORT_ENV,
+    FD_WEIGHTED_SCATTER_ENV,
+    FULL_GRAPH_CAPTURE_SYNTHETIC_RID_BASE,
+    _BINARY_COHORT_CONFIG_DIGEST,
+    _BINARY_COHORT_LAYERS,
+    _BINARY_COHORT_STATS,
+    _CONFLICTING_FULL_GRAPH_ENV,
+    _MASKED_DECODE_REQUIRED_BACKEND,
+    _VALID_ACTIVE_PHASES,
+    _VALID_DEFER_PROJECT_KV_DIAGNOSTIC_STAGES,
+    _VALID_EXECUTION_MODES,
+    _VALID_FORCED_ROUTES,
+    _VALID_LAYER_POLICIES,
+    _VALID_LOW_ROW_POLICIES,
+)
+from sglang.srt.vpipe.kernel import (
+    weighted_scatter,
+)
+from sglang.srt.vpipe.common import (
+    resolve_full_graph_skipper,
+)
+from sglang.srt.vpipe.skipper import (
+    route_digest_uses_logical_request_ids,
+)
+from sglang.srt.vpipe.env import (
+    SUBLAYER_EXECUTION,
+)
+from sglang.srt.vpipe.common import (
+    full_graph_compact_o_proj_min_rows,
+    full_graph_contiguous_routed_qkv_config,
+)
+from sglang.srt.vpipe.common import (
+    full_graph_compact_phases,
+    full_graph_low_row_policy,
+)
+from sglang.srt.vpipe.common import (
+    flexidepth_execution_mode,
+    full_graph_compact_routed_qkv_enabled,
+)
+from sglang.srt.vpipe.common import (
+    flexidepth_active_phases,
+)
+from sglang.srt.vpipe.config import (
+    full_graph_compact_config,
+    full_graph_compact_o_proj_config,
+    full_graph_defer_project_kv_enabled,
+    full_graph_device_route_digest_enabled,
+    full_graph_device_route_tape_enabled,
+    full_graph_eager_semantic_debug_enabled,
+    full_graph_forced_all_run_fastpath_enabled,
+    full_graph_forced_all_run_production_attention_enabled,
+    full_graph_fused_evidence_enabled,
+    full_graph_layer_counters_enabled,
+    full_graph_layer_policies,
+    full_graph_mapped_decode_attention_enabled,
+    full_graph_masked_decode_attention_enabled,
+    full_graph_prefill_grouped_mlp_enabled,
+    full_graph_route_accounting_enabled,
+    full_graph_scheduler_convergence_enabled,
+    full_graph_virtual_cohort_enabled,
+    full_graph_weighted_scatter_enabled,
+)
+from sglang.srt.vpipe.mlp_compact import (
+    full_graph_dual_compact_min_rows,
+)
+from sglang.srt.vpipe.common import (
+    full_graph_compact_q_proj_enabled,
+)
+from sglang.srt.vpipe.coverage import (
+    _c3_ladder,
+    coverage_dense_armed,
+)
+from sglang.srt.vpipe.regime import (
+    regime_switch_zero_counters,
+)
+from sglang.srt.vpipe.route_tape import (
+    _c3_counters,
+)
+
+
+_cached: Optional[bool] = None
+_VP_ENV_PREFIXES = ("SGLANG_FD_", "SGLANG_VP_")
+_server_args_enabled: bool = False
+def per_boot_ladder_hash(capture_bs: Sequence[int]) -> str:
+    """Stable hash of the realized ladder (boot-contingency evidence, SS7.7)."""
+
+    encoded = json.dumps([int(value) for value in capture_bs]).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+def regime_switch_attestation(
+    environ: Optional[Mapping[str, str]] = None,
+    *,
+    counters: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Build the ``regime_switch`` runtime-attestation block.
+
+    Present on every endpoint (prefill-only and integrated).  When the switch
+    is off the static block is ``{"enabled": False}`` so the OFF state stays
+    diffable.  A nested ``counters`` sub-block carries per-phase-by-body pass
+    counts (zeros placeholder until I5/I6 wire real counters); it is stripped
+    from the deployment identity and must be omitted from expectation subsets.
+    """
+
+    config = regime_switch_config(environ)
+    if config is None:
+        block: dict[str, Any] = {"enabled": False}
+    else:
+        block = {
+            "enabled": True,
+            "version": config.version,
+            "prefill": {
+                "enabled": config.prefill.enabled,
+                "min_tokens": config.prefill.min_tokens,
+                "max_tokens": config.prefill.max_tokens,
+                "row_correction_alpha": config.prefill.row_correction_alpha,
+                "include_mixed": config.prefill.include_mixed,
+            },
+            "decode": {
+                "enabled": config.decode.enabled,
+                "enter_rows": config.decode.enter_rows,
+                "exit_rows": config.decode.exit_rows,
+                "low_body": config.decode.low_body,
+                "high_body": config.decode.high_body,
+            },
+        }
+    block["counters"] = (
+        regime_switch_zero_counters() if counters is None else counters
+    )
+    return block
+def coverage_dense_runtime_attestation(model_runner: Any) -> Optional[dict[str, Any]]:
+    """Build the ``fd_c3`` attestation block, or ``None`` when the mechanism
+    is not armed (production and gate-OFF boots stay byte-identical)."""
+
+    if not coverage_dense_armed():
+        return None
+    runner = model_runner.decode_cuda_graph_runner
+    if runner is not None:
+        capture_bs = [int(value) for value in runner.capture_bs]
+        decode_capture_bs_max = int(runner.max_bs)
+        ladder_hash = per_boot_ladder_hash(capture_bs)
+    else:
+        # Fail-closed dense boot (graphs disabled / runner absent): the arm is
+        # VOID for coverage cells; attest the absence loudly (R-E).
+        capture_bs = []
+        decode_capture_bs_max = None
+        ladder_hash = None
+    pool_size = int(model_runner.req_to_token_pool.size)
+    coverage_ratio = (
+        decode_capture_bs_max / pool_size
+        if decode_capture_bs_max is not None and pool_size
+        else 0.0
+    )
+    counters = _c3_counters
+    return {
+        "enabled": True,
+        "kill_switch_env": "SGLANG_VP_COVERAGE_DENSE",
+        "ladder": {
+            "ladder_source": _c3_ladder.ladder_source,
+            "decode_capture_bs_max": decode_capture_bs_max,
+            "capture_bs": capture_bs,
+            "per_boot_ladder_hash": ladder_hash,
+            "capture_trim_events": list(_c3_ladder.capture_trim_events),
+            "req_to_token_pool_size": pool_size,
+            "coverage_ratio": coverage_ratio,
+            "stop_reason": _c3_ladder.stop_reason,
+            "target_max_bs": _c3_ladder.target_max_bs,
+            "reserve_bytes": _c3_ladder.reserve_bytes,
+            "reserve_provenance": _c3_ladder.reserve_provenance,
+            "cuda_graph_padding_enabled": (
+                not model_runner.server_args.disable_cuda_graph_padding
+            ),
+        },
+        "counters": {
+            "eager_skip_decode_layer_calls": counters.eager_skip_decode_layer_calls,
+            "v4_route_execute_decode_calls": counters.v4_route_execute_decode_calls,
+            "dense_overflow_decisions": counters.dense_overflow_decisions,
+            "dense_overflow_rows": counters.dense_overflow_rows,
+            "dense_body_passes": counters.dense_body_passes,
+            "dense_body_rows": counters.dense_body_rows,
+            "overflow_reason": dict(counters.overflow_reason),
+            "fd_tokens_skip_body": counters.fd_tokens_skip_body,
+            "fd_tokens_prod_allrun_band": counters.fd_tokens_prod_allrun_band,
+            "fd_tokens_dense_overflow": counters.fd_tokens_dense_overflow,
+            "dispatch_graph_steps": counters.dispatch_graph_steps,
+            "regime_observe_eager": counters.regime_observe_eager,
+            "coverage_stamp_w1_composed": counters.coverage_stamp_w1_composed,
+            "graph_lifecycle_sections": counters.graph_lifecycle_sections,
+            "recapture_events": list(counters.recapture_events),
+        },
+    }
+def _env_enabled(name: str, default: str = "0") -> bool:
+    return os.environ.get(name, default) == "1"
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)) or str(default))
+    except ValueError:
+        return default
+def _v1_runtime_attestation(scheduler: Any) -> dict[str, Any]:
+    enabled = bool(getattr(scheduler, "vp_enabled", False))
+    grid = getattr(scheduler, "vp_grid", None)
+    async_enabled = _env_enabled("SGLANG_FD_VP_ASYNC_KV")
+    batched_enabled = _env_enabled("SGLANG_VP_ASYNC_KV_BATCHED")
+    return {
+        "scheduler": {
+            "enabled": enabled,
+            "block_size": getattr(grid, "block_size", None) if enabled else None,
+            "span": getattr(scheduler, "vp_span", None) if enabled else None,
+            "generic_router_disabled": bool(
+                getattr(scheduler, "vp_disable_router", False)
+            ),
+            "stage_scheduler_enabled": bool(
+                getattr(scheduler, "vp_stage_sched", False)
+            ),
+            "stage_policy": getattr(scheduler, "vp_stage_policy", None),
+            "stage_fuse_mixed": bool(
+                getattr(scheduler, "vp_stage_fuse_mixed", False)
+            ),
+        },
+        "flexidepth": {
+            "project_only": _env_enabled("SGLANG_FD_VP_PROJECT"),
+            "router_graph": {
+                "enabled": _env_enabled("SGLANG_FD_VP_ROUTER_GRAPH"),
+                "max_rows": _env_int("SGLANG_FD_VP_ROUTER_GRAPH_MAX_ROWS", 64),
+                "max_entries": _env_int(
+                    "SGLANG_FD_VP_ROUTER_GRAPH_MAX_ENTRIES", 4
+                ),
+            },
+            "stage_route": {
+                "enabled": bool(getattr(scheduler, "vp_fd_stage_route", False)),
+                "fuse_homogeneous": _env_enabled(
+                    "SGLANG_FD_VP_STAGE_ROUTE_FUSE_HOMOGENEOUS"
+                ),
+                "runahead": _env_enabled("SGLANG_FD_VP_STAGE_ROUTE_RUNAHEAD"),
+            },
+            "async_kv": {
+                "enabled": async_enabled,
+                "defer_drain": _env_enabled(
+                    "SGLANG_FD_VP_ASYNC_KV_DEFER_DRAIN"
+                ),
+                "scoped": async_enabled
+                and _env_enabled("SGLANG_FD_VP_ASYNC_KV_SCOPED", "1"),
+                "mixed_decode": _env_enabled(
+                    "SGLANG_FD_VP_MIXED_DECODE_ASYNC_KV"
+                ),
+                "batched": batched_enabled,
+                "token_launch": batched_enabled
+                and _env_enabled("SGLANG_VP_ASYNC_KV_BATCHED_TOKEN_LAUNCH"),
+                "grouped_event": batched_enabled
+                and _env_enabled("SGLANG_VP_ASYNC_KV_GROUPED_EVENT"),
+                "repair_graph": batched_enabled
+                and _env_enabled("SGLANG_VP_ASYNC_KV_REPAIR_GRAPH"),
+                "repair_graph_max_rows": _env_int(
+                    "SGLANG_VP_ASYNC_KV_REPAIR_GRAPH_MAX_ROWS", 64
+                ),
+                "repair_graph_max_entries": _env_int(
+                    "SGLANG_VP_ASYNC_KV_REPAIR_GRAPH_MAX_ENTRIES", 64
+                ),
+                "kv_only_qkv": _env_enabled("SGLANG_VP_KV_ONLY_QKV")
+                or _env_enabled("SGLANG_FD_VP_ALL_SKIP_KV_ONLY_QKV"),
+            },
+        },
+    }
+def scheduler_runtime_attestation(scheduler: Any) -> dict[str, Any]:
+    model_runner = scheduler.tp_worker.model_runner
+    model = model_runner.model
+    model_attestation = getattr(model, "vp_runtime_attestation", None)
+    if callable(model_attestation):
+        model_state = model_attestation()
+    else:
+        model_state = {
+            "model_family": type(model).__name__,
+            "flexidepth": {
+                "loaded": False,
+                "loaded_layers": [],
+                "execution": "disabled",
+            },
+        }
+
+    model_flexidepth = model_state.get("flexidepth", {})
+    v3_full_graph_enabled = str(
+        model_flexidepth.get("execution", "")
+    ).startswith("full_graph_")
+    v3_full_graph = None
+    if v3_full_graph_enabled:
+
+        v3_full_graph = model_runner_runtime_attestation(
+            model_runner,
+            loaded_layer_count=len(model_flexidepth.get("loaded_layers", ())),
+        )
+
+    stage_runtime_enabled = bool(getattr(scheduler, "vp_v2_enabled", False))
+    stage_runtime_version = int(getattr(scheduler, "vp_runtime_version", 2))
+    stage_runtime = None
+    if stage_runtime_enabled:
+        config = scheduler.vp_v2_config
+        snapshot = scheduler.vp_v2_stage_scheduler.snapshot()
+        tracer = getattr(model_runner, "vp_v2_trace", None)
+        trace_state = (
+            tracer.attestation()
+            if tracer is not None
+            else {
+                "enabled": False,
+                "request_id": None,
+                "token_epoch_start": 0,
+                "token_epoch_end": 0,
+                "selected_tensors": 0,
+                "flushed": False,
+            }
+        )
+        graph_runner = getattr(model_runner, "vp_v2_graph_runner", None)
+        graph_state = (
+            graph_runner.attestation()
+            if graph_runner is not None
+            else {
+                "enabled": False,
+                "backend": "disabled",
+                "buckets": [],
+                "dummy_state_row": None,
+                "dummy_repair_slot": None,
+                "captured_keys": [],
+                "counters": {},
+                "rejection_reasons": {},
+            }
+        )
+        graph_counters = graph_state.get("counters", {})
+        completion_registry = getattr(
+            scheduler, "_vp_v4_completion_registry", None
+        )
+        epoch_slots = getattr(scheduler, "_vp_v4_epoch_slots", None)
+        epoch_leases = getattr(scheduler, "_vp_v4_epoch_leases", None)
+        device_executor = getattr(
+            model_runner, "_vp_v4_device_rebatching_executor", None
+        )
+        device_rebatching_state = {
+            "enabled": bool(
+                getattr(scheduler, "_vp_v4_device_rebatching", False)
+            ),
+            "completion_registry": (
+                completion_registry.snapshot()
+                if completion_registry is not None
+                else {}
+            ),
+            "foreground_epoch_slots": (
+                epoch_slots.snapshot() if epoch_slots is not None else {}
+            ),
+            "lease_rows": (
+                len(epoch_leases) if epoch_leases is not None else 0
+            ),
+            "pending_rounds": getattr(
+                scheduler, "_vp_v4_pending_rounds", 0
+            ),
+            "admission_gate": {
+                "admission_batches": getattr(
+                    scheduler, "_vp_v4_admission_batches", 0
+                ),
+                "continuation_ticks": getattr(
+                    scheduler, "_vp_v4_continuation_ticks", 0
+                ),
+                "static_drain_ticks": getattr(
+                    scheduler, "_vp_v4_static_drain_ticks", 0
+                ),
+                "admissions_with_live_ownership": getattr(
+                    scheduler, "_vp_v4_admissions_with_live_ownership", 0
+                ),
+                "bound_deferred_ticks": getattr(
+                    scheduler, "_vp_v4_bound_deferred_ticks", 0
+                ),
+                "bound_violation_admissions": getattr(
+                    scheduler, "_vp_v4_bound_violation_admissions", 0
+                ),
+            },
+            "executor": (
+                device_executor.attestation()
+                if device_executor is not None
+                else None
+            ),
+        }
+        completed_epochs = getattr(
+            scheduler, "_vp_v2_decode_token_epochs_completed", 0
+        )
+        whole_step_graph_epochs = getattr(
+            scheduler, "_vp_v2_decode_token_epochs_whole_step_graph", 0
+        )
+        whole_step_graph_coverage_pct = (
+            100.0 * whole_step_graph_epochs / completed_epochs
+            if completed_epochs
+            else 0.0
+        )
+        stage_runtime = {
+            "runtime_version": stage_runtime_version,
+            "config_fingerprint": config.fingerprint(),
+            "adapter": {
+                "name": config.adapter.name,
+                "dynamic": scheduler.vp_v2_adapter.capabilities.dynamic,
+                "max_repairs_per_token": (
+                    scheduler.vp_v2_adapter.capabilities.max_repairs_per_token
+                ),
+            },
+            "stage_count": len(scheduler.vp_v2_stage_scheduler.stages),
+            "scheduler": {
+                "policy": config.scheduler.policy,
+                "max_batch_size": config.scheduler.max_batch_size,
+                "coalesce_run_stages": config.scheduler.coalesce_run_stages,
+                "dispatch_buckets": snapshot["dispatch_buckets"],
+                "dispatch_row_limit": snapshot["dispatch_row_limit"],
+            },
+            "execution": {
+                "repair_mode": config.execution.repair_mode,
+                "enable_graphs": config.execution.enable_graphs,
+                "enable_overlap": config.execution.enable_overlap,
+                "enable_radix_cache": config.execution.enable_radix_cache,
+                "enable_full_run_fastpath": (
+                    getattr(config.execution, "enable_full_run_fastpath", False)
+                ),
+                "enable_static_all_run_reduction": (
+                    getattr(
+                        config.execution,
+                        "enable_static_all_run_reduction",
+                        False,
+                    )
+                ),
+                "enable_future_epoch_overlap": (
+                    config.execution.enable_future_epoch_overlap
+                ),
+                "enable_full_parent_cohort_fastpath": (
+                    getattr(
+                        config.execution,
+                        "enable_full_parent_cohort_fastpath",
+                        False,
+                    )
+                ),
+                "enable_lane_buffers": getattr(
+                    config.execution, "enable_lane_buffers", False
+                ),
+                "enable_full_run_fallback": getattr(
+                    config.execution, "enable_full_run_fallback", False
+                ),
+                "enable_device_rebatching": getattr(
+                    config.execution, "enable_device_rebatching", False
+                ),
+                "device_round_substeps": getattr(
+                    config.execution, "device_round_substeps", 1
+                ),
+                "device_complete_wave": getattr(
+                    config.execution, "device_complete_wave", False
+                ),
+                "device_mixed_action_wave": getattr(
+                    config.execution, "device_mixed_action_wave", False
+                ),
+                "device_host_tick_coalescing": getattr(
+                    config.execution,
+                    "device_host_tick_coalescing",
+                    False,
+                ),
+                "device_min_dispatch_rows": getattr(
+                    config.execution,
+                    "device_min_dispatch_rows",
+                    1,
+                ),
+                "device_max_wait_rounds": getattr(
+                    config.execution,
+                    "device_max_wait_rounds",
+                    0,
+                ),
+                "device_project_kv_mode": getattr(
+                    config.execution,
+                    "device_project_kv_mode",
+                    "inline",
+                ),
+                "device_min_graph_bucket_rows": getattr(
+                    config.execution,
+                    "device_min_graph_bucket_rows",
+                    1,
+                ),
+                "device_max_graph_bucket_rows": getattr(
+                    config.execution,
+                    "device_max_graph_bucket_rows",
+                    0,
+                ),
+            },
+            "trace": trace_state,
+            "stage_graphs": graph_state,
+            "device_rebatching": device_rebatching_state,
+            "virtual_cohort": {
+                "schema_version": 1,
+                "descriptor_available": True,
+                "execution_enabled": False,
+            },
+            "movement_accounting": {
+                "schema_version": 1,
+                "scope": "state-ledger-and-route-payloads",
+                "semantics": "logical-tensor-bytes-not-measured-hbm-transactions",
+                "by_lane": {
+                    lane: dict(sorted(counters.items()))
+                    for lane, counters in sorted(
+                        getattr(
+                            scheduler,
+                            "_vp_v2_materialization_by_lane",
+                            {},
+                        ).items()
+                    )
+                },
+            },
+            "host_timing": {
+                "enabled": getattr(
+                    scheduler, "_vp_v2_profile_stage_activity", False
+                ),
+                "semantics": (
+                    "perf-counter host elapsed; route includes existing "
+                    "device-to-host decision synchronization"
+                ),
+                "counters": dict(
+                    sorted(
+                        getattr(scheduler, "_vp_v2_host_timing", {}).items()
+                    )
+                ),
+                "route_stages": {
+                    str(stage_id): dict(sorted(counters.items()))
+                    for stage_id, counters in sorted(
+                        getattr(
+                            scheduler, "_vp_v2_route_stage_timing", {}
+                        ).items()
+                    )
+                },
+            },
+            "counters": {
+                "decode_token_epochs_admitted": getattr(
+                    scheduler, "_vp_v2_decode_token_epochs_admitted", 0
+                ),
+                "decode_token_epochs_completed": completed_epochs,
+                "mixed_prefill_decode_rows": getattr(
+                    scheduler, "_vp_v4_mixed_prefill_decode_rows", 0
+                ),
+                "retracted_decode_rows": getattr(
+                    scheduler, "_vp_v4_retracted_decode_rows", 0
+                ),
+                "decode_token_epochs_whole_step_graph": whole_step_graph_epochs,
+                "whole_step_graph_coverage_pct": whole_step_graph_coverage_pct,
+                "host_route_dispatches": getattr(
+                    scheduler, "_vp_v2_host_route_dispatches", 0
+                ),
+                "host_route_rows": getattr(
+                    scheduler, "_vp_v2_host_route_rows", 0
+                ),
+                "host_stage_dispatches": getattr(
+                    scheduler, "_vp_v2_host_stage_dispatches", 0
+                ),
+                "host_stage_rows": getattr(
+                    scheduler, "_vp_v2_host_stage_rows", 0
+                ),
+                "stage_graph_executions": int(
+                    graph_counters.get("executions", 0)
+                ),
+                "stage_graph_rows": int(graph_counters.get("rows", 0)),
+                "materialized_read_payload_bytes": getattr(
+                    scheduler, "_vp_v2_materialized_read_payload_bytes", 0
+                ),
+                "materialized_write_payload_bytes": getattr(
+                    scheduler, "_vp_v2_materialized_write_payload_bytes", 0
+                ),
+                "materialized_read_operations": getattr(
+                    scheduler, "_vp_v2_materialized_read_operations", 0
+                ),
+                "materialized_write_operations": getattr(
+                    scheduler, "_vp_v2_materialized_write_operations", 0
+                ),
+                "coalesced_dispatches": snapshot["coalesced_dispatches"],
+                "coalesced_stages": snapshot["coalesced_stages"],
+                "full_run_fastpath_dispatches": getattr(
+                    scheduler, "_vp_v2_full_run_fastpath_dispatches", 0
+                ),
+                "static_all_run_reduction_dispatches": getattr(
+                    scheduler,
+                    "_vp_v2_static_all_run_reduction_dispatches",
+                    0,
+                ),
+                "future_epoch_admissions": getattr(
+                    scheduler, "_vp_v2_future_epoch_admissions", 0
+                ),
+                "batch_full_finish_resets": getattr(
+                    scheduler, "_vp_v2_batch_full_finish_resets", 0
+                ),
+                "full_parent_prepare_dispatches": getattr(
+                    scheduler, "_vp_v2_full_parent_prepare_dispatches", 0
+                ),
+                "full_parent_execution_dispatches": getattr(
+                    scheduler, "_vp_v2_full_parent_execution_dispatches", 0
+                ),
+                "deferred_jump_rows": getattr(
+                    scheduler, "_vp_v2_deferred_jump_rows", 0
+                ),
+                "repair_enqueued_rows": getattr(
+                    scheduler, "_vp_v2_repair_enqueued_rows", 0
+                ),
+                "repair_dispatches": getattr(
+                    scheduler, "_vp_v2_repair_dispatches", 0
+                ),
+                "repair_rows": getattr(scheduler, "_vp_v2_repair_rows", 0),
+                "repair_canceled_rows": getattr(
+                    scheduler, "_vp_v2_repair_canceled_rows", 0
+                ),
+                "repair_parent_deferrals": getattr(
+                    scheduler, "_vp_v2_repair_parent_deferrals", 0
+                ),
+                "repair_repeated_parent_rows": getattr(
+                    scheduler, "_vp_v2_repair_repeated_parent_rows", 0
+                ),
+                "repair_slot_capacity": getattr(
+                    scheduler, "_vp_v2_repair_slot_capacity", 0
+                ),
+                "repair_slot_high_watermark": getattr(
+                    scheduler, "_vp_v2_repair_slot_high_watermark", 0
+                ),
+                "repair_slots_in_use": len(
+                    getattr(scheduler, "_vp_v2_repair_slots_in_use", ())
+                ),
+                "route_run_rows": getattr(scheduler, "_vp_v2_route_run_rows", 0),
+                "route_jump_rows": getattr(
+                    scheduler, "_vp_v2_route_jump_rows", 0
+                ),
+                "route_veto_rows": getattr(
+                    scheduler, "_vp_v2_route_veto_rows", 0
+                ),
+                "route_digest_schema": getattr(
+                    scheduler, "_vp_v2_route_digest_schema", 1
+                ),
+                "route_digest_xor": format(
+                    getattr(scheduler, "_vp_v2_route_digest_xor", 0), "064x"
+                ),
+                "route_digest_sum": format(
+                    getattr(scheduler, "_vp_v2_route_digest_sum", 0), "064x"
+                ),
+                "route_audit_token_epochs": getattr(
+                    scheduler, "_vp_v2_route_audit_token_epochs", 0
+                ),
+                "route_audit_rows": getattr(
+                    scheduler, "_vp_v2_route_audit_rows", 0
+                ),
+                "route_audit_excluded_health_rows": getattr(
+                    scheduler,
+                    "_vp_v2_route_audit_excluded_health_rows",
+                    0,
+                ),
+                "route_audit_digest_xor": format(
+                    getattr(scheduler, "_vp_v2_route_audit_digest_xor", 0),
+                    "064x",
+                ),
+                "route_audit_digest_sum": format(
+                    getattr(scheduler, "_vp_v2_route_audit_digest_sum", 0),
+                    "064x",
+                ),
+                "final_dispatches_with_pending_repairs": snapshot.get(
+                    "final_dispatches_with_pending_repairs", 0
+                ),
+            },
+            "state_contracts": snapshot.get("state_contracts", {}),
+            "state_actions": snapshot.get("state_actions", {}),
+        }
+
+    v2_enabled = stage_runtime_enabled and stage_runtime_version == 2
+    v4_enabled = stage_runtime_enabled and stage_runtime_version == 4
+
+    # [W1] Thread real per-body regime-switch pass counts into the (identity-
+    # stripped) regime_switch.counters block when the model exposes them; falls
+    # back to zeros for models/paths without the W1 forward integration.
+    model_regime_counters = getattr(model, "vp_regime_switch_counters", None)
+    regime_counters = (
+        model_regime_counters() if callable(model_regime_counters) else None
+    )
+    # The prefill leg (I5) counts on the model; the decode leg (I6) counts on the
+    # decode cuda-graph runner (which owns the hysteresis + graph dispatch).
+    # Overlay the runner's per-body decode counts into regime_switch.counters.decode.
+    decode_graph_runner = getattr(model_runner, "decode_cuda_graph_runner", None)
+    decode_regime_counters = getattr(
+        decode_graph_runner, "vp_regime_switch_decode_counters", None
+    )
+    if regime_counters is not None and callable(decode_regime_counters):
+        decode_counts = decode_regime_counters()
+        if decode_counts is not None:
+            regime_counters["decode"] = decode_counts
+
+    result = {
+        "schema_version": 1,
+        "v1_scheduler_enabled": bool(getattr(scheduler, "vp_enabled", False)),
+        "v1_stage_scheduler_enabled": bool(
+            getattr(scheduler, "vp_stage_sched", False)
+        ),
+        "v1_stage_policy": getattr(scheduler, "vp_stage_policy", None),
+        "v1": _v1_runtime_attestation(scheduler),
+        "v2_scheduler_enabled": v2_enabled,
+        "v2": stage_runtime if v2_enabled else None,
+        "v4_scheduler_enabled": v4_enabled,
+        "v4": stage_runtime if v4_enabled else None,
+        "v3_full_graph_enabled": v3_full_graph_enabled,
+        "v3_full_graph": v3_full_graph,
+        "regime_switch": regime_switch_attestation(counters=regime_counters),
+        "model": model_state,
+    }
+    # (c3) coverage-dense evidence block (design 2026-08-04). Emitted ONLY when
+    # the mechanism is armed (FD skip-decode deployed AND the
+    # SGLANG_VP_COVERAGE_DENSE kill switch ON — the F14 joint scope), so
+    # production and gate-OFF boots keep a byte-identical attestation. The
+    # bidirectional launch gate demands: expectation attests fd_c3.enabled
+    # <=> the boot armed it.
+    fd_c3 = coverage_dense_runtime_attestation(model_runner)
+    if fd_c3 is not None:
+        result["fd_c3"] = fd_c3
+    return result
+def register_captured_route_tape(
+    *,
+    shadow: Optional[Any],
+    forward_batch: Any,
+    shape_key: Any,
+    captured_tapes: dict[Any, Any],
+) -> None:
+    """Retain the graph-owned tape that replay updates for one shape."""
+
+    if shadow is None:
+        return
+    tape = getattr(
+        forward_batch,
+        "fd_full_graph_device_route_tape",
+        None,
+    )
+    if tape is None:
+        raise RuntimeError(
+            "rebatching shadow capture requires a device route tape"
+        )
+    tape.require_complete()
+    captured_tapes[shape_key] = tape
+def replay_captured_route_tape(
+    *,
+    shadow: Optional[Any],
+    shape_key: Any,
+    captured_tapes: Mapping[Any, Any],
+) -> None:
+    """Admit the complete route tape immediately after whole-graph replay."""
+
+    if shadow is None:
+        return
+    tape = captured_tapes.get(shape_key)
+    if tape is None:
+        raise RuntimeError(
+            "rebatching shadow replay has no captured route tape"
+        )
+    shadow.observe(tape)
+class ReqVPMixin:
+    def init_vp(self: "Req", enabled: bool = False) -> None:
+        self.vp_enabled: bool = enabled
+        # block-position state (advanced by VPDecodeManager); valid only when vp_enabled.
+        self.current_block: int = 0
+        self.skip_blocks_remaining: int = 0
+
+    def is_vp(self: "Req") -> bool:
+        return getattr(self, "vp_enabled", False)
+
+    def reset_vp_token(self: "Req") -> None:
+        """Reset block state for the next decode token (called on final-span completion)."""
+        self.current_block = 0
+        self.skip_blocks_remaining = 0
+def _env_scan() -> bool:
+    for key, value in os.environ.items():
+        if key.startswith(_VP_ENV_PREFIXES) and str(value).strip():
+            return True
+    return False
+def vp_runtime_enabled() -> bool:
+    """One boot-cached answer to "is any VP/FD machinery requested?"."""
+
+    global _cached
+    if _cached is None:
+        _cached = _server_args_enabled or _env_scan()
+    return _cached
+def full_graph_conditional_graph_enabled(
+    environ: Optional[Mapping[str, str]] = None,
+) -> bool:
+    """Return whether decode uses sequential device conditional stages."""
+
+    values = os.environ if environ is None else environ
+    value = str(values.get(FD_CONDITIONAL_GRAPH_ENV, "0")).strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off", ""}:
+        return False
+    raise ValueError(f"{FD_CONDITIONAL_GRAPH_ENV} must be a boolean value")
+def full_graph_conditional_production_all_run_enabled(
+    environ: Optional[Mapping[str, str]] = None,
+) -> bool:
+    """Use production attention and dense MLP for device-proven all-RUN stages."""
+
+    values = os.environ if environ is None else environ
+    value = str(
+        values.get(FD_CONDITIONAL_PRODUCTION_ALL_RUN_ENV, "0")
+    ).strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off", ""}:
+        return False
+    raise ValueError(
+        f"{FD_CONDITIONAL_PRODUCTION_ALL_RUN_ENV} must be a boolean value"
+    )
+def full_graph_conditional_max_rows(
+    environ: Optional[Mapping[str, str]] = None,
+) -> Optional[int]:
+    """Return the largest row bucket assigned to conditional stage graphs."""
+
+    values = os.environ if environ is None else environ
+    raw_value = str(values.get(FD_CONDITIONAL_MAX_ROWS_ENV, "") or "").strip()
+    if not raw_value:
+        return None
+    try:
+        max_rows = int(raw_value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            f"{FD_CONDITIONAL_MAX_ROWS_ENV} must be a positive integer"
+        ) from error
+    if max_rows <= 0:
+        raise ValueError(
+            f"{FD_CONDITIONAL_MAX_ROWS_ENV} must be a positive integer"
+        )
+    return max_rows
+def full_graph_defer_project_kv_diagnostic_stage(
+    environ: Optional[Mapping[str, str]] = None,
+) -> str:
+    """Return the cumulative repair stage used by correctness diagnostics."""
+
+    values = os.environ if environ is None else environ
+    stage = str(
+        values.get(FD_DEFER_PROJECT_KV_DIAGNOSTIC_STAGE_ENV, "full")
+    ).strip().lower()
+    if stage not in _VALID_DEFER_PROJECT_KV_DIAGNOSTIC_STAGES:
+        choices = ", ".join(
+            sorted(_VALID_DEFER_PROJECT_KV_DIAGNOSTIC_STAGES)
+        )
+        raise ValueError(
+            f"{FD_DEFER_PROJECT_KV_DIAGNOSTIC_STAGE_ENV} must be one of "
+            f"{choices}; got {stage!r}"
+        )
+    return stage
+def full_graph_commit_overlap_enabled(
+    environ: Optional[Mapping[str, str]] = None,
+) -> bool:
+    """Return whether the deferred K/V commit overlaps the logits suffix."""
+
+    values = os.environ if environ is None else environ
+    value = str(values.get(FD_COMMIT_OVERLAP_ENV, "0")).strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off", ""}:
+        return False
+    raise ValueError(f"{FD_COMMIT_OVERLAP_ENV} must be a boolean value")
+def full_graph_repair_group_size(
+    environ: Optional[Mapping[str, str]] = None,
+) -> int:
+    """Return the number of routed layers coalesced in one repair graph."""
+
+    values = os.environ if environ is None else environ
+    try:
+        group_size = int(values.get(FD_REPAIR_GROUP_SIZE_ENV, "1"))
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{FD_REPAIR_GROUP_SIZE_ENV} must be an integer") from error
+    if group_size <= 0:
+        raise ValueError(f"{FD_REPAIR_GROUP_SIZE_ENV} must be positive")
+    return group_size
+def full_graph_capture_synthetic_request_ids(
+    max_bs: int, device: Any = None
+) -> torch.Tensor:
+    """Deterministic stable request-id placeholders for graph capture.
+
+    CUDA-graph capture dummy batches carry no real requests, but with
+    ``SGLANG_FD_FULL_GRAPH_DEVICE_ROUTE_DIGEST=1`` the route-digest/tape
+    plumbing keys per-request evidence by ``forward_batch.rids_int`` and
+    :func:`_route_policy_request_ids` fails closed without it (the 2026-08-05
+    V-rich-c3 boot death during prefill capture). Capture only needs int64
+    identities of the right shape wired through static buffers so the baked
+    digest plumbing is valid; replay supplies the live hashed rids.
+    """
+
+    if max_bs <= 0:
+        raise ValueError(
+            "full-graph capture synthetic request ids need max_bs >= 1"
+        )
+    return FULL_GRAPH_CAPTURE_SYNTHETIC_RID_BASE - torch.arange(
+        max_bs, dtype=torch.int64, device=device
+    )
+def binary_cohort_attestation() -> dict:
+    """Realized binary_cohort evidence for the runtime attestation."""
+
+    realized = {}
+    for device, stats in _BINARY_COHORT_STATS.items():
+        calls, run_rows, project_rows = (
+            int(value) for value in stats.detach().cpu().tolist()
+        )
+        total = run_rows + project_rows
+        realized[str(device)] = {
+            "executor_calls": calls,
+            "run_rows": run_rows,
+            "project_rows": project_rows,
+            "engagement": (project_rows / total) if total else None,
+        }
+    return {
+        "enabled": bool(_BINARY_COHORT_LAYERS),
+        "layers": sorted(_BINARY_COHORT_LAYERS),
+        "config_artifacts": dict(_BINARY_COHORT_CONFIG_DIGEST),
+        "realized": realized,
+    }
+def _conflicting_env_enabled(name: str, value: Optional[str]) -> bool:
+    if value is None:
+        return False
+    normalized = str(value).strip().lower()
+    if name == "SGLANG_VP_V2_CONFIG":
+        return bool(normalized)
+    return normalized in {"1", "true", "yes", "on"}
+def full_graph_conditional_branch_counters_enabled(
+    environ: Optional[Mapping[str, str]] = None,
+) -> bool:
+    """Return whether correctness smokes count selected graph bodies."""
+
+    values = os.environ if environ is None else environ
+    value = str(
+        values.get(FD_CONDITIONAL_BRANCH_COUNTERS_ENV, "0")
+    ).strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off", ""}:
+        return False
+    raise ValueError(
+        f"{FD_CONDITIONAL_BRANCH_COUNTERS_ENV} must be a boolean value"
+    )
+def full_graph_compact_evidence_specs(
+    loaded_layers: tuple[int, ...],
+    environ: Optional[Mapping[str, str]] = None,
+) -> list[tuple[float, float, float]]:
+    """Encode compact accounting without materializing per-layer tensors."""
+
+    values = os.environ if environ is None else environ
+    compact_enabled, _, default_fraction, _ = full_graph_compact_config(values)
+    policies = full_graph_layer_policies(values)
+    specs: list[tuple[float, float, float]] = []
+    for layer_id in loaded_layers:
+        mode = 0.0
+        run_fraction = -1.0
+        project_fraction = -1.0
+        policy = policies.get(layer_id)
+        if compact_enabled and policy is not None:
+            name, run_value, project_value = policy
+            if name == "project_base":
+                mode, run_fraction = 1.0, float(run_value)
+            elif name == "project_filtered_run_compact":
+                mode, run_fraction = 1.0, float(run_value)
+            elif name == "run_base":
+                mode, project_fraction = 1.0, float(project_value)
+            elif name == "dual_compact":
+                mode = 1.0
+                run_fraction = float(run_value)
+                project_fraction = float(project_value)
+        elif compact_enabled and not policies:
+            mode = 2.0
+            run_fraction = default_fraction
+            project_fraction = default_fraction
+        specs.append((mode, run_fraction, project_fraction))
+    return specs
+def record_model_runner_dispatch(
+    model_runner: Any, forward_batch: Any, can_run_graph: bool
+) -> None:
+    """Record host-visible whole-step graph coverage using logical decode rows."""
+
+    if flexidepth_execution_mode() != FD_EXECUTION_FULL_GRAPH:
+        return
+    forward_mode = getattr(forward_batch, "forward_mode", None)
+    is_decode = getattr(forward_mode, "is_decode", None)
+    if not callable(is_decode) or not is_decode():
+        return
+    rows = int(getattr(forward_batch, "batch_size", 0))
+    model_runner._fd_full_graph_decode_dispatches = (
+        getattr(model_runner, "_fd_full_graph_decode_dispatches", 0) + 1
+    )
+    model_runner._fd_full_graph_decode_rows = (
+        getattr(model_runner, "_fd_full_graph_decode_rows", 0) + rows
+    )
+    suffix = "graph" if can_run_graph else "eager"
+    dispatch_name = f"_fd_full_graph_decode_{suffix}_dispatches"
+    row_name = f"_fd_full_graph_decode_{suffix}_rows"
+    setattr(model_runner, dispatch_name, getattr(model_runner, dispatch_name, 0) + 1)
+    setattr(model_runner, row_name, getattr(model_runner, row_name, 0) + rows)
+def model_runner_runtime_attestation(
+    model_runner: Any, *, loaded_layer_count: int
+) -> dict[str, Any]:
+    from sglang.srt.vpipe.common import (
+        fdvp_fused_project_input_enabled,
+        fdvp_fused_project_input_shared_storage_enabled,
+    )
+
+    total_dispatches = getattr(model_runner, "_fd_full_graph_decode_dispatches", 0)
+    total_rows = getattr(model_runner, "_fd_full_graph_decode_rows", 0)
+    graph_dispatches = getattr(
+        model_runner, "_fd_full_graph_decode_graph_dispatches", 0
+    )
+    graph_rows = getattr(model_runner, "_fd_full_graph_decode_graph_rows", 0)
+    eager_dispatches = getattr(
+        model_runner, "_fd_full_graph_decode_eager_dispatches", 0
+    )
+    eager_rows = getattr(model_runner, "_fd_full_graph_decode_eager_rows", 0)
+    coverage = 100.0 * graph_rows / total_rows if total_rows else 0.0
+    decode_config = model_runner.server_args.cuda_graph_config.decode
+    prefill_config = model_runner.server_args.cuda_graph_config.prefill
+    backend = getattr(decode_config.backend, "value", str(decode_config.backend))
+    prefill_backend = getattr(
+        prefill_config.backend, "value", str(prefill_config.backend)
+    )
+    external_moe_config = bool(os.environ.get("SGLANG_MOE_CONFIG_DIR", "").strip())
+    skipper_adapter = resolve_full_graph_skipper()
+    skipper_attestation = skipper_adapter.attestation()
+    sublayer_execution = skipper_adapter.execution_kind == SUBLAYER_EXECUTION
+    skipper_attestation["routed_layer_count"] = loaded_layer_count
+    if "skipped_depth_ratio" in skipper_attestation:
+        skipper_attestation["project_layer_count"] = min(
+            loaded_layer_count,
+            math.ceil(
+                skipper_attestation["skipped_depth_ratio"]
+                * loaded_layer_count
+            ),
+        )
+    compact_enabled, compact_min_rows, compact_fraction, compact_multiple = (
+        full_graph_compact_config()
+    )
+    low_row_policy, low_row_max_rows = full_graph_low_row_policy()
+    virtual_cohort = full_graph_virtual_cohort_enabled()
+    weighted_scatter = full_graph_weighted_scatter_enabled()
+    fused_evidence = full_graph_fused_evidence_enabled()
+    forced_all_run_fastpath = full_graph_forced_all_run_fastpath_enabled()
+    forced_all_run_production_attention = (
+        full_graph_forced_all_run_production_attention_enabled()
+    )
+    masked_decode_attention_configured = (
+        full_graph_masked_decode_attention_enabled()
+    )
+    masked_decode_attention = (
+        masked_decode_attention_configured and not forced_all_run_fastpath
+    )
+    # The run mask is read only by the triton decode kernel
+    # (triton_backend.py -> decode_attention.py row_active gating); flashinfer has no
+    # fd_full_graph reader. A configured mask on any other decode backend is INERT,
+    # and because 653c21ec7f elided the Python-side multiply it is also UNSAFE: jump
+    # rows keep a non-zero attention output that post_attention_layernorm folds into
+    # the residual. Resolve the effective state once, here, so the attestation reports
+    # what ran rather than what was requested.
+    _masked_decode_active_backend = getattr(
+        model_runner, "decode_attention_backend_str", None
+    )
+    _masked_decode_effective = (
+        masked_decode_attention
+        and _masked_decode_active_backend == _MASKED_DECODE_REQUIRED_BACKEND
+    )
+    mapped_decode_attention_configured = (
+        full_graph_mapped_decode_attention_enabled()
+    )
+    mapped_decode_attention = (
+        mapped_decode_attention_configured and not forced_all_run_fastpath
+    )
+    compact_o_proj_configured, compact_o_layers = (
+        full_graph_compact_o_proj_config()
+    )
+    compact_o_proj = compact_o_proj_configured and not forced_all_run_fastpath
+    compact_o_min_rows = full_graph_compact_o_proj_min_rows()
+    compact_q_proj = (
+        full_graph_compact_q_proj_enabled() and not forced_all_run_fastpath
+    )
+    compact_phases = sorted(full_graph_compact_phases())
+    route_accounting_enabled = full_graph_route_accounting_enabled()
+    layer_counters_enabled = full_graph_layer_counters_enabled()
+    device_route_tape_enabled = full_graph_device_route_tape_enabled()
+    device_route_digest_enabled = full_graph_device_route_digest_enabled()
+    logical_route_digest = (
+        device_route_digest_enabled
+        and route_digest_uses_logical_request_ids(skipper_adapter)
+    )
+    scheduler_convergence_enabled = full_graph_scheduler_convergence_enabled()
+    eager_semantic_debug = full_graph_eager_semantic_debug_enabled()
+    prefill_grouped_mlp = full_graph_prefill_grouped_mlp_enabled()
+    adaskip_dense_reference_mlp = bool(
+        (skipper_attestation.get("dense_reference_mlp") or {}).get(
+            "enabled", False
+        )
+    )
+    conditional_graph_enabled = full_graph_conditional_graph_enabled()
+    conditional_production_all_run = (
+        full_graph_conditional_production_all_run_enabled()
+    )
+    deferred_project_kv = full_graph_defer_project_kv_enabled()
+    compact_routed_qkv = full_graph_compact_routed_qkv_enabled()
+    (
+        contiguous_routed_qkv,
+        routed_qkv_min_rows,
+        routed_qkv_multiple,
+        routed_qkv_capacities,
+    ) = full_graph_contiguous_routed_qkv_config()
+    repair_group_size = full_graph_repair_group_size()
+    deferred_project_kv_stage = (
+        full_graph_defer_project_kv_diagnostic_stage()
+    )
+    deferred_project_kv_semantic = (
+        not deferred_project_kv or deferred_project_kv_stage == "full"
+    )
+    decode_graph_runner = getattr(model_runner, "decode_cuda_graph_runner", None)
+    decode_graph_backend = getattr(decode_graph_runner, "backend", None)
+    conditional_attestation = getattr(decode_graph_backend, "attestation", None)
+    conditional_graph_state = (
+        conditional_attestation()
+        if conditional_graph_enabled and callable(conditional_attestation)
+        else {
+            "enabled": conditional_graph_enabled,
+            "backend": "unavailable" if conditional_graph_enabled else "disabled",
+        }
+    )
+    scheduler_kv_completion = (
+        "graph_side_project_compute_overlapped_commit_fenced_before_evidence"
+        if (
+            deferred_project_kv
+            and deferred_project_kv_semantic
+            and full_graph_commit_overlap_enabled()
+        )
+        else "graph_side_project_compute_joined_cache_commit_before_logits"
+        if deferred_project_kv and deferred_project_kv_semantic
+        else "diagnostic_incomplete_project_kv"
+        if deferred_project_kv
+        else "inline_after_own_layer_attention"
+        if scheduler_convergence_enabled
+        else "implicit_inline"
+    )
+    layer_policies = full_graph_layer_policies()
+    active_phases = sorted(flexidepth_active_phases())
+    prefill_decision_granularity = (
+        "fixed_model_sublayer"
+        if sublayer_execution
+        else skipper_attestation["decision_granularity"]
+    )
+    prefill_decision = (
+        "offline_topk_concat_attention_then_mlp_similarity"
+        if sublayer_execution
+        else skipper_attestation["decision"]
+    )
+    return {
+        "enabled": flexidepth_execution_mode() == FD_EXECUTION_FULL_GRAPH,
+        "eager_semantic_debug": eager_semantic_debug,
+        "adaskip_dense_reference_mlp": {
+            "enabled": adaskip_dense_reference_mlp,
+            "scope": (
+                "online_dynamic_mlp_all_rows_dense_then_same_action_select"
+                if adaskip_dense_reference_mlp
+                else "disabled"
+            ),
+            "performance_claim_allowed": False,
+        },
+        "whole_step_cuda_graph_required": not eager_semantic_debug,
+        "conditional_graph": conditional_graph_state,
+        "conditional_production_all_run": {
+            "enabled": conditional_production_all_run,
+            "predicate": "all_valid_rows_run_device_int32",
+            "route_mask_graph_key": False,
+            "host_route_readback": False,
+            "attention": (
+                "production_flashinfer_full_exact"
+                if conditional_production_all_run
+                else "masked_routed_attention"
+            ),
+            "mlp": (
+                "dense_exact_weighted"
+                if conditional_production_all_run
+                else "filtered_run_only"
+            ),
+            "mixed_body": "unchanged_dynamic_route_policy",
+            "kv_completion": "inline_all_rows_own_layer_projection",
+        },
+        "decode_backend": backend,
+        "decode_graph_max_batch_size": getattr(decode_config, "max_bs", None),
+        "prefill_backend": prefill_backend,
+        "attention_backends": {
+            "decode": getattr(
+                model_runner, "decode_attention_backend_str", None
+            ),
+            "prefill": getattr(
+                model_runner, "prefill_attention_backend_str", None
+            ),
+        },
+        "active_phases": active_phases,
+        "skipper_adapter": skipper_attestation,
+        "prefill_execution": (
+            "grouped_variable_cohort"
+            if "prefill" in active_phases and prefill_grouped_mlp
+            else "fixed_sublayer_topology"
+            if "prefill" in active_phases and sublayer_execution
+            else "masked_fixed_topology"
+            if "prefill" in active_phases
+            else "vanilla"
+        ),
+        "prefill_routing": {
+            "enabled": "prefill" in active_phases,
+            "granularity": (
+                prefill_decision_granularity
+                if "prefill" in active_phases
+                else "disabled"
+            ),
+            "decision": (
+                prefill_decision
+                if "prefill" in active_phases
+                else "disabled"
+            ),
+            "uniform_layer_profile": sublayer_execution,
+            "kv_completion": (
+                "own_layer_projection_all_tokens"
+                if "prefill" in active_phases
+                else "vanilla"
+            ),
+        },
+        **(
+            {
+                "prefill_grouped_mlp": {
+                    "enabled": True,
+                    "scope": "prefill_only",
+                    "partition": "dynamic_run_project_token_cohorts",
+                    "execution": "native_dense_and_projector_gemm",
+                    "merge": "weighted_index_copy",
+                    "partition_sync": (
+                        "two_cuda_nonzero_dynamic_shape_syncs_per_routed_layer"
+                    ),
+                    "filtered_moe_kernels": 0,
+                    "attention": "unchanged_full_batch",
+                    "kv_completion": "own_layer_projection_all_tokens",
+                    "decode_execution": "unchanged",
+                }
+            }
+            if prefill_grouped_mlp
+            else {}
+        ),
+        "fixed_topology": not prefill_grouped_mlp,
+        "weighted_scatter": {
+            "enabled": weighted_scatter,
+            "weight_source": "physical_route_row",
+            "materialized_packed_weights": not weighted_scatter,
+        },
+        "fused_evidence": {
+            "enabled": fused_evidence,
+            "aggregation_kernels_per_replay": 2 if fused_evidence else None,
+            "materialized_inline_kv_readiness": not fused_evidence,
+            "readiness_proof": (
+                "stream_order_after_all_own_layer_attention"
+                if fused_evidence
+                else "per_layer_valid_row_matrix"
+            ),
+        },
+        "device_resident_routes": True,
+        "full_batch_attention": not mapped_decode_attention,
+        "kv_complete": deferred_project_kv_semantic,
+        "route_accounting_enabled": route_accounting_enabled,
+        "device_route_tape": {
+            "enabled": device_route_tape_enabled,
+            "storage": (
+                "graph_static_layer_by_row_independent_attention_mlp_bool"
+                if device_route_tape_enabled and sublayer_execution
+                else "graph_static_layer_by_row_bool"
+                if device_route_tape_enabled
+                else "capture_time_tensor_references"
+            ),
+            "action_codes": (
+                {"skip_sublayer": 0, "run_sublayer": 1}
+                if sublayer_execution
+                else {"project_only": 0, "run": 1}
+            ),
+            "storage_action_codes": (
+                {"skip_sublayer": 0, "run_sublayer": 1}
+                if sublayer_execution
+                else {"project_only": 0, "run": 1}
+            ),
+            "logical_action_codes": skipper_attestation[
+                "logical_action_codes"
+            ],
+            "policy_row_identity": (
+                skipper_attestation.get("online_state_key")
+                or "stable_request_hash_token_epoch"
+                if (
+                    logical_route_digest
+                    or skipper_adapter.requires_stable_request_ids
+                )
+                else "hidden_state_row"
+            ),
+            "row_identity": (
+                "stable_request_hash_token_epoch_layer_component"
+                if (
+                    logical_route_digest
+                    and sublayer_execution
+                )
+                else "stable_request_hash_token_epoch_layer_action"
+                if logical_route_digest
+                else "request_slot_token_epoch_cache_position"
+                if device_route_digest_enabled
+                else "disabled"
+            ),
+            "digest_enabled": device_route_digest_enabled,
+            "digest_algorithm": (
+                "batching_invariant_dual_sublayer_int64_weighted_fingerprint"
+                if (
+                    logical_route_digest
+                    and sublayer_execution
+                )
+                else "batching_invariant_logical_action_int64_weighted_"
+                "fingerprint"
+                if logical_route_digest
+                else "ordered_dual_int64_weighted_fingerprint"
+                if device_route_digest_enabled
+                else None
+            ),
+            "hot_path_host_readback": False,
+            "hot_path_route_host_syncs": 0,
+            "kv_completion": (
+                "foreground_run_plus_graph_side_project_compute_overlapped_commit"
+                if (
+                    deferred_project_kv
+                    and deferred_project_kv_semantic
+                    and full_graph_commit_overlap_enabled()
+                )
+                else "foreground_run_plus_graph_side_project_compute_joined_cache_commit"
+                if deferred_project_kv and deferred_project_kv_semantic
+                else "diagnostic_incomplete_project_kv"
+                if deferred_project_kv
+                else "inline_all_rows_own_layer_projection"
+            ),
+            "repair_input_storage": (
+                "per_routed_stage_graph_static_full_shape"
+                if deferred_project_kv
+                else "not_materialized_until_grouped_repair"
+            ),
+            **(
+                {
+                    "repair_diagnostic_stage": deferred_project_kv_stage,
+                    "repair_semantic_kv_complete": (
+                        deferred_project_kv_semantic
+                    ),
+                }
+                if deferred_project_kv
+                else {}
+            ),
+        },
+        "scheduler_full_graph_convergence": {
+            "enabled": scheduler_convergence_enabled,
+            "scheduler_owner": (
+                "req_pool_indices" if scheduler_convergence_enabled else "disabled"
+            ),
+            "token_epoch": (
+                "scheduler_logical_token_position"
+                if scheduler_convergence_enabled
+                else "disabled"
+            ),
+            "cache_position": (
+                "out_cache_loc" if scheduler_convergence_enabled else "disabled"
+            ),
+            "readiness_key": (
+                "request_slot_token_epoch_layer_cache_position"
+                if scheduler_convergence_enabled
+                else "disabled"
+            ),
+            "kv_completion": scheduler_kv_completion,
+            "per_layer_host_dispatches": 0,
+            "graph_key_depends_on_route_mask": False,
+            "deferred_repair": deferred_project_kv,
+            "repair_topology": (
+                "route_group_fork_compact_side_compute_overlapped_commit_suffix_evidence"
+                if deferred_project_kv
+                and deferred_project_kv_semantic
+                and compact_routed_qkv
+                and full_graph_commit_overlap_enabled()
+                else "route_prefix_fork_side_compute_overlapped_commit_suffix_evidence"
+                if deferred_project_kv
+                and deferred_project_kv_semantic
+                and full_graph_commit_overlap_enabled()
+                else "route_group_fork_compact_side_compute_join_cache_commit_suffix"
+                if deferred_project_kv
+                and deferred_project_kv_semantic
+                and compact_routed_qkv
+                else "route_prefix_fork_side_compute_join_cache_commit_suffix"
+                if deferred_project_kv and deferred_project_kv_semantic
+                else "route_prefix_fork_diagnostic_side_compute_suffix_join"
+                if deferred_project_kv
+                else "disabled"
+            ),
+            "repair_group_size": repair_group_size,
+        },
+        "conditional_kernel": (
+            "online_20_token_dense_mlp_semantic_reference"
+            if sublayer_execution and adaskip_dense_reference_mlp
+            else "online_20_token_independent_sublayer_exact"
+            if sublayer_execution
+            and skipper_attestation.get("online_decode_extra_mlp", False)
+            else "fixed_independent_sublayer_exact"
+            if sublayer_execution
+            else "forced_all_run_dense_exact"
+            if forced_all_run_fastpath
+            else "layer_policy_virtual_cohort_swiglu"
+            if compact_enabled and layer_policies and virtual_cohort
+            else "layer_policy_mixed_exact_conditional"
+            if compact_enabled and layer_policies
+            else (
+                "mapped_bounded_compact_cublas_with_filtered_overflow"
+                if compact_enabled
+                else "triton_one_expert_pair"
+            )
+        ),
+        "forced_all_run_fastpath": {
+            "enabled": forced_all_run_fastpath,
+            "route": "all_run" if forced_all_run_fastpath else None,
+            "attention": (
+                "production_flashinfer_full_exact"
+                if forced_all_run_production_attention
+                else "full_exact_no_route_compaction"
+                if forced_all_run_fastpath
+                else "dynamic_route_policy"
+            ),
+            "mlp": (
+                "dense_exact_weighted"
+                if forced_all_run_fastpath
+                else "dynamic_route_policy"
+            ),
+        },
+        "bounded_compact": {
+            "enabled": compact_enabled,
+            "active_phases": compact_phases,
+            "min_rows": compact_min_rows,
+            "capacity_fraction": compact_fraction,
+            "capacity_multiple": compact_multiple,
+            "dual_compact_min_rows": full_graph_dual_compact_min_rows(),
+            # Honest-evidence flag (it3/it4 review finding): with a
+            # per-bucket threshold active, sub-threshold passes run the
+            # fused body while route-derived compact accounting still
+            # encodes the layer as compact — coverage/overflow evidence is
+            # APPROXIMATE for those buckets until bucket-aware accounting
+            # lands. Analysis must not treat compact coverage as exact
+            # when this flag is true.
+            "sub_threshold_accounting_approximate": (
+                full_graph_dual_compact_min_rows() > 0
+                or any(
+                    policy[0] == "project_filtered_run_compact"
+                    and (policy[2] or 1.0) > 1.0
+                    for policy in full_graph_layer_policies().values()
+                )
+            ),
+        },
+        "low_row_policy": {
+            "enabled": low_row_policy != "off",
+            "policy": low_row_policy,
+            "max_rows": (
+                low_row_max_rows if low_row_policy != "off" else None
+            ),
+            "active_phases": (
+                ["decode"] if low_row_policy != "off" else []
+            ),
+            "logical_routes_preserved": True,
+            "physical_work": (
+                "dense_and_project_all_graph_rows"
+                if low_row_policy == "full_dual"
+                else "unchanged"
+            ),
+            "flop_savings_claim_allowed": low_row_policy == "off",
+        },
+        "virtual_cohort": {
+            "enabled": virtual_cohort,
+            "mapping": "device_row_map",
+            "explicit_hidden_gather": not virtual_cohort,
+            "explicit_route_weight_gather": not virtual_cohort,
+            "explicit_output_scatter": not virtual_cohort,
+            "packed_activation_intermediate": virtual_cohort,
+        },
+        "masked_decode_attention": {
+            "enabled": masked_decode_attention,
+            "configured": masked_decode_attention_configured,
+            "required_backend": _MASKED_DECODE_REQUIRED_BACKEND,
+            "active_backend": _masked_decode_active_backend,
+            # Only the triton decode kernel reads fd_full_graph_attention_run_mask;
+            # flashinfer has no reader, so a mask configured on any other backend is
+            # INERT. These three fields must therefore report the EFFECTIVE state, not
+            # the env flag: keying them on the flag alone asserted suppression on an
+            # arm that suppressed nothing, and that is what let a broken config pass a
+            # whole campaign (2026-08-05 v_rich_c3).
+            "effective": _masked_decode_effective,
+            "backend_mismatch": (
+                masked_decode_attention
+                and _masked_decode_active_backend != _MASKED_DECODE_REQUIRED_BACKEND
+            ),
+            "kv_write": "complete",
+            "jump_row_attention_reads": (
+                "suppressed" if _masked_decode_effective else "full"
+            ),
+            "jump_row_output": "zero" if _masked_decode_effective else "unmasked",
+        },
+        "mapped_decode_attention": {
+            "enabled": mapped_decode_attention,
+            "configured": mapped_decode_attention_configured,
+            "mapping": "device_row_map",
+            "launch_topology": "fixed_workers_with_exact_strided_overflow",
+            "kv_write": "complete",
+            "jump_row_attention_reads": (
+                "suppressed" if mapped_decode_attention else "full_grid_masked"
+            ),
+        },
+        "compact_o_projection": {
+            "enabled": compact_o_proj,
+            "configured": compact_o_proj_configured,
+            "min_rows": compact_o_min_rows,
+            "layers": {
+                str(layer_id): {"capacity_fraction": fraction}
+                for layer_id, fraction in sorted(compact_o_layers.items())
+            },
+            "common_lane": "fixed_capacity_cublas",
+            "overflow_lane": "mapped_exact",
+            "jump_row_projection": "suppressed" if compact_o_proj else "full",
+        },
+        "project_input_fusion": {
+            "enabled": fdvp_fused_project_input_enabled(),
+            "shared_storage": (
+                fdvp_fused_project_input_shared_storage_enabled()
+            ),
+        },
+        "split_qkv_projection": {
+            "enabled": compact_q_proj,
+            "min_rows": compact_o_min_rows,
+            "layers": {
+                str(layer_id): {"capacity_fraction": fraction}
+                for layer_id, fraction in sorted(compact_o_layers.items())
+            },
+            "kv_lane": "full_own_weight_cublas",
+            "q_common_lane": "fixed_capacity_cublas",
+            "q_overflow_lane": "mapped_exact",
+            "shared_output_row_map": compact_q_proj,
+            "jump_row_q_projection": (
+                "suppressed" if compact_q_proj else "full"
+            ),
+        },
+        "routed_qkv_projection": {
+            "enabled": compact_routed_qkv,
+            "contiguous_cublas_enabled": contiguous_routed_qkv,
+            "row_mapping": (
+                "single_route_prefix_complementary_device_maps"
+                if compact_routed_qkv
+                else "disabled"
+            ),
+            "foreground": (
+                "fixed_capacity_run_qkv_cublas_with_mapped_overflow"
+                if contiguous_routed_qkv
+                else "mapped_run_qkv"
+                if compact_routed_qkv
+                else "full_batch_qkv"
+            ),
+            "repair": (
+                "fixed_capacity_project_kv_cublas_with_mapped_overflow"
+                if contiguous_routed_qkv
+                else "mapped_project_kv_only"
+                if compact_routed_qkv
+                else "full_batch_qkv"
+                if deferred_project_kv
+                else "disabled"
+            ),
+            "repair_group_size": repair_group_size,
+            "min_rows": routed_qkv_min_rows,
+            "capacity_multiple": routed_qkv_multiple,
+            "layer_capacities": {
+                str(layer_id): {
+                    "run_fraction": run_fraction,
+                    "project_fraction": project_fraction,
+                }
+                for layer_id, (
+                    run_fraction,
+                    project_fraction,
+                ) in sorted(routed_qkv_capacities.items())
+            },
+            "common_lane": (
+                "fixed_capacity_contiguous_cublas"
+                if contiguous_routed_qkv
+                else None
+            ),
+            "overflow_lane": "mapped_exact" if contiguous_routed_qkv else None,
+            "inactive_projection_rows": (
+                "fixed_capacity_padding_only"
+                if contiguous_routed_qkv
+                else "not_computed"
+                if compact_routed_qkv
+                else "computed"
+            ),
+        },
+        "per_layer_route_counters_enabled": layer_counters_enabled,
+        "layer_policies": {
+            str(layer_id): {
+                "policy": policy,
+                "capacity_fraction": (
+                    run_fraction
+                    if policy == "project_base"
+                    else project_fraction if policy == "run_base" else None
+                ),
+                "run_capacity_fraction": (
+                    run_fraction
+                    if policy in {"dual_compact", "project_filtered_run_compact"}
+                    else None
+                ),
+                "project_capacity_fraction": (
+                    project_fraction
+                    if policy in {"dual_compact", "run_base"}
+                    else None
+                ),
+                "compact_min_rows": (
+                    project_fraction
+                    if policy == "project_filtered_run_compact"
+                    else None
+                ),
+            }
+            for layer_id, (policy, run_fraction, project_fraction) in sorted(
+                layer_policies.items()
+            )
+        },
+        "conditional_kernel_config": (
+            "external_tuned" if external_moe_config else "sglang_default"
+        ),
+        "materialized_gather_bytes": (
+            0 if virtual_cohort else None if compact_enabled else 0
+        ),
+        "materialized_scatter_bytes": (
+            0 if virtual_cohort else None if compact_enabled else 0
+        ),
+        "materialization_accounting": (
+            "virtual_row_map_explicit_cohort_io_only"
+            if virtual_cohort
+            else "model_full_graph_routes"
+            if compact_enabled
+            else "none"
+        ),
+        "counters": {
+            "decode_dispatches_total": total_dispatches,
+            "decode_rows_total": total_rows,
+            "whole_step_graph_replays": graph_dispatches,
+            "whole_step_graph_rows": graph_rows,
+            "eager_dispatches": eager_dispatches,
+            "eager_rows": eager_rows,
+            "whole_step_graph_coverage_pct": coverage,
+            "routed_layer_rows_graph_replayed": graph_rows * loaded_layer_count,
+            "routed_layer_rows_eager": eager_rows * loaded_layer_count,
+        },
+    }
