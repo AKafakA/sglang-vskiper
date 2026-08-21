@@ -1030,10 +1030,6 @@ class Envs:
     # ===================================================================
     # Virtual Pipelining (VP) / FlexiDepth conditional-depth serving
     # ===================================================================
-    # Eager (bs>256) FlexiDepth decode skip body: replace the nonzero() MLP
-    # gather/scatter (~32 device->host syncs/step) with device-resident route
-    # maps + mapped_swiglu compaction (Candidate A). Fail-closed OFF; A/B only.
-    SGLANG_FD_EAGER_DEVICE_COMPACT = EnvBool(False)
     # (c3) coverage-aware body selection kill switch (debug-only, default ON;
     # never set OFF in a measured cell). OFF jointly disables the C-A coverage
     # stamp, the C-C seam band observe, AND the C-D self-sized capture ladder
