@@ -170,9 +170,6 @@ class AttentionBackend(ABC):
         if forward_batch.forward_mode.is_idle():
             return q.new_empty(q.shape[0], layer.tp_q_head_num * layer.v_head_dim)
         elif forward_batch.forward_mode.is_decode_or_idle():
-            # is_decode_or_idle() includes VP_BLOCK (decode-shaped); idle is already
-            # handled above, so this routes DECODE and VP_BLOCK to forward_decode with
-            # the DecodeMetadata that init_forward_metadata built (both use is_decode_or_idle).
             return self.forward_decode(
                 q,
                 k,

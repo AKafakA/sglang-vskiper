@@ -127,8 +127,8 @@ def assert_regime_switch_skipper_capability(adapter: Any) -> None:
     surface dependency-light.
     """
 
-    from sglang.srt.vp.full_graph_skipper import RUN_PROJECT_EXECUTION
-    from sglang.srt.vp.v2.types import LogicalAction
+    from sglang.srt.vpipe.env import RUN_PROJECT_EXECUTION
+    from sglang.srt.vpipe.types import LogicalAction
 
     if adapter.execution_kind != RUN_PROJECT_EXECUTION:
         raise RuntimeError(

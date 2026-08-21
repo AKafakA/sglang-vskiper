@@ -59,7 +59,7 @@ from sglang.srt.vpipe.mlp import (
 from sglang.srt.vpipe.mlp_compact import (
     _compact_capacity,
 )
-from sglang.srt.vpipe.route_tape import (
+from sglang.srt.vpipe.coverage import (
     record_eager_skip_decode_layer_call,
 )
 from sglang.srt.vpipe.routing import (
