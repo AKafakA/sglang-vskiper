@@ -19,18 +19,9 @@ import torch.nn.functional as F
 from sglang.srt.vpipe.kv_commit import (
     _fdvp_trace_enabled,
 )
-from sglang.srt.vpipe.common import (
-    fdvp_scoped_async_kv_enabled,
-)
 from sglang.srt.vpipe.kv_commit import (
-    _execute_batch,
-)
-from sglang.srt.vpipe.kv_commit import (
-    BatchedKVWork,
     _device_key,
-    _flush_keys,
     _trace_counter,
-    batched_kv_enabled,
 )
 from sglang.srt.vpipe.common import (
     FDLayerRoute,
@@ -43,15 +34,9 @@ from sglang.srt.vpipe.kv_commit import (
 from sglang.srt.vpipe.kv_commit import (
     _fdvp_record_cache_counter,
 )
-from sglang.srt.vpipe.kv_commit import (
-    KVReadinessTracker,
-    KVWorkIdentity,
-)
 
 
 _FDVP_FULL_METADATA_STALE = False
-_FDVP_ASYNC_KV_STREAMS = {}
-_FDVP_ASYNC_KV_DEFERRED_EVENTS = {}
 # Import the CANONICAL containers rather than defining a second pair. They were
 # duplicated here, so tracker_for_device() (the only producer) registered into
 # cohort's dict while drain_request_kv_work()/reset_kv_readiness_trackers() in
@@ -59,10 +44,6 @@ _FDVP_ASYNC_KV_DEFERRED_EVENTS = {}
 # Same defect class as the _graph_lifecycle_depth split fixed earlier.
 # Safe to bind by reference: both are mutated in place (setdefault/pop/clear)
 # and never rebound.
-from sglang.srt.vpipe.kv_commit import (
-    _BATCHED_KV_QUEUES,
-    _KV_READINESS_TRACKERS,
-)
 _MATMUL_CONFIGS = [
     triton.Config(
         {"BLOCK_M": 16, "BLOCK_N": 64, "BLOCK_K": 32},
@@ -1148,73 +1129,10 @@ def _fdvp_device_key(device):
     if index is None:
         index = torch.cuda.current_device()
     return int(index)
-def _fdvp_deferred_events(device):
-    return _FDVP_ASYNC_KV_DEFERRED_EVENTS.setdefault(_fdvp_device_key(device), [])
-def fdvp_pending_deferred_async_kv_count(device=None):
-    if isinstance(device, str):
-        device = torch.device(device)
-    count = len(_fdvp_deferred_events(device))
-    if fdvp_scoped_async_kv_enabled():
-
-        count += pending_kv_work_count(device) + pending_work_count()
-    return count
 def _fdvp_deferred_entry_layer_event(entry):
     if isinstance(entry, tuple) and len(entry) == 2:
         return int(entry[0]), entry[1]
     return -1, entry
-def fdvp_drain_deferred_async_kv_until_layer(device=None, max_layer_exclusive=None):
-    if isinstance(device, str):
-        device = torch.device(device)
-    events = _fdvp_deferred_events(device)
-    drain = []
-    keep = []
-    for entry in events:
-        layer_id, event = _fdvp_deferred_entry_layer_event(entry)
-        if max_layer_exclusive is None or layer_id < 0 or layer_id < max_layer_exclusive:
-            drain.append(event)
-        else:
-            keep.append(entry)
-    count = len(drain)
-    has_cuda_stream = torch.cuda.is_available() and not (
-        device is not None and getattr(device, "type", None) != "cuda"
-    )
-    stream = None
-    if has_cuda_stream:
-        stream = (
-            torch.cuda.current_stream(device)
-            if device is not None
-            else torch.cuda.current_stream()
-        )
-        for event in drain:
-            stream.wait_event(event)
-    events[:] = keep
-    if fdvp_scoped_async_kv_enabled():
-
-        count += flush_until_layer(max_layer_exclusive)
-        count += drain_kv_work_until_layer(device, max_layer_exclusive)
-    if count == 0:
-        return 0
-    if _fdvp_trace_enabled():
-        state = _fdvp_state()
-        state["async_kv_deferred_drains"] = int(
-            state.get("async_kv_deferred_drains", 0)
-        ) + count
-        if keep or fdvp_pending_deferred_async_kv_count(device):
-            state["async_kv_deferred_partial_drains"] = int(
-                state.get("async_kv_deferred_partial_drains", 0)
-            ) + count
-    return count
-def fdvp_wait_for_slot_conflicts(forward_batch):
-    if not fdvp_scoped_async_kv_enabled():
-        return 0
-
-    count = flush_for_slot_conflicts(forward_batch)
-    count += wait_for_forward_batch_slot_conflicts(forward_batch)
-    if count and _fdvp_trace_enabled():
-        _fdvp_record_cache_counter("async_kv_slot_reuse_waits", count)
-    return count
-def fdvp_drain_deferred_async_kv(device=None):
-    return fdvp_drain_deferred_async_kv_until_layer(device, None)
 class BatchedCommitPlan(msgspec.Struct, frozen=True):
     """Capture-frozen launch arguments for the batched commit kernel."""
 
@@ -1421,160 +1339,9 @@ def run_batched_commit(plan: BatchedCommitPlan) -> None:
         plan.hd_v,
         256,
     )
-def batched_kv_token_launch_enabled() -> bool:
-    """Launch retained K/V work after the current token's logits are queued."""
-
-    return (
-        batched_kv_enabled()
-        and os.environ.get(
-            "SGLANG_VP_ASYNC_KV_BATCHED_TOKEN_LAUNCH", "0"
-        )
-        == "1"
-    )
-def batched_kv_grouped_event_enabled() -> bool:
-    """Use one tail readiness event for a release of multiple layer repairs."""
-
-    return (
-        batched_kv_enabled()
-        and os.environ.get("SGLANG_VP_ASYNC_KV_GROUPED_EVENT", "0") == "1"
-    )
-def _launch_queued_async(device, *, counter_prefix: str) -> int:
-    if not torch.cuda.is_available():
-        return 0
-    if isinstance(device, str):
-        device = torch.device(device)
-    if device is None:
-        device = torch.device("cuda", torch.cuda.current_device())
-    if getattr(device, "type", None) != "cuda":
-        return 0
-
-    device_id = _device_key(device)
-    keys = [key for key in _BATCHED_KV_QUEUES if key[0] == device_id]
-    if not keys:
-        return 0
-
-    from sglang.srt.model_executor.runner_backend_utils.breakable_cuda_graph import (
-        is_capturing_breakable_cuda_graph,
-    )
-
-    if is_capturing_breakable_cuda_graph():
-        return 0
-
-
-    current_stream = torch.cuda.current_stream(device)
-    kv_stream = _fdvp_get_async_kv_stream(device)
-    # Start behind the foreground work queued at the selected release point.
-    # Token-boundary and lookahead release share the same request-scoped fence.
-    kv_stream.wait_stream(current_stream)
-
-    launched_work = 0
-    launched_rows = 0
-    launched_batches = 0
-    tracker = tracker_for_device(device)
-    grouped_event = batched_kv_grouped_event_enabled()
-    registrations = []
-    with torch.cuda.stream(kv_stream):
-        for key in keys:
-            works = _BATCHED_KV_QUEUES.pop(key, None)
-            if not works:
-                continue
-            for work in works:
-                _fdvp_record_stream(work.hidden, kv_stream)
-                _fdvp_record_stream(work.positions, kv_stream)
-                _fdvp_record_stream(work.out_cache_loc, kv_stream)
-            rows = _execute_batch(works, use_repair_graph=True)
-            identities = tuple(
-                identity for work in works for identity in work.identities
-            )
-            if grouped_event:
-                registrations.append((works[0].layer_id, identities))
-            else:
-                event = torch.cuda.Event()
-                event.record(kv_stream)
-                if not tracker.register(works[0].layer_id, event, identities):
-                    raise RuntimeError("asynchronous K/V launch lost request identity")
-            launched_work += len(works)
-            launched_rows += rows
-            launched_batches += 1
-
-        if registrations:
-            event = torch.cuda.Event()
-            event.record(kv_stream)
-            for layer_id, identities in registrations:
-                if not tracker.register(layer_id, event, identities):
-                    raise RuntimeError("asynchronous K/V launch lost request identity")
-
-    if launched_work:
-        _trace_counter(f"batched_kv_{counter_prefix}_launches")
-        _trace_counter(
-            f"batched_kv_{counter_prefix}_launched_batches", launched_batches
-        )
-        _trace_counter(
-            f"batched_kv_{counter_prefix}_launched_work", launched_work
-        )
-        _trace_counter(
-            f"batched_kv_{counter_prefix}_launched_rows", launched_rows
-        )
-        if registrations:
-            _trace_counter("batched_kv_grouped_event_launches")
-            _trace_counter(
-                "batched_kv_grouped_event_registrations", len(registrations)
-            )
-            _trace_counter(
-                "batched_kv_grouped_event_records_saved",
-                max(0, len(registrations) - 1),
-            )
-    return launched_work
-def launch_token_boundary_async(device=None) -> int:
-    """Launch repair after the current token's foreground work is enqueued."""
-
-    if not batched_kv_token_launch_enabled():
-        return 0
-    return _launch_queued_async(device, counter_prefix="token")
 def _fdvp_record_stream(value, stream):
     if torch.is_tensor(value) and value.is_cuda:
         value.record_stream(stream)
-def _fdvp_get_async_kv_stream(device):
-    index = device.index
-    if index is None:
-        index = torch.cuda.current_device()
-    stream = _FDVP_ASYNC_KV_STREAMS.get(index)
-    if stream is None:
-        stream = torch.cuda.Stream(device=device)
-        _FDVP_ASYNC_KV_STREAMS[index] = stream
-    return stream
-def pending_work_count() -> int:
-    return sum(len(queue) for queue in _BATCHED_KV_QUEUES.values())
-def flush_for_slot_conflicts(forward_batch) -> int:
-    current = identities_from_forward_batch(forward_batch)
-    if not current:
-        return 0
-    owners_by_slot = {identity.request_slot: identity.request_id for identity in current}
-    keys = []
-    for key, queue in _BATCHED_KV_QUEUES.items():
-        if any(
-            writer.request_slot in owners_by_slot
-            and owners_by_slot[writer.request_slot] != writer.request_id
-            for work in queue
-            for writer in work.identities
-        ):
-            keys.append(key)
-    count = _flush_keys(keys)
-    if count:
-        _trace_counter("batched_kv_slot_conflict_flushes")
-    return count
-def flush_until_layer(max_layer_exclusive=None, synchronize: bool = False) -> int:
-    keys = [
-        key
-        for key, queue in _BATCHED_KV_QUEUES.items()
-        if queue
-        and (
-            max_layer_exclusive is None
-            or queue[0].layer_id < 0
-            or queue[0].layer_id < int(max_layer_exclusive)
-        )
-    ]
-    return _flush_keys(keys, synchronize=synchronize)
 def device_key(device=None) -> int:
     if isinstance(device, str):
         device = torch.device(device)
@@ -1584,30 +1351,6 @@ def device_key(device=None) -> int:
     if index is None:
         index = torch.cuda.current_device()
     return int(index)
-def tracker_for_device(device=None) -> KVReadinessTracker:
-    return _KV_READINESS_TRACKERS.setdefault(device_key(device), KVReadinessTracker())
-def identities_from_forward_batch(forward_batch) -> tuple[KVWorkIdentity, ...]:
-    fields = (
-        getattr(forward_batch, "vp_req_pool_indices_cpu", None),
-        getattr(forward_batch, "rids", None),
-        getattr(forward_batch, "vp_token_epochs", None),
-        getattr(forward_batch, "vp_kv_positions", None),
-    )
-    if any(value is None for value in fields):
-        return ()
-    rows = int(getattr(forward_batch, "batch_size", len(fields[0])))
-    if any(len(value) != rows for value in fields):
-        return ()
-    slots, rids, epochs, positions = fields
-    return tuple(
-        KVWorkIdentity(
-            int(slots[row]),
-            str(rids[row]),
-            int(epochs[row]),
-            int(positions[row]),
-        )
-        for row in range(rows)
-    )
 def _forward_batch_device(forward_batch):
     for name in ("out_cache_loc", "req_pool_indices", "positions", "seq_lens"):
         value = getattr(forward_batch, name, None)
@@ -1618,21 +1361,3 @@ def _current_stream(device):
     if device is None or getattr(device, "type", None) != "cuda":
         return None
     return torch.cuda.current_stream(device)
-def wait_for_forward_batch_slot_conflicts(forward_batch) -> int:
-    device = _forward_batch_device(forward_batch)
-    tracker = tracker_for_device(device)
-    if tracker.pending_count == 0:
-        return 0
-    identities = identities_from_forward_batch(forward_batch)
-    if not identities:
-        return 0
-    return tracker.wait_for_slot_conflicts(
-        identities, stream=_current_stream(device)
-    )
-def pending_kv_work_count(device=None) -> int:
-    return tracker_for_device(device).pending_count
-def drain_kv_work_until_layer(device=None, max_layer_exclusive=None) -> int:
-    tracker = tracker_for_device(device)
-    return tracker.drain_until_layer(
-        max_layer_exclusive, stream=_current_stream(device)
-    )

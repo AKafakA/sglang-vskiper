@@ -71,12 +71,6 @@ from sglang.srt.vpipe.env import (
     _ADASKIP_CAPACITY_ENVS,
     _MOCK_CONFIG_ENVS,
 )
-from sglang.srt.vpipe.kv_commit import (
-    _BATCHED_KV_GRAPHS,
-    _BATCHED_KV_GRAPH_FAILED,
-    _BATCHED_KV_QUEUES,
-    batched_kv_repair_graph_enabled,
-)
 from sglang.srt.vpipe.env import (
     ADASKIP_FULL_GRAPH_SKIPPER,
     DETERMINISTIC_MOCK_FULL_GRAPH_SKIPPER,
@@ -95,8 +89,6 @@ from sglang.srt.vpipe.adaskip_profile import (
     load_adaskip_profile,
 )
 from sglang.srt.vpipe.kv_commit import (
-    BatchedKVGraph,
-    BatchedKVWork,
     _device_key,
     _trace_counter,
 )
@@ -712,12 +704,6 @@ def full_graph_decode_enabled(forward_batch: Any) -> bool:
         flexidepth_forward_phase(forward_batch) == "decode"
         and flexidepth_phase_enabled(forward_batch)
     )
-def fdvp_scoped_async_kv_enabled():
-    if not (_fdvp_async_kv_enabled() and fdvp_async_kv_defer_drain_enabled()):
-        return False
-    if os.environ.get("SGLANG_VP_ASYNC_KV", "0") == "1":
-        return os.environ.get("SGLANG_VP_ASYNC_KV_SCOPED", "1") != "0"
-    return os.environ.get("SGLANG_FD_VP_ASYNC_KV_SCOPED", "1") != "0"
 def flexidepth_execution_mode(
     environ: Optional[Mapping[str, str]] = None,
 ) -> str:
@@ -859,10 +845,6 @@ class RegimeSwitchDecodeConfig(
                 "regime switch decode.exit_dwell must be >= 1; got "
                 f"{self.exit_dwell}"
             )
-def _fdvp_async_kv_enabled():
-    return vp_async_kv_enabled()
-def fdvp_async_kv_defer_drain_enabled():
-    return vp_async_kv_defer_drain_enabled()
 @dataclass
 class FDLayerRoute:
     """A FlexiDepth decision plus the normalized state consumed by the layer."""
@@ -1059,18 +1041,6 @@ def _regime_switch_decode_forced_dense(forward_batch: Any) -> bool:
     if cfg is None or not cfg.decode.enabled:
         return False
     return forward_batch.vp_fd_decode_dense
-def vp_async_kv_enabled():
-    """Whether either the generic VP or FlexiDepth async K/V lane is enabled."""
-
-    return (
-        os.environ.get("SGLANG_VP_ASYNC_KV", "0") == "1"
-        or os.environ.get("SGLANG_FD_VP_ASYNC_KV", "0") == "1"
-    )
-def vp_async_kv_defer_drain_enabled():
-    return (
-        os.environ.get("SGLANG_VP_ASYNC_KV_DEFER_DRAIN", "0") == "1"
-        or os.environ.get("SGLANG_FD_VP_ASYNC_KV_DEFER_DRAIN", "0") == "1"
-    )
 def full_graph_skipper_name(
     environ: Optional[Mapping[str, str]] = None,
 ) -> str:

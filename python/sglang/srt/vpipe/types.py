@@ -13,7 +13,6 @@ would change the skipper's semantics while still reporting its name.
 
 from __future__ import annotations
 
-import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from enum import Enum, IntEnum

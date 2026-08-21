@@ -38,13 +38,8 @@ from sglang.srt.vpipe.common import (
     fdvp_fused_project_input_shared_storage_enabled,
 )
 from sglang.srt.vpipe.kv_commit import (
-    _fdvp_trace_signal_flush_enabled,
-)
-from sglang.srt.vpipe.kv_commit import (
     _fdvp_trace_enabled,
 )
-import json
-import signal
 import triton
 import os
 from dataclasses import dataclass, replace
@@ -54,7 +49,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from sglang.srt.model_executor.runner_backend_utils.breakable_cuda_graph import (
-    eager_on_graph,
     is_capturing_breakable_cuda_graph,
 )
 from sglang.srt.vpipe.common import (
@@ -62,7 +56,6 @@ from sglang.srt.vpipe.common import (
     resolve_full_graph_skipper,
 )
 from sglang.srt.vpipe.env import (
-    FD_COMPACT_ROUTED_QKV_ENV,
     FD_FORCE_ROUTE_ENV,
     _FD_PARITY_TRACE_ENABLED,
     _VALID_FORCED_ROUTES,
@@ -78,13 +71,7 @@ from sglang.srt.vpipe.common import (
     fd_parity_trace_target,
 )
 from sglang.srt.vpipe.kv_commit import (
-    _fdvp_state,
-)
-from sglang.srt.vpipe.kv_commit import (
     _fdvp_record_cache_counter,
-)
-from sglang.srt.vpipe.kv_commit import (
-    _FDVP_TRACE_STATE,
 )
 from sglang.srt.vpipe.kv_commit import (
     _fdvp_record_cache_value,

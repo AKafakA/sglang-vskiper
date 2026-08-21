@@ -52,4 +52,6 @@ for (outcome, label) in results:
     if label.startswith("D") and outcome != "no-raise":
         print("FAIL: the quality-reference posture (eager, no graphs) is BLOCKED"); ok = False
 print("VALIDATOR CASES:", "PASS" if ok else "FAIL")
-sys.exit(0 if ok else 1)
+
+if __name__ == "__main__":
+    sys.exit(0 if ok else 1)

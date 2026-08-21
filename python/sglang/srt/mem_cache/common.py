@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import TYPE_CHECKING, Optional
 
 import numpy as np
@@ -15,12 +14,6 @@ from sglang.srt.hardware_backend.npu.dsv4.dsv4_common_hooks import (
 from sglang.srt.mem_cache.allocator.swa import SWATokenToKVPoolAllocator
 from sglang.srt.mem_cache.base_prefix_cache import BasePrefixCache, EvictParams
 from sglang.srt.mem_cache.memory_pool import HybridReqToTokenPool, ReqToTokenPool
-from sglang.srt.mem_cache.triton_ops.common import (
-    _get_last_loc_safe_kernel as _get_last_loc_safe_kernel,
-)
-from sglang.srt.mem_cache.triton_ops.common import (
-    get_last_loc_kernel as get_last_loc_kernel,
-)
 from sglang.srt.mem_cache.triton_ops.common import (
     get_last_loc_triton,
     get_last_loc_triton_safe,
@@ -646,46 +639,6 @@ def release_kv_cache(req: Req, tree_cache: BasePrefixCache, is_insert: bool = Tr
             )
             req.mamba_pool_idx = None
         return
-
-    scoped_async_enabled = (
-        os.environ.get("SGLANG_VP_ASYNC_KV", "0") == "1"
-        or os.environ.get("SGLANG_FD_VP_ASYNC_KV", "0") == "1"
-    )
-    successor_commit_enabled = (
-        os.environ.get(
-            "SGLANG_VP_V4_ASYNC_SUCCESSOR_KV", "0"
-        )
-        == "1"
-        or os.environ.get(
-            "SGLANG_VP_V4_ASYNC_SUCCESSOR_BUFFERED_KV", "0"
-        )
-        == "1"
-    )
-    if scoped_async_enabled:
-
-        from sglang.srt.vpipe.common import fdvp_scoped_async_kv_enabled
-
-        if fdvp_scoped_async_kv_enabled():
-            from sglang.srt.vpipe.kv_commit import (
-                flush_request,
-            )
-            from sglang.srt.vpipe.kv_commit import (
-                drain_request_kv_work,
-            )
-
-            # Prefix insertion/freeing may expose this slot and its physical K/V
-            # pages to another request. Finish side-stream writes before that reuse.
-            flush_request(req.req_pool_idx, req.rid, synchronize=True)
-            drain_request_kv_work(req.req_pool_idx, req.rid)
-
-    if successor_commit_enabled:
-        # Device-rebatched successor commits register directly with the
-        # readiness tracker and do not use the legacy batched queue.
-        from sglang.srt.vpipe.kv_commit import (
-            drain_request_kv_work,
-        )
-
-        drain_request_kv_work(req.req_pool_idx, req.rid)
 
     tree_cache.cache_finished_req(
         req,

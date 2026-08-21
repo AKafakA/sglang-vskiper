@@ -9,8 +9,6 @@ the regime the capture ladder actually covers.
 
 from __future__ import annotations
 
-import os
-import msgspec
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Optional
 from sglang.srt.vpipe.common import (

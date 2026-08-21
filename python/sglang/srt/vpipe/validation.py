@@ -10,7 +10,6 @@ from __future__ import annotations
 from typing import Any, Mapping, Optional
 import os
 from typing import Any, Callable, Optional
-import torch
 from sglang.srt.vpipe.attestation import (
     _conflicting_env_enabled,
     full_graph_commit_overlap_enabled,

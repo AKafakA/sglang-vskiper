@@ -15,7 +15,6 @@ from sglang.srt.vpipe.config import (
     full_graph_eager_semantic_debug_enabled,
 )
 import json
-import os
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Optional
 import torch
@@ -24,8 +23,6 @@ from sglang.srt.vpipe.common import (
     full_graph_low_row_policy,
 )
 from sglang.srt.vpipe.env import (
-    FD_PREFILL_GROUPED_MLP_ENV,
-    FD_VIRTUAL_COHORT_ENV,
     _BINARY_COHORT_CONFIG_DIGEST,
     _BINARY_COHORT_LAYERS,
     _BINARY_COHORT_SCRATCH,
