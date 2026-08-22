@@ -562,6 +562,23 @@ launch_sglang_server() {
            "reimplement async K/V first (see the removed-feature register)." >&2
       return 2
       ;;
+    # The V1 generic-VP and inline VP-project modes. flexidepth_vp* set
+    # SGLANG_FD_VP_PROJECT / SGLANG_VP_SCHED, which validation.py now rejects,
+    # so they at least die loudly. dynamic* is WORSE: it sets no rejected flag
+    # and every one of its nine SGLANG_VP_* knobs (MODE, BLOCK_SIZE,
+    # LAYER_PROFILE_FILE, PREFILL_POLICY, LANEFUSE_GATHER, SPAN, GRAPH,
+    # HIT_RATE, DISABLE_ROUTER) is absent from this package -- so it would RUN,
+    # silently as plain vanilla, under a name claiming dynamic_layer_prefill.
+    # That is an arm whose name is a lie, the exact failure the guard above
+    # exists to prevent. Refuse both.
+    dynamic|dynamic_*|flexidepth_vp|flexidepth_vp_*)
+      echo "FATAL: mode '$raw_mode' selects the V1 generic-VP / inline" \
+           "VP-project scheduler, which is not in this build. Its knobs are" \
+           "inert, so the arm would run as vanilla under a routed name. Use" \
+           "'flexidepth' (full-graph) instead; see the removed-feature" \
+           "register for what V1 did and how to revive it." >&2
+      return 2
+      ;;
   esac
   while :; do
     case "$mode" in
@@ -1157,7 +1174,7 @@ launch_sglang_server() {
       fi
     fi
   elif [[ "$mode" != "vanilla" && "$mode" != "dynamic" && "$mode" != "dynamic_decode" && "$mode" != "dynamic_both" ]]; then
-    die "unknown SGBENCH mode $raw_mode; expected vanilla, vanilla_matched, dynamic, dynamic_decode, dynamic_both, flexidepth, flexidepth_vp, flexidepth_vp_async, flexidepth_vp_sched, flexidepth_vp_sched_async, or FDVP modes with override suffixes"
+    die "unknown SGBENCH mode $raw_mode; expected vanilla, vanilla_matched, flexidepth, or flexidepth with override suffixes. The V1 modes (dynamic*, flexidepth_vp*) are not in this build and are refused earlier"
   fi
 
   local server_profile="$SGBENCH_CANDIDATE_SERVER_PROFILE"
@@ -1247,7 +1264,7 @@ write_sgbench_manifest() {
     echo
     echo "[source-sha256]"
     sha256sum \
-      "$ROOT"/python/sglang/srt/vp/*.py \
+      "$ROOT"/python/sglang/srt/vpipe/*.py \
       "$ROOT"/python/sglang/srt/model_executor/forward_batch_info.py \
       "$ROOT"/python/sglang/srt/model_executor/model_runner.py \
       "$ROOT"/python/sglang/srt/mem_cache/common.py \
@@ -1570,7 +1587,9 @@ Explicit SGBENCH_MAX_RUNNING_REQUESTS values are allowed only with
 SGBENCH_SERVER_CAP_PURPOSE=pressure and are never headline evidence.
 Set SGBENCH_ATTENTION_BACKEND to compare an explicit SGLang attention backend;
 leave it empty to retain SGLang's model/hardware default.
-SGBENCH_MODES supports vanilla,vanilla_matched,dynamic,dynamic_decode,dynamic_both,flexidepth,flexidepth_vp,flexidepth_vp_async,flexidepth_vp_sched,flexidepth_vp_sched_async.
+SGBENCH_MODES supports vanilla,vanilla_matched,flexidepth (plus override suffixes).
+The V1 modes dynamic,dynamic_decode,dynamic_both,flexidepth_vp,flexidepth_vp_async,
+flexidepth_vp_sched,flexidepth_vp_sched_async are REMOVED and refused at preflight.
 vanilla uses SGBENCH_BASELINE_SERVER_PROFILE; vanilla_matched uses the same
 SGBENCH_CANDIDATE_SERVER_PROFILE as the skipper mode.
 FDVP modes also accept _mixed_async/_no_mixed_async, _stablebuf/_no_stablebuf,
