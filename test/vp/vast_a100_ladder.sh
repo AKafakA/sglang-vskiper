@@ -882,7 +882,6 @@ write_sgbench_manifest() {
       "$ROOT"/python/sglang/srt/models/llama.py \
       "$ROOT"/python/sglang/srt/models/qwen2.py \
       "$ROOT"/python/sglang/srt/models/qwen3.py \
-      "$ROOT"/test/vp/analyze_sgbench_pairs.py \
       "$ROOT"/test/vp/sample_sglang_load.py \
       "$ROOT"/test/vp/vast_a100_ladder.sh
     echo
@@ -1124,6 +1123,10 @@ case "$ACTION" in
     cat >&2 <<'EOF'
 Usage:
   ACTION=preflight|stage-qwen3|stage-flexidepth|smoke-decode|profile-decode|ci-decode|headline-gov|headline-mixed|headline-multinews|sgbench|sgbench-smoke|sgbench-flexidepth|sgbench-score|all \
+  # Only preflight and stage-qwen3 run from an unmodified checkout. Every
+  # other ACTION needs a helper script that was dropped with the evaluation
+  # tooling; require_scripts names the missing file and the git show that
+  # restores it. See codex/asplos-plan/2026-08-21-removed-feature-register.md.
   DRY_RUN=1 bash test/vp/vast_a100_ladder.sh
 
 Set DRY_RUN=0 only after the Vast A100 instance is intentionally running.

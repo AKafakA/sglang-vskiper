@@ -54,6 +54,7 @@ def one(url, prompt, max_new):
     last = None
     malformed = 0
     text_events = 0
+    observed_ids = []
     last_err = ""
     with urllib.request.urlopen(req, timeout=600) as r:
         for raw in r:
@@ -73,7 +74,17 @@ def one(url, prompt, max_new):
                 # stream -- {"meta_info":{"completion_tokens":128}} then close --
                 # self-report a full count with no text at all, passing the
                 # token-mass gate while producing nothing.
-                if obj.get("text") or obj.get("output_ids") or obj.get("token_ids"):
+                ids = obj.get("output_ids") or obj.get("token_ids")
+                if ids:
+                    # SGLang may stream these CUMULATIVELY or INCREMENTALLY.
+                    # Prefix-containment tells them apart without guessing: a
+                    # cumulative payload extends what we already have.
+                    if len(ids) >= len(observed_ids) and \
+                       list(ids[:len(observed_ids)]) == observed_ids:
+                        observed_ids = list(ids)
+                    else:
+                        observed_ids.extend(ids)
+                if ids or obj.get("text"):
                     text_events += 1
                     if ttft is None:
                         ttft = time.perf_counter() - t0
@@ -100,6 +111,15 @@ def one(url, prompt, max_new):
         raise RuntimeError(
             "no token-bearing response event: the stream carried metadata only, "
             "so the self-reported completion count describes no generated output"
+        )
+    # Reconcile the SELF-REPORTED count against tokens we actually observed.
+    # One event carrying output_ids=[17] alongside completion_tokens=128 clears
+    # the token-bearing check while proving a single token; trusting meta_info
+    # after one such event narrowed the hole rather than closing it.
+    if observed_ids and len(observed_ids) != max_new:
+        raise RuntimeError(
+            f"observed {len(observed_ids)} streamed token ids but meta_info "
+            f"reports {ntok} and {max_new} were requested"
         )
     if ntok != max_new:
         raise RuntimeError(

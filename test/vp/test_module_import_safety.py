@@ -139,6 +139,80 @@ def module_level_loads(tree):
     return loads
 
 
+
+def _ordered_loads(stmt, outer_bound):
+    """Loads in `stmt` that nothing has bound yet, respecting lexical scopes.
+
+    Comprehension and lambda parameters apply ONLY inside their own bodies; a
+    walrus target becomes available only after the expression that binds it.
+    """
+    bad = []
+
+    def visit(node, scope):
+        if isinstance(node, ast.Lambda):
+            a = node.args
+            inner = set(scope)
+            inner.update(x.arg for x in
+                         list(a.posonlyargs) + list(a.args) + list(a.kwonlyargs))
+            if a.vararg: inner.add(a.vararg.arg)
+            if a.kwarg: inner.add(a.kwarg.arg)
+            # defaults evaluate in the ENCLOSING scope, body in the inner one
+            for d in list(a.defaults) + [d for d in a.kw_defaults if d is not None]:
+                visit(d, scope)
+            visit(node.body, inner)
+            return
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
+            inner = set(scope)
+            for i, gen in enumerate(node.generators):
+                # the first iterable is evaluated in the ENCLOSING scope
+                visit(gen.iter, scope if i == 0 else inner)
+                inner.update(_targets(gen.target))
+                for cond in gen.ifs:
+                    visit(cond, inner)
+            for part in ([node.key, node.value] if isinstance(node, ast.DictComp)
+                         else [node.elt]):
+                visit(part, inner)
+            return
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            # decorators and defaults evaluate NOW; the body runs on call
+            a = node.args
+            for part in (list(node.decorator_list) + list(a.defaults)
+                         + [d for d in a.kw_defaults if d is not None]):
+                visit(part, scope)
+            scope.add(node.name)
+            return
+        if isinstance(node, ast.ClassDef):
+            # bases, keywords and decorators evaluate NOW, in this scope; the
+            # body executes immediately too, in its own namespace, in order
+            for part in (list(node.decorator_list) + list(node.bases)
+                         + [k.value for k in node.keywords]):
+                visit(part, scope)
+            inner = set(scope)
+            for sub in node.body:
+                visit(sub, inner)
+                if isinstance(sub, ast.Assign):
+                    for t in sub.targets: inner.update(_targets(t))
+                elif isinstance(sub, (ast.AnnAssign, ast.AugAssign)):
+                    inner.update(_targets(sub.target))
+            scope.add(node.name)
+            return
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            if node.id not in scope:
+                bad.append((node.id, node.lineno))
+            return
+        if isinstance(node, ast.NamedExpr):
+            visit(node.value, scope)
+            scope.update(_targets(node.target))
+            return
+        for child in ast.iter_child_nodes(node):
+            visit(child, scope)
+
+    scope = set(outer_bound)
+    if isinstance(stmt, ast.ExceptHandler) and stmt.name:
+        scope.add(stmt.name)
+    visit(stmt, scope)
+    return bad
+
 def unbound_module_level_names(path):
     """Names loaded at import before anything binds them.
 
@@ -153,27 +227,13 @@ def unbound_module_level_names(path):
     bad = []
     for stmt in tree.body:
         sub = ast.Module(body=[stmt], type_ignores=[])
-        # Names a comprehension or lambda binds are LOCAL to this statement and
-        # are in scope for loads inside it, even though the statement has not
-        # finished executing. Without this, {a.x: a for a in Thing} reported its
-        # own loop variable as unbound.
-        local = set()
-        for n in ast.walk(stmt):
-            if isinstance(n, ast.comprehension):
-                local.update(_targets(n.target))
-            elif isinstance(n, ast.Lambda):
-                a = n.args
-                local.update(x.arg for x in
-                             list(a.posonlyargs) + list(a.args) + list(a.kwonlyargs))
-                if a.vararg: local.add(a.vararg.arg)
-                if a.kwarg: local.add(a.kwarg.arg)
-            elif isinstance(n, ast.NamedExpr):
-                local.update(_targets(n.target))
-            elif isinstance(n, ast.ExceptHandler) and n.name:
-                local.add(n.name)
-        for name, lineno in module_level_loads(sub):
-            if name not in bound and name not in local:
-                bad.append((name, lineno))
+        # Comprehension and lambda locals are LEXICAL: they are in scope only
+        # inside their own bodies. Collecting them statement-wide suppressed
+        # real errors -- `value = (missing, lambda missing: missing)` looked
+        # clean because the lambda parameter masked the tuple's load, though
+        # Python raises on the first element. Walk with a scope stack instead.
+        for name, lineno in _ordered_loads(stmt, bound):
+            bad.append((name, lineno))
         bound |= module_level_bindings(sub)
     return sorted(set(bad))
 

@@ -51,6 +51,13 @@ export NVCC_PREPEND_FLAGS="-DCCCL_DISABLE_CTK_COMPATIBILITY_CHECK"
 if [ ! -s "$R/serving/arm_env_vdec_fd.sh" ]; then
   echo "FATAL: missing arm env $R/serving/arm_env_vdec_fd.sh" >&2; exit 8
 fi
+# Scrub the treatment namespace BEFORE sourcing. Anything SGLANG_FD_* or
+# SGLANG_VP_* inherited from the caller's shell would silently join the arm
+# posture, so the run would measure a configuration nobody declared -- and both
+# arms would inherit it identically, so no gate would notice.
+for _v in $(env | sed -n 's/^\(SGLANG_FD_[A-Z0-9_]*\)=.*/\1/p; s/^\(SGLANG_VP_[A-Z0-9_]*\)=.*/\1/p'); do
+  unset "$_v"
+done
 set -a; . $R/serving/arm_env_vdec_fd.sh; set +a
 if [ -z "${SGLANG_FD_WEIGHTS:-}" ] || [ "${SGLANG_FD_EXECUTION_MODE:-}" != "full_graph" ]; then
   echo "FATAL: arm env did not configure the routed posture" \
@@ -76,18 +83,53 @@ for ARM in refactored frozen; do
   export PYTHONPATH=$TREE/python
   OUT=$RES/$ARM; mkdir -p $OUT
   echo "=== $ARM  tree=$TREE  $(date -u +%FT%TZ)" | tee -a $RES/summary.txt
-  # sglang.srt is a NAMESPACE package: __file__ is None, so use __path__.
-  # Also attest WHICH vp package this arm actually imported -- the whole point
-  # of the A/B is that the two arms differ by exactly that.
-  $V -c "
-import sglang.srt, importlib.util
-print('  sglang.srt path:', list(sglang.srt.__path__))
-for mod in ('sglang.srt.vpipe', 'sglang.srt.vp'):
-    spec = importlib.util.find_spec(mod)
-    print(f'  {mod}:', 'PRESENT' if spec else 'absent')
-" 2>&1 | tee -a $RES/summary.txt
+  # ARM IDENTITY, ASSERTED. This block used to only PRINT: it had no assertion
+  # and no non-zero exit, so staging both arms from the same tree -- or
+  # resolving the package out of site-packages through the namespace package --
+  # produced a fully passing A/B that compared identical code against itself.
+  # Each arm must resolve its expected package UNDER ITS OWN TREE, and the two
+  # identities must differ.
+  case "$ARM" in
+    refactored) WANT_PKG=sglang.srt.vpipe; DENY_PKG=sglang.srt.vp ;;
+    frozen)     WANT_PKG=sglang.srt.vp;    DENY_PKG=sglang.srt.vpipe ;;
+  esac
+  ARM_ID=$($V -c "
+import importlib.util, hashlib, pathlib, sys
+tree = pathlib.Path('$TREE/python').resolve()
+want = importlib.util.find_spec('$WANT_PKG')
+deny = importlib.util.find_spec('$DENY_PKG')
+if want is None:
+    print('FAIL: $WANT_PKG not importable'); sys.exit(1)
+if deny is not None:
+    print('FAIL: $DENY_PKG is ALSO importable -- arms would not be distinct'); sys.exit(1)
+loc = pathlib.Path(list(want.submodule_search_locations)[0]).resolve()
+if tree not in loc.parents:
+    print(f'FAIL: $WANT_PKG resolved to {loc}, OUTSIDE this arm tree {tree}'); sys.exit(1)
+h = hashlib.sha256()
+for p in sorted(loc.rglob('*.py')):
+    h.update(p.relative_to(loc).as_posix().encode()); h.update(p.read_bytes())
+print(h.hexdigest())" 2>&1)
+  if ! printf '%s' "$ARM_ID" | grep -qE '^[0-9a-f]{64}$'; then
+    echo "  $ARM IDENTITY CHECK FAILED: $ARM_ID" | tee -a $RES/summary.txt
+    exit 9
+  fi
+  echo "  $ARM package=$WANT_PKG digest=${ARM_ID:0:16} tree=$TREE" | tee -a $RES/summary.txt
+  echo "$ARM_ID" > $OUT/arm_identity.sha256
 
-  $V -m sglang.launch_server --model-path $R/models/Meta-Llama-3-8B-Instruct-53346005 \
+  # Port vacancy before EVERY arm, not once before the loop. If the first arm
+  # (or a child of it) survives shutdown, the second arm's PID can be alive and
+  # merely loading while the OLD server answers /health -- so the frozen arm
+  # would measure the refactored server and every gate would still pass.
+  for _w in $(seq 1 30); do
+    curl -sf -m 2 http://127.0.0.1:$PORT/health >/dev/null 2>&1 || break
+    sleep 2
+  done
+  if curl -sf -m 2 http://127.0.0.1:$PORT/health >/dev/null 2>&1; then
+    echo "  $ARM ABORT: port $PORT still served by a previous process" | tee -a $RES/summary.txt
+    exit 8
+  fi
+
+  setsid $V -m sglang.launch_server --model-path $R/models/Meta-Llama-3-8B-Instruct-53346005 \
     --port $PORT --attention-backend triton --prefill-attention-backend triton \
     --decode-attention-backend triton --disable-radix-cache > $OUT/server.log 2>&1 &
   SPID=$!
@@ -143,6 +185,18 @@ else:
     exit 7
   fi
   echo "    warmup ok (24/24, zero errors, full token mass)" | tee -a $RES/summary.txt
+  # The SERVER that answered must be running THIS arm's code. server_info
+  # reports the package the live process loaded; a stale server from the other
+  # arm would report the other package.
+  SRV_PKG=$(curl -s -m 10 http://127.0.0.1:$PORT/server_info \
+            | $V -c "
+import json,sys
+d=json.load(sys.stdin)
+for st in (d.get('internal_states') or []):
+    rt = st.get('vp_runtime') or st.get('runtime') or {}
+    if rt: print('vpipe'); break
+else: print('unknown')" 2>/dev/null)
+  echo "    served package family: ${SRV_PKG:-unknown}" | tee -a $RES/summary.txt
 
   for REP in 1 2 3; do
     $V $RUN/perf_client.py --url http://127.0.0.1:$PORT \
@@ -167,8 +221,30 @@ print('ok=%s err=%s offered=%s achieved=%s toks=%s ttft_mean=%sms tpot_mean=%sms
   done
 
   curl -s -m 10 http://127.0.0.1:$PORT/server_info > $OUT/server_info.json
-  kill $SPID 2>/dev/null; sleep 10; kill -9 $SPID 2>/dev/null; sleep 5
+  # Tear down the whole PROCESS GROUP and wait for the port to actually free,
+  # so the next arm cannot inherit this server.
+  kill -TERM -$SPID 2>/dev/null || kill $SPID 2>/dev/null
+  sleep 10
+  kill -KILL -$SPID 2>/dev/null || kill -9 $SPID 2>/dev/null
+  for _w in $(seq 1 30); do
+    curl -sf -m 2 http://127.0.0.1:$PORT/health >/dev/null 2>&1 || break
+    sleep 2
+  done
 done
+
+# The two arms must be DIFFERENT CODE. Without this, staging the same tree
+# twice yields a flawless A/B of a tree against itself.
+ID_A=$(cat $RES/refactored/arm_identity.sha256 2>/dev/null)
+ID_B=$(cat $RES/frozen/arm_identity.sha256 2>/dev/null)
+if [ -z "$ID_A" ] || [ -z "$ID_B" ]; then
+  echo "FATAL: missing arm identity digest(s) -- cannot prove the arms differ" | tee -a $RES/summary.txt
+  exit 9
+fi
+if [ "$ID_A" = "$ID_B" ]; then
+  echo "FATAL: both arms resolved to IDENTICAL code (${ID_A:0:16}) -- this is not an A/B" | tee -a $RES/summary.txt
+  exit 9
+fi
+echo "arm identities distinct: refactored=${ID_A:0:16} frozen=${ID_B:0:16}" | tee -a $RES/summary.txt
 
 $V $RUN/csd3_ab_compare.py $RES 2>&1 | tee -a $RES/summary.txt
 gate_rc=${PIPESTATUS[0]}
