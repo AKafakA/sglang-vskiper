@@ -7,9 +7,13 @@ rather than serve a posture nobody declared.
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import (
+    Any,
+    Mapping,
+    Optional,
+    Callable,
+)
 import os
-from typing import Any, Callable, Optional
 from sglang.srt.vpipe.attestation import (
     _conflicting_env_enabled,
     full_graph_commit_overlap_enabled,
@@ -26,16 +30,11 @@ from sglang.srt.vpipe.common import (
     full_graph_compact_q_proj_enabled,
     full_graph_contiguous_routed_qkv_config,
     full_graph_low_row_policy,
-)
-from sglang.srt.vpipe.common import (
     flexidepth_execution_mode,
     full_graph_compact_routed_qkv_enabled,
-)
-from sglang.srt.vpipe.common import (
     flexidepth_active_phases,
-)
-from sglang.srt.vpipe.common import (
     regime_switch_config,
+    resolve_full_graph_skipper,
 )
 from sglang.srt.vpipe.config import (
     full_graph_compact_config,
@@ -98,21 +97,14 @@ from sglang.srt.vpipe.env import (
     FD_VIRTUAL_COHORT_ENV,
     FD_WEIGHTED_SCATTER_ENV,
     _CONFLICTING_FULL_GRAPH_ENV,
+    SUBLAYER_EXECUTION,
+    REGIME_SWITCH_ENV,
 )
 from sglang.srt.vpipe.mlp_compact import (
     full_graph_dual_compact_min_rows,
 )
 from sglang.srt.vpipe.routing import (
     full_graph_forced_route,
-)
-from sglang.srt.vpipe.common import (
-    resolve_full_graph_skipper,
-)
-from sglang.srt.vpipe.env import (
-    SUBLAYER_EXECUTION,
-)
-from sglang.srt.vpipe.env import (
-    REGIME_SWITCH_ENV,
 )
 
 

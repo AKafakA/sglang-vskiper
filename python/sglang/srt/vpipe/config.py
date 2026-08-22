@@ -13,11 +13,15 @@ env must fail closed, not silently select the other branch.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any, Callable, Optional
+from typing import (
+    Any,
+    Callable,
+    Optional,
+    Mapping,
+)
 import msgspec
 import math
 import os
-from typing import Mapping, Optional
 from sglang.srt.vpipe.env import (
     FD_COMPACT_CAPACITY_FRACTION_ENV,
     FD_COMPACT_CAPACITY_MULTIPLE_ENV,
@@ -44,34 +48,24 @@ from sglang.srt.vpipe.env import (
     FD_VIRTUAL_COHORT_ENV,
     FD_WEIGHTED_SCATTER_ENV,
     _VALID_LAYER_POLICIES,
-)
-from sglang.srt.vpipe.env import (
     FD_EXECUTION_DIRECT_EAGER,
     FD_EXECUTION_MODE_ENV,
     _VALID_EXECUTION_MODES,
-)
-from sglang.srt.vpipe.env import (
     FD_ACTIVE_PHASES_ENV,
     _VALID_ACTIVE_PHASES,
+    ADASKIP_FULL_GRAPH_SKIPPER,
+    DETERMINISTIC_MOCK_FULL_GRAPH_SKIPPER,
+    FLEXIDEPTH_FULL_GRAPH_SKIPPER,
+    DEVICE_ROUTE_DIGEST_ENV,
 )
 from sglang.srt.vpipe.common import (
     DECODE_BODY_HIGH,
     DECODE_BODY_LOW,
     _DECODE_BODIES,
-)
-from sglang.srt.vpipe.common import (
     RegimeSwitchConfig,
-)
-from sglang.srt.vpipe.env import (
-    ADASKIP_FULL_GRAPH_SKIPPER,
-    DETERMINISTIC_MOCK_FULL_GRAPH_SKIPPER,
-    FLEXIDEPTH_FULL_GRAPH_SKIPPER,
 )
 from sglang.srt.vpipe.skipper import (
     configured_full_graph_skipper_name,
-)
-from sglang.srt.vpipe.env import (
-    DEVICE_ROUTE_DIGEST_ENV,
 )
 
 
