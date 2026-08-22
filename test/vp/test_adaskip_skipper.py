@@ -77,6 +77,12 @@ def test_profile_is_bound_to_the_served_checkpoint():
         ({"model_id": "/any/Some-Other-Checkpoint"}, False, "differing dir name"),
         ({"revision": FROZEN_REVISION, "model_id": "/any/Wrong-Looking-Name"}, True,
          "revision decides; a mismatched path does not veto it"),
+        # config._commit_hash alone is NOT accepted: it resolves before weights
+        # load, and the loader may fetch a different commit. Only a declared
+        # revision counts, so an identity carrying just the config commit and no
+        # declaration must be refused.
+        ({"config_commit": FROZEN_REVISION}, False,
+         "config commit alone is not weight identity"),
     ]
     for identity, want_ok, label in cases:
         try:

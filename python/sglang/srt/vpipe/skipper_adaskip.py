@@ -184,12 +184,13 @@ class AdaSkipFixedProfileFullGraphAdapter(FullGraphSkipperAdapter):
         at all, so that fallback was the normal path, not the exception.
 
         Accepted identity, in order:
-          1. the resolved Hub commit (config._commit_hash) -- immutable;
-          2. an EXPLICIT operator declaration of the staged revision. This is an
-             assertion, not loader-verified provenance, but it is deliberate,
-             recorded in the attestation, and cannot be triggered by renaming a
-             directory.
-        Anything else is refused.
+        Identity is the EXPLICIT operator declaration
+        (SGLANG_VP_SERVED_MODEL_REVISION). config._commit_hash is deliberately
+        NOT accepted on its own: that value is resolved before weights load, and
+        the weight loader uses model_config.revision instead, so a mutable Hub
+        ref can produce one commit for the config and another for the weights.
+        The caller corroborates the two and refuses a disagreement; here we
+        require the declaration itself.
         """
 
         want_rev = (self.profile.model_revision or "").strip()
@@ -203,9 +204,10 @@ class AdaSkipFixedProfileFullGraphAdapter(FullGraphSkipperAdapter):
         source = (ident.get("revision_source") or "").strip()
         if not got_rev:
             raise ValueError(
-                "AdaSkip cannot identify the served checkpoint: the model "
-                "config exposes no commit hash (normal for a locally staged "
-                "snapshot) and no revision was declared. Set "
+                "AdaSkip cannot identify the served checkpoint: no revision "
+                "was declared. The model config's commit hash is not accepted "
+                "as weight identity -- it is resolved before the weights load, "
+                "and the loader may fetch a different commit. Set "
                 f"{ADASKIP_SERVED_REVISION_ENV}=<revision of the staged "
                 f"checkpoint> to assert it, or serve a checkpoint whose config "
                 "carries one. Refusing rather than applying another "
