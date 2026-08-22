@@ -205,14 +205,23 @@ else:
          "(spgid='$SPGID' listeners='$LPIDS')" | tee -a $RES/summary.txt
     exit 8
   fi
-  owned=0
+  # EVERY listener must be ours -- "any match" would tolerate a foreign process
+  # sharing the endpoint. Also assert setsid actually isolated us, since a
+  # server that inherited this script's group would match trivially.
+  foreign=""
   for lp in $LPIDS; do
-    lpgid=$(ps -o pgid= -p "$lp" 2>/dev/null | tr -d ' ')
-    [ "$lpgid" = "$SPGID" ] && owned=1
+    if [ "$(ps -o pgid= -p "$lp" 2>/dev/null | tr -d ' ')" != "$SPGID" ]; then
+      foreign="$foreign $lp"
+    fi
   done
-  if [ $owned -ne 1 ]; then
-    echo "  $ARM ABORT: port $PORT is served by pid(s) '$LPIDS' outside our" \
+  if [ -n "$foreign" ]; then
+    echo "  $ARM ABORT: port $PORT also served by pid(s)$foreign outside our" \
          "process group $SPGID -- this arm would measure another server" | tee -a $RES/summary.txt
+    exit 8
+  fi
+  if [ "$SPGID" = "$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')" ]; then
+    echo "  $ARM ABORT: server shares this script's process group; setsid did not isolate it" \
+      | tee -a $RES/summary.txt
     exit 8
   fi
   echo "    endpoint owned by our process group ($SPGID)" | tee -a $RES/summary.txt

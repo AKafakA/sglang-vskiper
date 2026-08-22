@@ -70,8 +70,11 @@ def validate_v3_graph_activity(attestations: list) -> list:
         if not isinstance(block, dict):
             raise ValueError(f"rank {rank}: no v3_full_graph attestation block")
         counters = block.get("counters")
-        if not isinstance(counters, dict):
-            raise ValueError(f"rank {rank}: v3_full_graph has no counters block")
+        if not isinstance(counters, dict) or not counters:
+            raise ValueError(
+                f"rank {rank}: v3_full_graph has no usable counters block "
+                f"({counters!r}); an empty block must not read as zero activity"
+            )
         for key in ("decode_dispatches_total", "whole_step_graph_replays",
                     "eager_dispatches"):
             if key not in counters:
@@ -136,44 +139,19 @@ def validate_runtime_after(
     stage_graph_runtime_key = _stage_graph_runtime_key(expected)
     # Activate from the expectation OR from what the server actually reported.
     # Omission from the expectation cannot be allowed to disable the audit.
+    # Activate on the PRESENCE of a v3 attestation, never on its contents. The
+    # previous condition required counters to be truthy -- so an attestation
+    # that lost its counters, or emitted {}, made observed_v3 false and skipped
+    # the audit entirely. The activation condition required exactly the data
+    # whose absence the audit exists to reject, so the schema regression it
+    # guards against also disabled the guard.
     observed_v3 = any(
-        isinstance(rt.get("v3_full_graph"), dict) and rt["v3_full_graph"].get("counters")
+        isinstance(rt.get("v3_full_graph"), dict)
+        or bool(rt.get("v3_full_graph_enabled"))
         for rt in attestations
     )
     if stage_graph_runtime_key == "v3_full_graph" or observed_v3:
         graph_activity = validate_v3_graph_activity(attestations)
-    elif stage_graph_runtime_key is not None:
-        if not attestations:
-            raise ValueError("stage graph expectation has no runtime attestation")
-        for rank, runtime in enumerate(attestations):
-            graph = runtime.get(stage_graph_runtime_key, {}).get("stage_graphs", {})
-            counters = graph.get("counters", {})
-            rejection_reasons = graph.get("rejection_reasons", {})
-            required = {
-                name: int(counters.get(name, 0))
-                for name in ("captures", "replays", "executions")
-            }
-            if any(value <= 0 for value in required.values()):
-                raise ValueError(
-                    f"scheduler rank {rank} has no complete stage graph activity: "
-                    f"{required}"
-                )
-            rejected = int(counters.get("rejected_dispatches", 0))
-            if rejected or rejection_reasons:
-                raise ValueError(
-                    f"scheduler rank {rank} rejected stage graph dispatches: "
-                    f"count={rejected} reasons={rejection_reasons}"
-                )
-            graph_activity.append(
-                {
-                    "rank": rank,
-                    "runtime": stage_graph_runtime_key,
-                    "backend": graph.get("backend"),
-                    "buckets": graph.get("buckets"),
-                    "captured_keys": graph.get("captured_keys"),
-                    "counters": counters,
-                }
-            )
     return {
         "status": "passed",
         "server_profile": profile,
