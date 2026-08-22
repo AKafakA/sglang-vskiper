@@ -49,9 +49,29 @@ for (outcome, label) in results:
         print("FAIL: vanilla deployment would be BROKEN"); ok = False
     if label.startswith("B") and "cannot run with CUDA" not in outcome:
         print("FAIL: eager+graphs not refused at startup"); ok = False
+    if label.startswith("C") and outcome != "no-raise":
+        print("FAIL: the CANONICAL full_graph posture is refused"); ok = False
     if label.startswith("D") and outcome != "no-raise":
         print("FAIL: the quality-reference posture (eager, no graphs) is BLOCKED"); ok = False
 print("VALIDATOR CASES:", "PASS" if ok else "FAIL")
 
 if __name__ == "__main__":
     sys.exit(0 if ok else 1)
+
+
+def test_execution_mode_startup_gate():
+    """Every case must hold. Asserts, so pytest collection actually gates it.
+
+    Without this the module only signalled through sys.exit under __main__, and
+    no repository gate ran it as a script -- a guard that could not fail.
+    """
+
+    outcomes = dict((label, outcome) for outcome, label in results)
+    assert outcomes["A vanilla (no FD, no env)"] == "no-raise", \
+        "a vanilla SGLang server must not be refused"
+    assert "cannot run with CUDA" in outcomes["B routed + eager + graphs"], \
+        "eager + CUDA graphs must be refused at startup"
+    assert outcomes["C routed + full_graph"] == "no-raise", \
+        "the canonical full_graph posture must boot"
+    assert outcomes["D routed + eager + NO graphs"] == "no-raise", \
+        "the quality-reference posture must boot"

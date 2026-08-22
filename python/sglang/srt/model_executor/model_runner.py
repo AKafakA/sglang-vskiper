@@ -2598,7 +2598,20 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         # backend would silently ignore routing (masked attention becomes a
         # real contribution) — refuse to boot instead. This asserts; it never
         # selects or overrides a backend.
-        if os.environ.get("SGLANG_FD_WEIGHTS", "").strip():
+        # Gate on the FULL-GRAPH path, not merely on FD weights being present.
+        # The invariant is that only the triton kernels read the FlexiDepth run
+        # mask -- and the run mask is set exclusively by vpipe/executor.py, i.e.
+        # the full_graph dispatch. vpipe/eager.py never sets it: direct_eager
+        # runs self_attn for every row and masks the returned OUTPUT itself, so
+        # it is backend-agnostic. Keying on SGLANG_FD_WEIGHTS alone refused a
+        # supported direct_eager launch on any non-triton backend.
+        from sglang.srt.vpipe.common import flexidepth_execution_mode
+        from sglang.srt.vpipe.env import FD_EXECUTION_FULL_GRAPH
+
+        if (
+            os.environ.get("SGLANG_FD_WEIGHTS", "").strip()
+            and flexidepth_execution_mode() == FD_EXECUTION_FULL_GRAPH
+        ):
             resolved_backends = {
                 "prefill": self.prefill_attention_backend_str,
                 "decode": self.decode_attention_backend_str,
@@ -2610,7 +2623,7 @@ class ModelRunner(ModelRunnerKVCacheMixin):
             }
             if non_triton:
                 raise ValueError(
-                    "FlexiDepth is active (SGLANG_FD_WEIGHTS set) but the "
+                    "FlexiDepth full-graph execution is active but the "
                     f"resolved attention backends are {resolved_backends}; "
                     "only triton reads the FlexiDepth run mask. Pin "
                     "--attention-backend triton (and per-phase flags) — "
