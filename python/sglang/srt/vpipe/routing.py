@@ -114,7 +114,7 @@ def fd_parity_trace_tensor(
     layer_id: int,
     token_epoch: int,
 ) -> None:
-    """Persist one target row for deterministic direct/V2 parity diagnostics."""
+    """Persist one target row for deterministic direct-vs-full-graph parity diagnostics."""
 
     directory = os.environ.get("SGLANG_FD_PARITY_TRACE_DIR", "")
     target_epoch = int(os.environ.get("SGLANG_FD_PARITY_TRACE_EPOCH", "0") or "0")

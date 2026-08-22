@@ -1,8 +1,15 @@
-"""Graph-coverage accounting and the self-sized capture ladder.
+"""Graph-coverage accounting.
 
-Records which decode rows ran captured vs eager, why capture stopped (OOM,
-error, memory reserve), and the realised ladder. This is the instrument that
-makes the occupancy runaway visible instead of silent."""
+Records which decode rows ran captured vs eager. This is the instrument that
+makes the occupancy runaway visible instead of silent: rows above the captured
+ceiling fall to the eager path, and without this accounting that degradation is
+invisible.
+
+The self-sized capture ladder that once lived here was removed -- it was opt-in,
+unexercised by any arm, and its attestation defaulted to reporting a derivation
+that never happened. See
+codex/asplos-plan/2026-08-21-removed-feature-register.md. What survives is
+measured from the decode runner, which is the coverage oracle by construction."""
 
 from __future__ import annotations
 
