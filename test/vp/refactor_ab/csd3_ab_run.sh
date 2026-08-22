@@ -46,12 +46,30 @@ export LD_LIBRARY_PATH="$CUDA_HOME/lib:$GREAL/lib64"
 export CPATH="$R/envs/sglang-serve-w2-r1/lib/python3.12/site-packages/flashinfer/data/cccl/libcudacxx/include"
 export NVCC_PREPEND_FLAGS="-DCCCL_DISABLE_CTK_COMPATIBILITY_CHECK"
 
+# The arm environment is MANDATORY. Sourcing it silently was enough to launch
+# two dense (unrouted) arms that then agreed perfectly with each other.
+if [ ! -s "$R/serving/arm_env_vdec_fd.sh" ]; then
+  echo "FATAL: missing arm env $R/serving/arm_env_vdec_fd.sh" >&2; exit 8
+fi
 set -a; . $R/serving/arm_env_vdec_fd.sh; set +a
+if [ -z "${SGLANG_FD_WEIGHTS:-}" ] || [ "${SGLANG_FD_EXECUTION_MODE:-}" != "full_graph" ]; then
+  echo "FATAL: arm env did not configure the routed posture" \
+       "(weights='${SGLANG_FD_WEIGHTS:-}' mode='${SGLANG_FD_EXECUTION_MODE:-}')" >&2
+  exit 8
+fi
 
 PORT=30241
 RATE=2.0
 N=64
 MAXNEW=128
+
+# An already-occupied port makes BOTH arms measure the same stale server, with
+# zero errors and full token mass, so the comparator reports valid deltas for an
+# experiment that never ran.
+if curl -sf -m 3 http://127.0.0.1:$PORT/health >/dev/null 2>&1; then
+  echo "FATAL: port $PORT already serving; refusing to measure a stale server" >&2
+  exit 8
+fi
 
 for ARM in refactored frozen; do
   TREE=$RUN/$ARM
@@ -78,6 +96,13 @@ for mod in ('sglang.srt.vpipe', 'sglang.srt.vp'):
     kill -0 $SPID 2>/dev/null || break
     sleep 6
   done
+  # Health alone is not proof OUR server answered: require the process we
+  # spawned to still be alive.
+  if ! kill -0 $SPID 2>/dev/null; then
+    echo "  $ARM SERVER PROCESS DIED before readiness" | tee -a $RES/summary.txt
+    tail -20 $OUT/server.log | sed 's/^/    /' | tee -a $RES/summary.txt
+    exit 8
+  fi
   if ! curl -sf -m 3 http://127.0.0.1:$PORT/health >/dev/null 2>&1; then
     echo "  $ARM SERVER FAILED" | tee -a $RES/summary.txt
     tail -20 $OUT/server.log | sed 's/^/    /' | tee -a $RES/summary.txt

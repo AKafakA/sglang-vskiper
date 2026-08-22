@@ -45,6 +45,14 @@ done
 # through its EXIT trap. Plain mkdir fails if the directory exists, so exactly
 # one process can own it -- and the cleanup trap is installed only AFTER this
 # process is the owner, so it can never remove a directory it did not create.
+# Create the PARENT with -p (a new nested OUT_DIR is legitimate and the previous
+# builder accepted it), then claim only the final component atomically. Plain
+# mkdir on the whole path rejected every OUT_DIR whose parent did not yet exist
+# -- an over-broad refusal introduced by the race fix itself.
+if ! mkdir -p "$(dirname "$OUT_DIR")" 2>/dev/null; then
+  echo "ERROR: could not create parent of OUT_DIR=$OUT_DIR" >&2
+  exit 1
+fi
 if ! mkdir "$OUT_DIR" 2>/dev/null; then
   if [[ -e "$OUT_DIR" ]]; then
     echo "ERROR: refusing to reuse OUT_DIR=$OUT_DIR" >&2
