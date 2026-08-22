@@ -201,12 +201,7 @@ def full_graph_compact_q_proj_enabled(
     """Return whether RUN-only Q projection shares the compact output route."""
 
     values = os.environ if environ is None else environ
-    value = str(values.get(FD_COMPACT_Q_PROJ_ENV, "0")).strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off", ""}:
-        return False
-    raise ValueError(f"{FD_COMPACT_Q_PROJ_ENV} must be a boolean value")
+    return _strict_bool(values, FD_COMPACT_Q_PROJ_ENV)
 def _fixed_capacity_mapped_linear(
     input_tensor: torch.Tensor,
     weight: torch.Tensor,
@@ -893,12 +888,7 @@ def full_graph_compact_routed_qkv_enabled(
     """Return whether routed rows use complementary mapped projections."""
 
     values = os.environ if environ is None else environ
-    value = str(values.get(FD_COMPACT_ROUTED_QKV_ENV, "0")).strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off", ""}:
-        return False
-    raise ValueError(f"{FD_COMPACT_ROUTED_QKV_ENV} must be a boolean value")
+    return _strict_bool(values, FD_COMPACT_ROUTED_QKV_ENV)
 def fd_parity_trace_target() -> str:
     return os.environ.get("SGLANG_FD_PARITY_TRACE_RID", "")
 def resolve_full_graph_skipper(
