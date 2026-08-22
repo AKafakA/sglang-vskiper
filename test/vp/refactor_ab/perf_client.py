@@ -100,6 +100,19 @@ with open(a.requests_jsonl) as fh:
         if len(prompts) >= a.n:
             break
 
+# EXACTLY the requested count, or refuse. Reading "up to n" means a workload
+# with fewer valid prompts silently shrinks the run -- and because BOTH arms
+# shrink the same way, zero errors, identical tokens, identical request counts
+# and sub-saturation all still hold. The comparator would report a clean A/B
+# over work neither arm was asked to do. Equal work is not the same as the
+# intended work.
+if len(prompts) != a.n:
+    raise SystemExit(
+        f"FATAL: requested --n {a.n} but {a.requests_jsonl} yielded "
+        f"{len(prompts)} usable prompts. Refusing: a symmetrically truncated "
+        f"A/B passes every gate while measuring less work than intended."
+    )
+
 # Poisson arrival schedule, identical across arms for the same seed.
 rng = random.Random(a.seed)
 gaps = [rng.expovariate(a.rate) for _ in prompts]
@@ -137,6 +150,9 @@ errs = [r for r in res if "error" in r]
 ttfts = [r["ttft"] * 1000 for r in ok]
 tpots = [r["tpot"] * 1000 for r in ok]
 out = {
+    # requested_n travels with the artifact so the comparator can gate on the
+    # count that was ASKED for, not merely on the two arms agreeing.
+    "requested_n": a.n,
     "requests": len(res), "ok": len(ok), "errors": len(errs),
     "offered_rate": a.rate, "achieved_rate": round(len(ok) / wall, 3) if wall else 0,
     "total_output_tokens": sum(r["toks"] for r in ok),

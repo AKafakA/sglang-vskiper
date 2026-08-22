@@ -34,6 +34,25 @@ if [[ -n "$EVALUATION_CONTRACT" && ! -f "$EVALUATION_CONTRACT" ]]; then
   exit 1
 fi
 
+# Validate every hard-coded input BEFORE creating output or starting the
+# background launcher. The runtime contract below and the default QPS config
+# are both passed unconditionally, and both are absent from this tree: without
+# this the entry point created its output root, launched a server, and only
+# then failed on a path it could have checked in the first second.
+EXPECTED_RUNTIME_PATH="$ROOT/test/vp/runtime_expectations/production_upstream.json"
+for path in \
+  "$ROOT/test/vp/launch_qps_server.py" \
+  "$EXPECTED_RUNTIME_PATH" \
+  "$QPS_CONFIG"; do
+  if [[ ! -e "$path" ]]; then
+    echo "ERROR: required path does not exist: $path" >&2
+    echo "       (dropped with the evaluation tooling; recover with" >&2
+    echo "        'git show c3a1302668:\${path#$ROOT/}' -- see the" >&2
+    echo "        removed-feature register)" >&2
+    exit 1
+  fi
+done
+
 mkdir -p "$OUTPUT_ROOT"
 launcher_log="$OUTPUT_ROOT/deployment.launcher.log"
 launcher_pid=""
@@ -79,7 +98,7 @@ trap stop_launcher EXIT
   --host 127.0.0.1 \
   --port "$PORT" \
   --mem-fraction-static "$MEM_FRACTION_STATIC" \
-  --expected-runtime "$ROOT/test/vp/runtime_expectations/production_upstream.json" \
+  --expected-runtime "$EXPECTED_RUNTIME_PATH" \
   --artifact "source_archive=$UPSTREAM_SOURCE_ARCHIVE" \
   --output-dir "$OUTPUT_ROOT/deployment" >"$launcher_log" 2>&1 &
 launcher_pid="$!"

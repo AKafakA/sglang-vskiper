@@ -229,7 +229,12 @@ preflight() {
   require_vast_checkout
   require_a100
   require_cache_space
-  require_profile_file
+  # require_profile_file is NOT called here. PROFILE_FILE defaults to
+  # test/vp/qwen3_8b_layer_importance.json, which is not in this tree, and every
+  # remaining consumer sits in an ACTION that require_scripts already refuses or
+  # in a refused dynamic* branch. Demanding it unconditionally made preflight --
+  # and therefore every action, including the supported vanilla and flexidepth
+  # modes -- fail on an artifact nothing live reads.
   activate_env_if_present
   python - <<'PY'
 import os, sys
@@ -554,14 +559,25 @@ launch_sglang_server() {
     matched_vanilla=1
   fi
 
-  # FAIL CLOSED on modes whose implementation was removed. The batched /
-  # asynchronous K/V subsystem is gone (see
-  # codex/asplos-plan/2026-08-21-removed-feature-register.md): no queue,
-  # tracker, launch, drain or BatchedKVWork reader remains. A run named
-  # *_scopedasync or *_batchedasync would therefore either fail at startup or,
-  # worse, succeed while running WITHOUT the treatment its label claims --
-  # producing an arm whose name is a lie. Refuse instead.
+  # WHITELIST, not a blacklist. A blacklist cannot be complete here: the
+  # parser below still accepts ~50 override suffixes whose ONLY emission site
+  # was the deleted flexidepth_vp block, so each one now yields an arm
+  # byte-identical to plain flexidepth while carrying a name that claims a
+  # treatment. That is the same "arm whose name is a lie" failure as the
+  # removed async modes, just spread across every suffix.
+  #
+  # Exactly three modes are distinguishable in this build (vanilla_matched is
+  # normalised to vanilla above), so name them and refuse everything else.
   case "$mode" in
+    vanilla|flexidepth) ;;
+    dynamic|dynamic_*|flexidepth_vp|flexidepth_vp_*)
+      echo "FATAL: mode '$raw_mode' selects the V1 generic-VP / inline" \
+           "VP-project scheduler, which is not in this build. Its knobs are" \
+           "inert, so the arm would run as vanilla under a routed name. Use" \
+           "'flexidepth' (full-graph) instead; see the removed-feature" \
+           "register for what V1 did and how to revive it." >&2
+      return 2
+      ;;
     *_scopedasync|*_no_scopedasync|*_batchedasync|*_tokenasync|\
     *_lookaheadasync|*_no_lookaheadasync|*_streamasync|*_kvonly|*_no_kvonly|\
     *_mixed_async|*_no_mixed_async)
@@ -571,21 +587,13 @@ launch_sglang_server() {
            "reimplement async K/V first (see the removed-feature register)." >&2
       return 2
       ;;
-    # The V1 generic-VP and inline VP-project modes. flexidepth_vp* set
-    # SGLANG_FD_VP_PROJECT / SGLANG_VP_SCHED, which validation.py now rejects,
-    # so they at least die loudly. dynamic* is WORSE: it sets no rejected flag
-    # and every one of its nine SGLANG_VP_* knobs (MODE, BLOCK_SIZE,
-    # LAYER_PROFILE_FILE, PREFILL_POLICY, LANEFUSE_GATHER, SPAN, GRAPH,
-    # HIT_RATE, DISABLE_ROUTER) is absent from this package -- so it would RUN,
-    # silently as plain vanilla, under a name claiming dynamic_layer_prefill.
-    # That is an arm whose name is a lie, the exact failure the guard above
-    # exists to prevent. Refuse both.
-    dynamic|dynamic_*|flexidepth_vp|flexidepth_vp_*)
-      echo "FATAL: mode '$raw_mode' selects the V1 generic-VP / inline" \
-           "VP-project scheduler, which is not in this build. Its knobs are" \
-           "inert, so the arm would run as vanilla under a routed name. Use" \
-           "'flexidepth' (full-graph) instead; see the removed-feature" \
-           "register for what V1 did and how to revive it." >&2
+    *)
+      echo "FATAL: mode '$raw_mode' is not available in this build. Its" \
+           "override suffix has no effect here -- the environment variables" \
+           "the suffixes set are emitted only by code removed with the V1" \
+           "path, so the arm would be identical to plain 'flexidepth' under a" \
+           "name claiming otherwise. Supported: vanilla, vanilla_matched," \
+           "flexidepth." >&2
       return 2
       ;;
   esac
@@ -937,88 +945,6 @@ launch_sglang_server() {
     env_args+=(
       SGLANG_VP_FOREGROUND_STREAM_PRIORITY="$vp_foreground_stream_priority"
     )
-  fi
-  if [[ "$mode" == "dynamic" || "$mode" == "dynamic_both" ]]; then
-    if [[ "$mode" == "dynamic_both" && "$SGBENCH_PREFILL_BLOCK_SIZE" != "$SGBENCH_DECODE_BLOCK_SIZE" ]]; then
-      die "dynamic_both uses one global SGLANG_VP_BLOCK_SIZE; set SGBENCH_PREFILL_BLOCK_SIZE and SGBENCH_DECODE_BLOCK_SIZE equal"
-    fi
-    env_args+=(
-      SGLANG_VP_MODE=dynamic_layer_prefill
-      SGLANG_VP_BLOCK_SIZE="$SGBENCH_PREFILL_BLOCK_SIZE"
-      SGLANG_VP_LAYER_PROFILE_FILE="$PROFILE_FILE"
-      SGLANG_VP_LAYER_PROFILE_TOPKS="$SGBENCH_PREFILL_TOPKS"
-      SGLANG_VP_PREFILL_POLICY="$SGBENCH_PREFILL_POLICY"
-      SGLANG_VP_PREFILL_VETO_TAGS="$SGBENCH_PREFILL_VETO_TAGS"
-      SGLANG_VP_PREFILL_VETO_TEXT_RE="$SGBENCH_PREFILL_VETO_TEXT_RE"
-      SGLANG_VP_LANEFUSE_GATHER=1
-    )
-  fi
-  if [[ "$mode" == "dynamic_decode" || "$mode" == "dynamic_both" ]]; then
-    if [[ "$vp_async_kv" != "$vp_async_kv_defer" ]]; then
-      die "generic VP async K/V currently requires ASYNC_KV=1 and DEFER_DRAIN=1 together"
-    fi
-    if [[ "$vp_async_kv_batched" == "1" && "$vp_async_kv" != "1" ]]; then
-      die "generic VP batched K/V requires scoped async K/V"
-    fi
-    if [[ "$vp_async_kv_token_launch" == "1" && "$vp_async_kv_batched" != "1" ]]; then
-      die "generic VP token-boundary K/V launch requires batched K/V"
-    fi
-    if [[ "$vp_async_kv_lookahead_release" == "1" && "$vp_async_kv_batched" != "1" ]]; then
-      die "generic VP lookahead K/V release requires batched K/V"
-    fi
-    env_args+=(
-      SGLANG_VP_SCHED=1
-      SGLANG_VP_SPAN="$SGBENCH_DECODE_SPAN"
-      SGLANG_VP_BLOCK_SIZE="$SGBENCH_DECODE_BLOCK_SIZE"
-      SGLANG_VP_GRAPH="$SGBENCH_DECODE_VP_GRAPH"
-      SGLANG_VP_DECODE_LAYER_PROFILE_FILE="$PROFILE_FILE"
-      SGLANG_VP_DECODE_LAYER_PROFILE_TOPKS="$SGBENCH_DECODE_TOPKS"
-      SGLANG_VP_DECODE_PROFILE_POLICY="$SGBENCH_DECODE_POLICY"
-      SGLANG_VP_DECODE_PROFILE_COHORT="$SGBENCH_DECODE_COHORT"
-      SGLANG_VP_DECODE_VETO_TAGS="$SGBENCH_DECODE_VETO_TAGS"
-      SGLANG_VP_DECODE_VETO_TEXT_RE="$SGBENCH_DECODE_VETO_TEXT_RE"
-      SGLANG_VP_LANEFUSE_GATHER="$SGBENCH_DECODE_GATHER"
-      SGLANG_VP_STAGE_SCHED="$decode_stage_sched"
-      SGLANG_VP_STAGE_POLICY="$SGBENCH_DECODE_STAGE_POLICY"
-      SGLANG_VP_STAGE_BLOCK_SYNC="$SGBENCH_DECODE_STAGE_BLOCK_SYNC"
-      SGLANG_VP_STAGE_FUSE_MIXED="$decode_stage_fuse_mixed"
-    )
-    if [[ "$vp_async_kv" == "1" ]]; then
-      env_args+=(SGLANG_VP_ASYNC_KV=1)
-    fi
-    if [[ "$vp_async_kv_defer" == "1" ]]; then
-      env_args+=(
-        SGLANG_VP_ASYNC_KV_DEFER_DRAIN=1
-        SGLANG_VP_ASYNC_KV_SCOPED="$SGBENCH_VP_ASYNC_KV_SCOPED"
-      )
-    fi
-    if [[ "$vp_async_kv_batched" == "1" ]]; then
-      env_args+=(
-        SGLANG_VP_ASYNC_KV_BATCHED=1
-        SGLANG_VP_ASYNC_KV_BATCHED_MAX_ROWS="$SGBENCH_VP_ASYNC_KV_BATCHED_MAX_ROWS"
-      )
-    fi
-    if [[ "$vp_async_kv_token_launch" == "1" ]]; then
-      env_args+=(SGLANG_VP_ASYNC_KV_BATCHED_TOKEN_LAUNCH=1)
-    fi
-    if [[ "$vp_async_kv_lookahead_release" == "1" ]]; then
-      env_args+=(
-        SGLANG_VP_ASYNC_KV_LOOKAHEAD_RELEASE=1
-        SGLANG_VP_ASYNC_KV_RELEASE_LAYER="$SGBENCH_VP_ASYNC_KV_RELEASE_LAYER"
-      )
-    fi
-    if [[ "$vp_kv_only_qkv" == "1" ]]; then
-      env_args+=(SGLANG_VP_KV_ONLY_QKV=1)
-    fi
-    if [[ "$vp_async_kv" == "1" && "$SGBENCH_FD_VP_TRACE" == "1" ]]; then
-      local generic_trace_file="${SGBENCH_FD_VP_TRACE_FILE:-${log_path%.log}.vp_async_trace.jsonl}"
-      env_args+=(
-        SGLANG_FD_VP_TRACE=1
-        SGLANG_FD_VP_TRACE_TIMING="$SGBENCH_FD_VP_TRACE_TIMING"
-        SGLANG_FD_VP_TRACE_EVERY="$SGBENCH_FD_VP_TRACE_EVERY"
-        SGLANG_FD_VP_TRACE_FILE="$generic_trace_file"
-      )
-    fi
   fi
   if [[ "$mode" == "flexidepth" ]]; then
     [[ -s "$FD_WEIGHTS" ]] || die "missing FD_WEIGHTS=$FD_WEIGHTS; run ACTION=stage-flexidepth first"
