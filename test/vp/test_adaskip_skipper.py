@@ -66,8 +66,17 @@ def test_profile_is_bound_to_the_served_checkpoint():
         ({"revision": FROZEN_REVISION}, True, "matching revision"),
         ({"revision": "0" * 40}, False, "same depth, WRONG revision"),
         ({}, False, "served checkpoint identity unknown"),
-        ({"model_id": "/any/Meta-Llama-3-8B-Instruct-53346005"}, True, "dir name matches"),
-        ({"model_id": "/any/Some-Other-Checkpoint"}, False, "dir name differs"),
+        # A DIRECTORY NAME IS NOT IDENTITY. The previous version of this test
+        # accepted a matching basename, which BLESSED a bypass in the adapter:
+        # renaming any same-depth checkpoint to the calibrated snapshot's
+        # directory name restored the original silent miscalibration. Both of
+        # these must now be refused -- the path carries no weight identity at
+        # all, whether or not it happens to match.
+        ({"model_id": "/any/Meta-Llama-3-8B-Instruct-53346005"}, False,
+         "matching dir name is NOT identity"),
+        ({"model_id": "/any/Some-Other-Checkpoint"}, False, "differing dir name"),
+        ({"revision": FROZEN_REVISION, "model_id": "/any/Wrong-Looking-Name"}, True,
+         "revision decides; a mismatched path does not veto it"),
     ]
     for identity, want_ok, label in cases:
         try:
