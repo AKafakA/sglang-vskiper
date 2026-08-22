@@ -60,13 +60,18 @@ def module_level_bindings(tree):
                 module_level_bindings(ast.Module(body=h.body, type_ignores=[]))
                 for h in stmt.handlers
             ]
-            common = body_b
+            # The else-clause runs only when NO exception occurred, so its
+            # bindings belong to the no-exception path -- they must still be
+            # intersected with every handler path. Unioning them marked
+            # `try: f() / except: pass / else: x = 1` as binding x, though the
+            # handled path reaches the next statement without it.
+            else_b = (module_level_bindings(ast.Module(body=stmt.orelse, type_ignores=[]))
+                      if stmt.orelse else set())
+            common = body_b | else_b
             for hb in handler_bs:
                 common &= hb
-            if stmt.orelse:
-                common |= module_level_bindings(
-                    ast.Module(body=stmt.orelse, type_ignores=[]))
             if stmt.finalbody:
+                # finally always runs, so what it binds IS definite
                 common |= module_level_bindings(
                     ast.Module(body=stmt.finalbody, type_ignores=[]))
             bound |= common
@@ -78,90 +83,21 @@ def module_level_bindings(tree):
                 if isinstance(sub, ast.Assign):
                     for t in sub.targets:
                         bound.update(_targets(t))
-                elif isinstance(sub, (ast.AnnAssign, ast.AugAssign)):
-                    bound.update(_targets(sub.target))
+                elif isinstance(sub, ast.AnnAssign):
+                    # `x: int` with NO value binds nothing at runtime -- it only
+                    # records an annotation, so a later load of x still raises.
+                    if sub.value is not None:
+                        bound.update(_targets(sub.target))
+                elif isinstance(sub, ast.AugAssign):
+                    # `x += 1` LOADS x before storing it; it cannot introduce a
+                    # binding, and the load is caught by the visitor.
+                    pass
                 elif isinstance(sub, ast.withitem) and sub.optional_vars is not None:
                     bound.update(_targets(sub.optional_vars))
                 elif isinstance(sub, (ast.Import, ast.ImportFrom)):
                     for alias in sub.names:
                         bound.add(alias.asname or alias.name.split(".")[0])
     return bound
-
-
-def module_level_loads(tree):
-    """Names LOADED by statements that execute at import, skipping nested scopes."""
-    loads = []
-    for stmt in tree.body:
-        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            # a function BODY runs on call, not on import; its decorators and
-            # default expressions run now
-            parts = list(stmt.decorator_list) + list(stmt.args.defaults) + [
-                d for d in stmt.args.kw_defaults if d is not None
-            ]
-            for part in parts:
-                for n in ast.walk(part):
-                    if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
-                        loads.append((n.id, n.lineno))
-            continue
-        if isinstance(stmt, ast.ClassDef):
-            # A CLASS BODY DOES EXECUTE AT IMPORT, and so do its bases, keywords
-            # and decorators. Treating ClassDef like FunctionDef meant
-            # `class C(MissingBase)` -- or any missing name in a class body --
-            # passed this checker and still failed to import, leaving the
-            # catastrophic failure class only half covered.
-            for part in (list(stmt.decorator_list) + list(stmt.bases)
-                         + [k.value for k in stmt.keywords]):
-                for n in ast.walk(part):
-                    if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
-                        loads.append((n.id, n.lineno))
-            # The body executes IN ORDER, in its own namespace, and names it
-            # loads resolve outward to module scope. Collecting every class
-            # local up front made `class C: v = later; later = 1` look safe,
-            # though executing it raises NameError. Bind only AFTER the
-            # statement that binds it has been checked.
-            class_local = set()
-            for sub in stmt.body:
-                if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    # the METHOD BODY runs on call, but its decorators and
-                    # default expressions are evaluated right now
-                    for part in (list(sub.decorator_list) + list(sub.args.defaults)
-                                 + [d for d in sub.args.kw_defaults if d is not None]):
-                        for n in ast.walk(part):
-                            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) \
-                               and n.id not in class_local:
-                                loads.append((n.id, n.lineno))
-                    class_local.add(sub.name)
-                    continue
-                if isinstance(sub, ast.ClassDef):
-                    for part in (list(sub.decorator_list) + list(sub.bases)
-                                 + [k.value for k in sub.keywords]):
-                        for n in ast.walk(part):
-                            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) \
-                               and n.id not in class_local:
-                                loads.append((n.id, n.lineno))
-                    class_local.add(sub.name)
-                    continue
-                # check LOADS first, then record what this statement binds
-                for n in ast.walk(sub):
-                    if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) \
-                       and n.id not in class_local:
-                        loads.append((n.id, n.lineno))
-                if isinstance(sub, ast.Assign):
-                    for t in sub.targets: class_local.update(_targets(t))
-                elif isinstance(sub, (ast.AnnAssign, ast.AugAssign)):
-                    class_local.update(_targets(sub.target))
-            continue
-        stack = [stmt]
-        while stack:
-            node = stack.pop()
-            for child in ast.iter_child_nodes(node):
-                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                    continue
-                if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load):
-                    loads.append((child.id, child.lineno))
-                stack.append(child)
-    return loads
-
 
 
 def _ordered_loads(stmt, outer_bound):
@@ -226,6 +162,15 @@ def _ordered_loads(stmt, outer_bound):
             return
         if isinstance(node, ast.NamedExpr):
             visit(node.value, scope)
+            scope.update(_targets(node.target))
+            return
+        if isinstance(node, ast.AugAssign):
+            # `x += 1` READS x before storing it, but the target node carries
+            # Store context, so the generic Name branch never sees the load.
+            visit(node.value, scope)
+            for name in _targets(node.target):
+                if name not in scope:
+                    bad.append((name, node.lineno))
             scope.update(_targets(node.target))
             return
         for child in ast.iter_child_nodes(node):

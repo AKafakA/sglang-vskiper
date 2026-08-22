@@ -31,6 +31,11 @@ def _stage_graph_runtime_key(expected: dict) -> str | None:
     runtime = expected.get("runtime", {})
     if bool(runtime.get("v3_full_graph", {}).get("enabled")):
         return "v3_full_graph"
+    # NOTE: an expectation that simply omits v3_full_graph must NOT suppress the
+    # audit. Runtime expectations are subset checks, so an expectation naming
+    # only fd_c3 previously returned None here and no graph activity was ever
+    # checked. The caller therefore also activates the audit from the OBSERVED
+    # attestation; see validate_runtime_after.
     legacy = [
         key
         for key in ("v2", "v4")
@@ -78,9 +83,19 @@ def validate_v3_graph_activity(attestations: list) -> list:
         dispatches = int(counters["decode_dispatches_total"])
         graphed = int(counters["whole_step_graph_replays"])
         eager_dispatch = int(counters["eager_dispatches"])
-        fd_c3 = runtime.get("fd_c3") or {}
-        eager_layer = int((fd_c3.get("counters") or {}).get(
-            "eager_skip_decode_layer_calls", 0) or 0)
+        fd_c3 = runtime.get("fd_c3")
+        if not isinstance(fd_c3, dict):
+            raise ValueError(f"rank {rank}: no fd_c3 attestation block")
+        fd_counters = fd_c3.get("counters")
+        if not isinstance(fd_counters, dict):
+            raise ValueError(f"rank {rank}: fd_c3 has no counters block")
+        if "eager_skip_decode_layer_calls" not in fd_counters:
+            raise ValueError(
+                f"rank {rank}: fd_c3.counters is missing "
+                "'eager_skip_decode_layer_calls'; a schema regression must not "
+                "read as zero eager calls"
+            )
+        eager_layer = int(fd_counters["eager_skip_decode_layer_calls"])
         if dispatches <= 0:
             raise ValueError(
                 f"rank {rank}: zero routed decode dispatches after the run"
@@ -119,7 +134,13 @@ def validate_runtime_after(
     attestations = validate_expected_runtime(server_info, expected)
     graph_activity = []
     stage_graph_runtime_key = _stage_graph_runtime_key(expected)
-    if stage_graph_runtime_key == "v3_full_graph":
+    # Activate from the expectation OR from what the server actually reported.
+    # Omission from the expectation cannot be allowed to disable the audit.
+    observed_v3 = any(
+        isinstance(rt.get("v3_full_graph"), dict) and rt["v3_full_graph"].get("counters")
+        for rt in attestations
+    )
+    if stage_graph_runtime_key == "v3_full_graph" or observed_v3:
         graph_activity = validate_v3_graph_activity(attestations)
     elif stage_graph_runtime_key is not None:
         if not attestations:

@@ -53,6 +53,24 @@ export SGLANG_FD_FULL_GRAPH_DEVICE_ROUTE_DIGEST=1
 export SGLANG_FD_FULL_GRAPH_CONDITIONAL_GRAPH_HELPER=$W/helper-sm75/libvpipe_cuda_conditional_graph.so
 export PYTHONPATH="$TREE/python"
 
+# TCP bind vacancy before spawning: a listening-but-starting or 503-ing server
+# is NOT a vacant port, and would otherwise be measured instead of ours.
+port_free() {
+  ! $V -c "
+import socket, sys
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+try:
+    s.bind(('127.0.0.1', $PORT)); s.close(); sys.exit(1)
+except OSError:
+    sys.exit(0)
+"
+}
+for _w in $(seq 1 45); do port_free && break; sleep 2; done
+if ! port_free; then
+  echo "ERROR: port $PORT already bound; refusing to measure a stale server" >&2
+  exit 3
+fi
+
 echo "=== PERF-AB $ARM  tree=$TREE  $(date -u +%FT%TZ)" | tee "$OUT/run.log"
 $V -m sglang.launch_server --model-path $W/models/Meta-Llama-3-8B-Instruct-53346005 \
   --port $PORT --dtype float16 \
@@ -64,6 +82,29 @@ for _ in $(seq 1 160); do
   kill -0 $SPID 2>/dev/null || break
   sleep 6
 done
+# The endpoint must belong to the process WE spawned. Without this a server
+# already owning the port ends the readiness loop on its own /health, and its
+# workload gets measured even if our process died -- so both arms can compare
+# the same stale server. Same assertion as csd3_ab_run.sh.
+if ! kill -0 $SPID 2>/dev/null; then
+  echo "$ARM SERVER PROCESS DIED before readiness" | tee -a "$OUT/run.log"
+  exit 3
+fi
+SPGID=$(ps -o pgid= -p $SPID 2>/dev/null | tr -d ' ')
+LPIDS=$(ss -ltnpH "sport = :$PORT" 2>/dev/null | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u)
+if [ -z "$SPGID" ] || [ -z "$LPIDS" ]; then
+  echo "$ARM ABORT: cannot identify the listener on port $PORT" | tee -a "$OUT/run.log"
+  kill $SPID 2>/dev/null; exit 3
+fi
+owned=0
+for lp in $LPIDS; do
+  [ "$(ps -o pgid= -p "$lp" 2>/dev/null | tr -d ' ')" = "$SPGID" ] && owned=1
+done
+if [ $owned -ne 1 ]; then
+  echo "$ARM ABORT: port $PORT served by pid(s) '$LPIDS' outside our group $SPGID" \
+    | tee -a "$OUT/run.log"
+  kill $SPID 2>/dev/null; exit 3
+fi
 if ! curl -sf -m 3 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
   echo "$ARM SERVER FAILED" | tee -a "$OUT/run.log"; tail -20 "$OUT/server.log" | tee -a "$OUT/run.log"
   kill $SPID 2>/dev/null; exit 3
