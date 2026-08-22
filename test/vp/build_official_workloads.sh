@@ -11,10 +11,6 @@ CONFIG="${CONFIG:-$ROOT/test/vp/labeled_workload.example.json}"
 # silently penalty-free suite.
 FREQUENCY_PENALTY="${FREQUENCY_PENALTY:-0.0}"
 
-if [[ -e "$OUT_DIR" ]]; then
-  echo "ERROR: refusing to reuse OUT_DIR=$OUT_DIR" >&2
-  exit 1
-fi
 
 # Validate inputs BEFORE creating the output directory. CONFIG defaults to
 # test/vp/labeled_workload.example.json, which is not in this tree, and it was
@@ -43,10 +39,23 @@ for required in "$CONFIG" "$ROOT/test/vp/build_labeled_workload.py" \
   fi
 done
 
-mkdir -p "$OUT_DIR"
+# Claim OUT_DIR ATOMICALLY. A separate [[ -e ]] test followed by mkdir -p is not
+# atomic: two builders racing on the same absent path both pass the test and
+# both proceed, and whichever fails first would then delete the other's suite
+# through its EXIT trap. Plain mkdir fails if the directory exists, so exactly
+# one process can own it -- and the cleanup trap is installed only AFTER this
+# process is the owner, so it can never remove a directory it did not create.
+if ! mkdir "$OUT_DIR" 2>/dev/null; then
+  if [[ -e "$OUT_DIR" ]]; then
+    echo "ERROR: refusing to reuse OUT_DIR=$OUT_DIR" >&2
+  else
+    echo "ERROR: could not create OUT_DIR=$OUT_DIR" >&2
+  fi
+  exit 1
+fi
 
 # Any failure past this point leaves a partial suite behind, and OUT_DIR refuses
-# reuse -- so the next attempt needs manual cleanup before it can even start.
+# reuse -- so the next attempt would need manual cleanup before it could start.
 # Remove the half-made directory on a non-zero exit instead. Success clears the
 # trap, so a completed suite is never touched.
 cleanup_partial() {

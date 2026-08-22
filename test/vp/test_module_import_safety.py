@@ -90,23 +90,42 @@ def module_level_loads(tree):
                 for n in ast.walk(part):
                     if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
                         loads.append((n.id, n.lineno))
-            # the body executes in its own namespace, but names it LOADS still
-            # resolve outward to module scope
+            # The body executes IN ORDER, in its own namespace, and names it
+            # loads resolve outward to module scope. Collecting every class
+            # local up front made `class C: v = later; later = 1` look safe,
+            # though executing it raises NameError. Bind only AFTER the
+            # statement that binds it has been checked.
             class_local = set()
             for sub in stmt.body:
-                if isinstance(sub, ast.Assign):
-                    for t in sub.targets: class_local.update(_targets(t))
-                elif isinstance(sub, (ast.AnnAssign, ast.AugAssign)):
-                    class_local.update(_targets(sub.target))
-                elif isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                    class_local.add(sub.name)
-            for sub in stmt.body:
                 if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    continue                      # method bodies run on call
+                    # the METHOD BODY runs on call, but its decorators and
+                    # default expressions are evaluated right now
+                    for part in (list(sub.decorator_list) + list(sub.args.defaults)
+                                 + [d for d in sub.args.kw_defaults if d is not None]):
+                        for n in ast.walk(part):
+                            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) \
+                               and n.id not in class_local:
+                                loads.append((n.id, n.lineno))
+                    class_local.add(sub.name)
+                    continue
+                if isinstance(sub, ast.ClassDef):
+                    for part in (list(sub.decorator_list) + list(sub.bases)
+                                 + [k.value for k in sub.keywords]):
+                        for n in ast.walk(part):
+                            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) \
+                               and n.id not in class_local:
+                                loads.append((n.id, n.lineno))
+                    class_local.add(sub.name)
+                    continue
+                # check LOADS first, then record what this statement binds
                 for n in ast.walk(sub):
                     if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) \
                        and n.id not in class_local:
                         loads.append((n.id, n.lineno))
+                if isinstance(sub, ast.Assign):
+                    for t in sub.targets: class_local.update(_targets(t))
+                elif isinstance(sub, (ast.AnnAssign, ast.AugAssign)):
+                    class_local.update(_targets(sub.target))
             continue
         stack = [stmt]
         while stack:
