@@ -24,7 +24,7 @@ SGBENCH_EXTRA_REQUEST_BODY="${SGBENCH_EXTRA_REQUEST_BODY:-}"
 SGBENCH_DATASET_PATH="${SGBENCH_DATASET_PATH:-}"
 SGBENCH_PORT="${SGBENCH_PORT:-30000}"
 SGBENCH_OUT_DIR="${SGBENCH_OUT_DIR:-$OUT_BASE/sgbench_vp}"
-SGBENCH_MODES="${SGBENCH_MODES:-vanilla,vanilla_matched,dynamic}"
+SGBENCH_MODES="${SGBENCH_MODES:-vanilla,vanilla_matched,flexidepth}"
 SGBENCH_DATASET="${SGBENCH_DATASET:-random}"
 SGBENCH_NUM_PROMPTS="${SGBENCH_NUM_PROMPTS:-2048}"
 SGBENCH_MAX_CONCURRENCY="${SGBENCH_MAX_CONCURRENCY:-}"
@@ -92,6 +92,14 @@ SGBENCH_FD_VP_DECODE_SUBBATCH_CACHE="${SGBENCH_FD_VP_DECODE_SUBBATCH_CACHE:-1}"
 SGBENCH_FD_VP_MINIMAL_KV_SUBBATCH="${SGBENCH_FD_VP_MINIMAL_KV_SUBBATCH:-0}"
 SGBENCH_FD_VP_TRITON_GPU_SUBBATCH="${SGBENCH_FD_VP_TRITON_GPU_SUBBATCH:-0}"
 SGBENCH_FD_VP_SCHED_GRAPH="${SGBENCH_FD_VP_SCHED_GRAPH:-0}"
+# The mode named "flexidepth" must actually RUN FlexiDepth. Left unset,
+# flexidepth_execution_mode() defaults to direct_eager, whose routed-row
+# gather is a device->host sync and illegal under stream capture -- so with
+# the default breakable_dynamic profile (graphs ON) startup validation
+# refused it and NO treated arm could boot. full_graph is the only live
+# production dispatch; direct_eager stays available for the quality
+# reference but requires a graphless profile, enforced below.
+SGBENCH_FD_EXECUTION_MODE="${SGBENCH_FD_EXECUTION_MODE:-full_graph}"
 SGBENCH_FD_VP_ASYNC_KV="${SGBENCH_FD_VP_ASYNC_KV:-0}"
 SGBENCH_FD_VP_ASYNC_KV_DEFER_DRAIN="${SGBENCH_FD_VP_ASYNC_KV_DEFER_DRAIN:-0}"
 SGBENCH_FD_VP_ASYNC_KV_SCOPED="${SGBENCH_FD_VP_ASYNC_KV_SCOPED:-1}"
@@ -555,7 +563,8 @@ launch_sglang_server() {
   # producing an arm whose name is a lie. Refuse instead.
   case "$mode" in
     *_scopedasync|*_no_scopedasync|*_batchedasync|*_tokenasync|\
-    *_lookaheadasync|*_no_lookaheadasync|*_streamasync|*_kvonly|*_no_kvonly)
+    *_lookaheadasync|*_no_lookaheadasync|*_streamasync|*_kvonly|*_no_kvonly|\
+    *_mixed_async|*_no_mixed_async)
       echo "FATAL: mode '$raw_mode' selects the removed batched/async K/V" \
            "subsystem. That implementation is not in this build, so the arm" \
            "would not run the treatment its name claims. Drop the suffix, or" \
@@ -582,14 +591,6 @@ launch_sglang_server() {
   esac
   while :; do
     case "$mode" in
-      *_no_mixed_async)
-        mode="${mode%_no_mixed_async}"
-        fd_mixed_async=0
-        ;;
-      *_mixed_async)
-        mode="${mode%_mixed_async}"
-        fd_mixed_async=1
-        ;;
       *_no_stablebuf)
         mode="${mode%_no_stablebuf}"
         fd_stable_buffers=0
@@ -1019,167 +1020,35 @@ launch_sglang_server() {
       )
     fi
   fi
-  if [[ "$mode" == "flexidepth_vp_sched" || "$mode" == "flexidepth_vp_sched_async" ]]; then
-    env_args+=(
-      SGLANG_VP_SCHED=1
-      SGLANG_VP_SPAN="$SGBENCH_DECODE_SPAN"
-      SGLANG_VP_BLOCK_SIZE="$SGBENCH_DECODE_BLOCK_SIZE"
-      SGLANG_VP_GRAPH="$SGBENCH_FD_VP_SCHED_GRAPH"
-      SGLANG_VP_HIT_RATE=0.0
-      SGLANG_VP_DISABLE_ROUTER=1
-      SGLANG_VP_LANEFUSE_GATHER="$SGBENCH_DECODE_GATHER"
-      SGLANG_VP_STAGE_SCHED="$decode_stage_sched"
-      SGLANG_VP_STAGE_POLICY="$SGBENCH_DECODE_STAGE_POLICY"
-      SGLANG_VP_STAGE_BLOCK_SYNC="$SGBENCH_DECODE_STAGE_BLOCK_SYNC"
-      SGLANG_VP_STAGE_FUSE_MIXED="$decode_stage_fuse_mixed"
-    )
-  fi
-  if [[ "$mode" == "flexidepth" || "$mode" == "flexidepth_vp" || "$mode" == "flexidepth_vp_async" || "$mode" == "flexidepth_vp_sched" || "$mode" == "flexidepth_vp_sched_async" ]]; then
+  if [[ "$mode" == "flexidepth" ]]; then
     [[ -s "$FD_WEIGHTS" ]] || die "missing FD_WEIGHTS=$FD_WEIGHTS; run ACTION=stage-flexidepth first"
     env_args+=(
       SGLANG_FD_WEIGHTS="$FD_WEIGHTS"
+      SGLANG_FD_EXECUTION_MODE="$SGBENCH_FD_EXECUTION_MODE"
     )
-    if [[ "$mode" == "flexidepth_vp" || "$mode" == "flexidepth_vp_async" || "$mode" == "flexidepth_vp_sched" || "$mode" == "flexidepth_vp_sched_async" ]]; then
-      local trace_file="${SGBENCH_FD_VP_TRACE_FILE:-${log_path%.log}.fdvp_trace.jsonl}"
-      env_args+=(
-        SGLANG_FD_VP_PROJECT=1
-      )
-      local fd_async="$SGBENCH_FD_VP_ASYNC_KV"
-      local fd_defer="$SGBENCH_FD_VP_ASYNC_KV_DEFER_DRAIN"
-      if [[ "$mode" == "flexidepth_vp_async" || "$mode" == "flexidepth_vp_sched_async" ]]; then
-        fd_async=1
-        fd_defer=1
-      fi
-      if [[ "$fd_async" == "1" ]]; then
-        env_args+=(SGLANG_FD_VP_ASYNC_KV=1)
-      fi
-      if [[ "$fd_defer" == "1" ]]; then
-        env_args+=(
-          SGLANG_FD_VP_ASYNC_KV_DEFER_DRAIN=1
-          SGLANG_FD_VP_ASYNC_KV_SCOPED="$SGBENCH_FD_VP_ASYNC_KV_SCOPED"
-        )
-      fi
-      if [[ "$vp_async_kv_batched" == "1" ]]; then
-        if [[ "$fd_async" != "1" || "$fd_defer" != "1" ]]; then
-          die "FDVP batched K/V requires async K/V and deferred drain"
-        fi
-        env_args+=(
-          SGLANG_VP_ASYNC_KV_BATCHED=1
-          SGLANG_VP_ASYNC_KV_BATCHED_MAX_ROWS="$SGBENCH_VP_ASYNC_KV_BATCHED_MAX_ROWS"
-        )
-      fi
-      if [[ "$vp_async_kv_token_launch" == "1" ]]; then
-        env_args+=(SGLANG_VP_ASYNC_KV_BATCHED_TOKEN_LAUNCH=1)
-      fi
-      if [[ "$vp_async_kv_lookahead_release" == "1" ]]; then
-        env_args+=(
-          SGLANG_VP_ASYNC_KV_LOOKAHEAD_RELEASE=1
-          SGLANG_VP_ASYNC_KV_RELEASE_LAYER="$SGBENCH_VP_ASYNC_KV_RELEASE_LAYER"
-        )
-      fi
-      if [[ "$fd_mixed_async" == "1" ]]; then
-        env_args+=(
-          SGLANG_FD_VP_MIXED_DECODE_ASYNC_KV=1
-          SGLANG_FD_VP_MIXED_DECODE_ASYNC_MIN_ROWS="$SGBENCH_FD_VP_MIXED_DECODE_ASYNC_MIN_ROWS"
-          SGLANG_FD_VP_MIXED_DECODE_ASYNC_MIN_KEPT_ROWS="$SGBENCH_FD_VP_MIXED_DECODE_ASYNC_MIN_KEPT_ROWS"
-          SGLANG_FD_VP_MIXED_DECODE_ASYNC_MIN_SKIP_ROWS="$SGBENCH_FD_VP_MIXED_DECODE_ASYNC_MIN_SKIP_ROWS"
-          SGLANG_FD_VP_MIXED_DECODE_ASYNC_PATTERN_WARMUP="$SGBENCH_FD_VP_MIXED_DECODE_ASYNC_PATTERN_WARMUP"
-          SGLANG_FD_VP_MIXED_DECODE_ASYNC_PATTERN_SCOPE="$SGBENCH_FD_VP_MIXED_DECODE_ASYNC_PATTERN_SCOPE"
-          SGLANG_FD_VP_MIXED_DECODE_ASYNC_COHORT_TABLE="$SGBENCH_FD_VP_MIXED_DECODE_ASYNC_COHORT_TABLE"
-          SGLANG_FD_VP_MIXED_DECODE_ASYNC_COHORT_MAX_ENTRIES="$SGBENCH_FD_VP_MIXED_DECODE_ASYNC_COHORT_MAX_ENTRIES"
-          SGLANG_FD_VP_GLOBAL_DECODE_SUBBATCH_CACHE="$SGBENCH_FD_VP_GLOBAL_DECODE_SUBBATCH_CACHE"
-          SGLANG_FD_VP_GLOBAL_DECODE_SUBBATCH_CACHE_MAX_ENTRIES="$SGBENCH_FD_VP_GLOBAL_DECODE_SUBBATCH_CACHE_MAX_ENTRIES"
-        )
-      fi
-      if [[ "$SGBENCH_FD_VP_ALL_SKIP_KV_ONLY_QKV" == "1" ]]; then
-        env_args+=(SGLANG_FD_VP_ALL_SKIP_KV_ONLY_QKV=1)
-      fi
-      if [[ "$SGBENCH_FD_VP_MIXED_FULL_BATCH_SPLIT" == "1" ]]; then
-        env_args+=(SGLANG_FD_VP_MIXED_FULL_BATCH_SPLIT=1)
-      fi
-      env_args+=(SGLANG_FD_VP_MIXED_POST_WEIGHT="$fd_post_weight")
-      env_args+=(SGLANG_FD_VP_MIXED_INPLACE_WEIGHT="$fd_inplace_weight")
-      env_args+=(SGLANG_FD_VP_MIXED_PARALLEL_BRANCHES="$fd_parallel_branches")
-      env_args+=(
-        SGLANG_FD_VP_MIXED_NEAR_ALL_RUN_FULL_MLP="$fd_near_all_run_full_mlp"
-        SGLANG_FD_VP_MIXED_NEAR_ALL_RUN_MAX_SKIP_ROWS="$SGBENCH_FD_VP_MIXED_NEAR_ALL_RUN_MAX_SKIP_ROWS"
-      )
-      env_args+=(SGLANG_FD_VP_MIXED_FULL_PROJECT_BASE="$fd_full_project_base")
-      env_args+=(SGLANG_FD_VP_FUSED_ROUTER_DEC_HEAD="$fd_fused_router_dec_head")
-      env_args+=(
-        SGLANG_FD_VP_ROUTER_GRAPH="$fd_router_graph"
-        SGLANG_FD_VP_ROUTER_GRAPH_MAX_ROWS="$SGBENCH_FD_VP_ROUTER_GRAPH_MAX_ROWS"
-        SGLANG_FD_VP_ROUTER_GRAPH_MAX_ENTRIES="$SGBENCH_FD_VP_ROUTER_GRAPH_MAX_ENTRIES"
-      )
-      env_args+=(SGLANG_FD_VP_FUSED_PROJECT_INPUT="$fd_fused_project_input")
-      env_args+=(SGLANG_FD_VP_STAGE_ROUTE="$fd_stage_route")
-      env_args+=(
-        SGLANG_FD_VP_STAGE_ROUTE_FUSE_HOMOGENEOUS="$fd_stage_route_fuse_homogeneous"
-        SGLANG_FD_VP_STAGE_ROUTE_RUNAHEAD="$fd_stage_route_runahead"
-        SGLANG_FD_VP_STAGE_ROUTE_MIN_SPLIT_SKIP_ROWS="$fd_stage_route_min_split_skip_rows"
-        SGLANG_FD_VP_STAGE_ROUTE_MIN_SPLIT_RUN_ROWS="$fd_stage_route_min_split_run_rows"
-      )
-      env_args+=(SGLANG_FD_VP_COALESCED_LAYER="$fd_coalesced_layer")
-      env_args+=(
-        SGLANG_FD_VP_COALESCED_MIN_SKIP_ROWS="$SGBENCH_FD_VP_COALESCED_MIN_SKIP_ROWS"
-        SGLANG_FD_VP_COALESCED_MIN_RUN_ROWS="$SGBENCH_FD_VP_COALESCED_MIN_RUN_ROWS"
-      )
-      env_args+=(
-        SGLANG_FD_VP_MIXED_REUSE_OUTPUT_BUFFER="$fd_reuse_output_buffer"
-        SGLANG_FD_VP_MIXED_REUSE_OUTPUT_BUFFER_MAX_ENTRIES="$SGBENCH_FD_VP_MIXED_REUSE_OUTPUT_BUFFER_MAX_ENTRIES"
-      )
-      env_args+=(
-        SGLANG_FD_VP_MIXED_SHAPE_LANE_BUFFERS="$fd_shape_lane_buffers"
-        SGLANG_FD_VP_MIXED_SHAPE_LANE_BUFFER_MAX_ENTRIES="$SGBENCH_FD_VP_MIXED_SHAPE_LANE_BUFFER_MAX_ENTRIES"
-      )
-      env_args+=(
-        SGLANG_FD_VP_MIXED_SPLIT_GRAPH="$fd_split_graph"
-        SGLANG_FD_VP_MIXED_SPLIT_GRAPH_MAX_ENTRIES="$SGBENCH_FD_VP_MIXED_SPLIT_GRAPH_MAX_ENTRIES"
-        SGLANG_FD_VP_MIXED_SPLIT_GRAPH_MAX_ROWS="$SGBENCH_FD_VP_MIXED_SPLIT_GRAPH_MAX_ROWS"
-        SGLANG_FD_VP_MIXED_SPLIT_GRAPH_MIN_FREE_MB="$SGBENCH_FD_VP_MIXED_SPLIT_GRAPH_MIN_FREE_MB"
-      )
-      if [[ "$fd_stable_buffers" == "1" ]]; then
-        env_args+=(
-          SGLANG_FD_VP_STABLE_MIXED_SPLIT_BUFFERS=1
-          SGLANG_FD_VP_STABLE_MIXED_SPLIT_BUFFER_MAX_ENTRIES="$SGBENCH_FD_VP_STABLE_MIXED_SPLIT_BUFFER_MAX_ENTRIES"
-        )
-      fi
-      if [[ "$SGBENCH_FD_VP_TRACE" == "1" ]]; then
-        env_args+=(
-          SGLANG_FD_VP_TRACE=1
-          SGLANG_FD_VP_TRACE_TIMING="$SGBENCH_FD_VP_TRACE_TIMING"
-          SGLANG_FD_VP_TRACE_EVERY="$SGBENCH_FD_VP_TRACE_EVERY"
-          SGLANG_FD_VP_TRACE_FILE="$trace_file"
-        )
-        if [[ "$SGBENCH_FD_VP_TRACE_MASKS" == "1" ]]; then
-          env_args+=(
-            SGLANG_FD_VP_TRACE_MASKS=1
-            SGLANG_FD_VP_TRACE_MASK_CAP="$SGBENCH_FD_VP_TRACE_MASK_CAP"
-          )
-        fi
-      fi
-      if [[ "$SGBENCH_FD_VP_MIXED_DECODE_SUBBATCH" == "1" ]]; then
-        env_args+=(
-          SGLANG_FD_VP_MIXED_DECODE_SUBBATCH=1
-        )
-      fi
-      env_args+=(
-        SGLANG_FD_VP_DECODE_SUBBATCH_CACHE="$SGBENCH_FD_VP_DECODE_SUBBATCH_CACHE"
-      )
-      if [[ "$SGBENCH_FD_VP_MINIMAL_KV_SUBBATCH" == "1" ]]; then
-        env_args+=(SGLANG_FD_VP_MINIMAL_KV_SUBBATCH=1)
-      fi
-      if [[ "$fd_triton_gpu_subbatch" == "1" ]]; then
-        env_args+=(SGLANG_FD_VP_TRITON_GPU_SUBBATCH=1)
-      fi
-    fi
-  elif [[ "$mode" != "vanilla" && "$mode" != "dynamic" && "$mode" != "dynamic_decode" && "$mode" != "dynamic_both" ]]; then
+  elif [[ "$mode" != "vanilla" ]]; then
     die "unknown SGBENCH mode $raw_mode; expected vanilla, vanilla_matched, flexidepth, or flexidepth with override suffixes. The V1 modes (dynamic*, flexidepth_vp*) are not in this build and are refused earlier"
   fi
 
   local server_profile="$SGBENCH_CANDIDATE_SERVER_PROFILE"
   if [[ "$mode" == "vanilla" && "$matched_vanilla" == "0" ]]; then
     server_profile="$SGBENCH_BASELINE_SERVER_PROFILE"
+  fi
+  # direct_eager cannot coexist with captured graphs: its routed-row gather is
+  # a device->host sync, illegal under stream capture. Refuse here -- with the
+  # profile actually resolved -- rather than let startup validation reject it
+  # after a model load. Checked against $server_profile, which does not exist
+  # earlier in this function.
+  if [[ "$SGBENCH_FD_EXECUTION_MODE" == "direct_eager" && "$mode" != "vanilla" ]]; then
+    case "$server_profile" in
+      graphless_overlap|matched_eager) ;;
+      *)
+        echo "FATAL: SGBENCH_FD_EXECUTION_MODE=direct_eager needs a graphless" \
+             "server profile (graphless_overlap or matched_eager); got" \
+             "'$server_profile'." >&2
+        return 2
+        ;;
+    esac
   fi
   local server_profile_args=()
   case "$server_profile" in
@@ -1521,7 +1390,7 @@ sgbench_smoke() {
 sgbench_flexidepth() {
   MODEL="$FD_BASE_MODEL"
   [[ -z "${SGBENCH_MODES_WAS_SET:-}" ]] && \
-    SGBENCH_MODES="vanilla,vanilla_matched,flexidepth,flexidepth_vp"
+    SGBENCH_MODES="vanilla,vanilla_matched,flexidepth"
   [[ -z "${SGBENCH_DATASET_WAS_SET:-}" ]] && SGBENCH_DATASET="sharegpt"
   [[ -z "${SGBENCH_BACKEND_WAS_SET:-}" ]] && SGBENCH_BACKEND="sglang"
   [[ -z "${SGBENCH_NUM_PROMPTS_WAS_SET:-}" ]] && SGBENCH_NUM_PROMPTS=1024

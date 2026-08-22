@@ -41,7 +41,49 @@ results.append(call(ROUTED, ROUTED,
                     {"SGLANG_FD_WEIGHTS": "/x.pt", "SGLANG_FD_EXECUTION_MODE": "full_graph"},
                     "C routed + full_graph", graphs=True))
 
+# --- removed-mode flags: rejection must match the variable's SHAPE ---
+# The V2/V4 keys name a config PATH (any non-empty value selects the removed
+# runtime). The other three are BOOLEANS (only a truthy value ever did).
+# Rejecting everything "not in ('', '0')" refused an explicit
+# SGLANG_VP_SCHED=false -- a deployment saying OFF -- and that over-broad shape
+# is the failure mode case A already exists to catch.
+FLAG_CASES = [
+    ({"SGLANG_VP_SCHED": "1"}, True, "SCHED=1"),
+    ({"SGLANG_VP_SCHED": "true"}, True, "SCHED=true"),
+    ({"SGLANG_VP_SCHED": "on"}, True, "SCHED=on"),
+    ({"SGLANG_VP_SCHED": "0"}, False, "SCHED=0"),
+    ({"SGLANG_VP_SCHED": "false"}, False, "SCHED=false"),
+    ({"SGLANG_VP_SCHED": "no"}, False, "SCHED=no"),
+    ({"SGLANG_VP_SCHED": "off"}, False, "SCHED=off"),
+    ({"SGLANG_VP_SCHED": "False"}, False, "SCHED=False (case-insensitive)"),
+    ({"SGLANG_VP_SCHED": "banana"}, True, "SCHED=banana (not boolean)"),
+    ({"SGLANG_FD_VP_PROJECT": "false"}, False, "VP_PROJECT=false"),
+    ({"SGLANG_FD_VP_PROJECT": "1"}, True, "VP_PROJECT=1"),
+    ({"SGLANG_FD_VP_STAGE_ROUTE": "off"}, False, "STAGE_ROUTE=off"),
+    ({"SGLANG_VP_V4_CONFIG": "/tmp/x.json"}, True, "V4_CONFIG=path"),
+    ({"SGLANG_VP_V4_CONFIG": "0"}, True, "V4_CONFIG=0 is still a path value"),
+    ({"SGLANG_VP_V4_CONFIG": ""}, False, "V4_CONFIG empty"),
+    ({"SGLANG_VP_V2_CONFIG": "/tmp/y.json"}, True, "V2_CONFIG=path"),
+]
+
+def flag_rejected(env):
+    """True iff the REMOVED-MODE block rejected it (not some later check)."""
+    outcome, _ = call([], [], env, "flag", graphs=False)
+    return (
+        "not part of" in outcome
+        or "must be a boolean" in outcome
+        or "removed V2/V4" in outcome
+    )
+
+flag_results = [(flag_rejected(env), want, label) for env, want, label in FLAG_CASES]
+
 ok = True
+for got, want, label in flag_results:
+    print(f"  {label:34s} -> rejected={got} (want {want})")
+    if got != want:
+        print(f"FAIL: removed-flag rejection wrong for {label}")
+        ok = False
+
 for outcome, label in results:
     print(f"  {label:34s} -> {outcome}")
 for (outcome, label) in results:
@@ -75,3 +117,14 @@ def test_execution_mode_startup_gate():
         "the canonical full_graph posture must boot"
     assert outcomes["D routed + eager + NO graphs"] == "no-raise", \
         "the quality-reference posture must boot"
+
+
+def test_removed_mode_flag_rejection_matches_shape():
+    """Truthy removed flags refused; falsy ones allowed; config paths always.
+
+    A blanket "not in ('', '0')" check refused SGLANG_VP_SCHED=false, i.e. a
+    deployment explicitly turning the removed path OFF.
+    """
+
+    for got, want, label in flag_results:
+        assert got == want, f"removed-flag rejection wrong for {label}"
