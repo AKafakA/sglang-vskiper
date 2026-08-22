@@ -159,6 +159,10 @@ except OSError:
     kill $SPID 2>/dev/null; continue
   fi
 
+  if [ ! -f "$RUN/prove_endpoint_owner.py" ]; then
+    echo "  FATAL: $RUN/prove_endpoint_owner.py missing -- ownership cannot be proven" | tee -a $RES/summary.txt
+    kill $SPID 2>/dev/null; exit 4
+  fi
   if [ ! -f "$RUN/perf_client.py" ]; then
     echo "  FATAL: $RUN/perf_client.py missing -- refusing to run a server for nothing" | tee -a $RES/summary.txt
     kill $SPID 2>/dev/null; exit 4
@@ -193,38 +197,27 @@ else:
     exit 7
   fi
   echo "    warmup ok (24/24, zero errors, full token mass)" | tee -a $RES/summary.txt
-  # ASSERT that the process LISTENING on the port belongs to the process group
-  # we spawned. This is the only check that actually ties the endpoint to this
-  # arm; the previous family probe could only ever print 'vpipe' or 'unknown',
-  # could never identify the frozen vp arm, turned parse failures into
-  # 'unknown', and was echoed rather than asserted.
+  # PROVE the endpoint belongs to the process group we spawned, by matching the
+  # listening socket's inode against our own processes' file descriptors.
+  #
+  # The previous version parsed `ss -ltnp`. On CSD3 ss prints listening sockets
+  # with NO process column at all, so that check could never pass here -- it
+  # aborted a run whose warmup had just succeeded 24/24. Reading our own /proc
+  # entries needs no privileges and answers the question that actually matters:
+  # does a process of OURS hold this socket.
   SPGID=$(ps -o pgid= -p $SPID 2>/dev/null | tr -d ' ')
-  LPIDS=$(ss -ltnpH "sport = :$PORT" 2>/dev/null | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u)
-  if [ -z "$SPGID" ] || [ -z "$LPIDS" ]; then
-    echo "  $ARM ABORT: cannot identify the listener on port $PORT" \
-         "(spgid='$SPGID' listeners='$LPIDS')" | tee -a $RES/summary.txt
+  if [ -z "$SPGID" ]; then
+    echo "  $ARM ABORT: spawned process $SPID is gone before ownership check" | tee -a $RES/summary.txt
     exit 8
   fi
-  # EVERY listener must be ours -- "any match" would tolerate a foreign process
-  # sharing the endpoint. Also assert setsid actually isolated us, since a
-  # server that inherited this script's group would match trivially.
-  foreign=""
-  for lp in $LPIDS; do
-    if [ "$(ps -o pgid= -p "$lp" 2>/dev/null | tr -d ' ')" != "$SPGID" ]; then
-      foreign="$foreign $lp"
-    fi
-  done
-  if [ -n "$foreign" ]; then
-    echo "  $ARM ABORT: port $PORT also served by pid(s)$foreign outside our" \
-         "process group $SPGID -- this arm would measure another server" | tee -a $RES/summary.txt
-    exit 8
-  fi
-  if [ "$SPGID" = "$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')" ]; then
-    echo "  $ARM ABORT: server shares this script's process group; setsid did not isolate it" \
-      | tee -a $RES/summary.txt
-    exit 8
-  fi
-  echo "    endpoint owned by our process group ($SPGID)" | tee -a $RES/summary.txt
+  own_out=$($V $RUN/prove_endpoint_owner.py "$PORT" "$SPGID" 2>&1); own_rc=$?
+  case $own_rc in
+    0) echo "    endpoint ownership proven: $own_out" | tee -a $RES/summary.txt ;;
+    3) echo "  $ARM ABORT: a FOREIGN process holds port $PORT ($own_out); this arm" \
+            "would measure another server" | tee -a $RES/summary.txt; exit 8 ;;
+    4) echo "  $ARM ABORT: nothing is listening on port $PORT ($own_out)" | tee -a $RES/summary.txt; exit 8 ;;
+    *) echo "  $ARM ABORT: ownership proof failed rc=$own_rc ($own_out)" | tee -a $RES/summary.txt; exit 8 ;;
+  esac
 
   for REP in 1 2 3; do
     $V $RUN/perf_client.py --url http://127.0.0.1:$PORT \

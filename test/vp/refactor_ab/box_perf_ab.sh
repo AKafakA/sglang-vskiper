@@ -93,30 +93,20 @@ if ! kill -0 $SPID 2>/dev/null; then
   echo "$ARM SERVER PROCESS DIED before readiness" | tee -a "$OUT/run.log"
   exit 3
 fi
+# Prove the endpoint belongs to the group we spawned. `ss -ltnp` omits the
+# process column on some hosts, making an ss-based check unpassable there;
+# matching the listening socket inode against our own /proc entries does not.
 SPGID=$(ps -o pgid= -p $SPID 2>/dev/null | tr -d ' ')
-LPIDS=$(ss -ltnpH "sport = :$PORT" 2>/dev/null | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u)
-if [ -z "$SPGID" ] || [ -z "$LPIDS" ]; then
-  echo "$ARM ABORT: cannot identify the listener on port $PORT" | tee -a "$OUT/run.log"
-  kill $SPID 2>/dev/null; exit 3
+if [ -z "$SPGID" ]; then
+  echo "$ARM SERVER PROCESS DIED before ownership check" | tee -a "$OUT/run.log"; exit 3
 fi
-# EVERY listener must belong to our isolated group. Accepting "any match" let a
-# foreign listener share the endpoint with ours and still pass.
-foreign=""
-for lp in $LPIDS; do
-  if [ "$(ps -o pgid= -p "$lp" 2>/dev/null | tr -d ' ')" != "$SPGID" ]; then
-    foreign="$foreign $lp"
-  fi
-done
-if [ -n "$foreign" ]; then
-  echo "$ARM ABORT: port $PORT also served by pid(s)$foreign outside our group $SPGID" \
+own_out=$($V "$(dirname "$0")/prove_endpoint_owner.py" "$PORT" "$SPGID" 2>&1); own_rc=$?
+if [ $own_rc -ne 0 ]; then
+  echo "$ARM ABORT: endpoint not owned by our process group (rc=$own_rc: $own_out)" \
     | tee -a "$OUT/run.log"
   kill $SPID 2>/dev/null; exit 3
 fi
-if [ "$SPGID" = "$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')" ]; then
-  echo "$ARM ABORT: server shares this script's process group; setsid did not isolate it" \
-    | tee -a "$OUT/run.log"
-  kill $SPID 2>/dev/null; exit 3
-fi
+echo "$ARM endpoint ownership proven: $own_out" | tee -a "$OUT/run.log"
 if ! curl -sf -m 3 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
   echo "$ARM SERVER FAILED" | tee -a "$OUT/run.log"; tail -20 "$OUT/server.log" | tee -a "$OUT/run.log"
   kill $SPID 2>/dev/null; exit 3
