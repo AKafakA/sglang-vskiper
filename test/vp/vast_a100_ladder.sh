@@ -1554,21 +1554,43 @@ all() {
   sgbench
 }
 
+# Every ACTION below drives a helper script. Several of those helpers are not
+# part of this package: the vpipe cleanup kept the mechanism and dropped the
+# evaluation tooling that no arm in this build exercises (removed-feature
+# register). An ACTION whose helper is absent must fail HERE -- naming what is
+# missing -- rather than minutes into a run with a bare "No such file", or
+# worse, after a server is already up. Checked against the filesystem, so it
+# fails when the file is genuinely gone and passes when it is restored.
+require_scripts() {
+  local missing=() s
+  for s in "$@"; do
+    [[ -f "$ROOT/test/vp/$s" ]] || missing+=("$s")
+  done
+  if (( ${#missing[@]} )); then
+    echo "FATAL: ACTION=$ACTION requires helper script(s) absent from this" \
+         "build: ${missing[*]}. Recover one with" \
+         "'git show c3a1302668:test/vp/<name> > test/vp/<name>' (see the" \
+         "removed-feature register), or choose an ACTION that does not need" \
+         "it. Refusing rather than half-running." >&2
+    exit 2
+  fi
+}
+
 case "$ACTION" in
   preflight) preflight ;;
   stage-qwen3) stage_qwen3 ;;
-  stage-flexidepth) stage_flexidepth ;;
-  smoke-decode) smoke_decode ;;
-  profile-decode) profile_decode ;;
-  ci-decode) ci_decode ;;
-  headline-gov) headline_gov ;;
-  headline-mixed) headline_mixed ;;
-  headline-multinews) headline_multinews ;;
-  sgbench) sgbench ;;
-  sgbench-smoke) sgbench_smoke ;;
-  sgbench-flexidepth) sgbench_flexidepth ;;
-  sgbench-score) sgbench_score ;;
-  all) all ;;
+  stage-flexidepth) require_scripts extract_flexidepth_weights.py; stage_flexidepth ;;
+  smoke-decode) require_scripts profile_decode_modes.py; smoke_decode ;;
+  profile-decode) require_scripts profile_decode_modes.py; profile_decode ;;
+  ci-decode) require_scripts headline_ci.py; ci_decode ;;
+  headline-gov) require_scripts mixed_longbench_serving.py; headline_gov ;;
+  headline-mixed) require_scripts mixed_longbench_serving.py; headline_mixed ;;
+  headline-multinews) require_scripts mixed_longbench_serving.py; headline_multinews ;;
+  sgbench) require_scripts analyze_sgbench_pairs.py; sgbench ;;
+  sgbench-smoke) require_scripts analyze_sgbench_pairs.py; sgbench_smoke ;;
+  sgbench-flexidepth) require_scripts analyze_sgbench_pairs.py; sgbench_flexidepth ;;
+  sgbench-score) require_scripts score_sgbench_longbench_v2.py; sgbench_score ;;
+  all) require_scripts profile_decode_modes.py headline_ci.py analyze_sgbench_pairs.py; all ;;
   *)
     cat >&2 <<'EOF'
 Usage:

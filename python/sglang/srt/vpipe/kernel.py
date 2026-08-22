@@ -371,9 +371,10 @@ def select_config(
 ) -> dict[str, int]:
     """Pick the nearest tuned count-band config for (op, count).
 
-    ``tuned`` is the banked sweep artifact (e.g.
-    test/vp/binary_cohort_tune_a100_r1.json). Capture-time selection
-    only (one config per bucket/op — design v2.1 item 6).
+    ``tuned`` is the banked sweep artifact loaded by
+    :func:`load_tuned_configs` from ``binary_cohort_configs/<device>.json``
+    beside this module. Capture-time selection only (one config per
+    bucket/op — design v2.1 item 6).
     """
 
     candidates = []
