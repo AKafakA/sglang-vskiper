@@ -73,37 +73,90 @@ def sweep(extra_env):
     return mods, failed
 
 
-def main():
+def flashinfer_available():
+    """Probe the DEPENDENCY directly. Never infer it from a message.
+
+    The previous version classified any failure whose final stderr line merely
+    CONTAINED "flashinfer" as an environment limitation and still reported PASS.
+    A real defect -- `NameError: name 'flashinfer' is not defined` -- matched
+    that substring and was exempted. A substring is not evidence about the
+    environment; importing the dependency is.
+    """
+    r = subprocess.run(
+        [sys.executable, "-c", "import flashinfer"],
+        capture_output=True, text=True,
+        env={"PYTHONPATH": str(ROOT / "python"), "PATH": "/usr/bin:/bin", "HOME": "/tmp"},
+    )
+    return r.returncode == 0
+
+
+# Exit statuses. UNVERIFIED is deliberately NOT success: a release gate must not
+# treat "we could not check the production default posture" as "we checked it".
+OK, FAILED, UNVERIFIED, BROKEN = 0, 1, 3, 2
+
+
+def run_all(verbose=True):
     mods = module_names()
     if len(mods) < 20:
-        print(f"FATAL: expected the vpipe package at {PKG}, found {len(mods)} modules")
-        return 2
-    rc = 0
+        if verbose:
+            print(f"FATAL: expected the vpipe package at {PKG}, found {len(mods)} modules")
+        return BROKEN, mods, {}
+    have_fi = flashinfer_available()
+    status = OK
+    results = {}
     for label, env in POSTURES:
-        mods, failed = sweep(env)
-        for mod, err in failed:
-            print(f"  [{label}] IMPORT FAILED {mod}: {err}")
+        _, failed = sweep(env)
+        results[label] = failed
         ok = len(mods) - len(failed)
         if not failed:
-            print(f"  [{label}] PASS ({ok}/{len(mods)})")
+            if verbose:
+                print(f"  [{label}] PASS ({ok}/{len(mods)})")
             continue
-        flashinfer_only = all("flashinfer" in e.lower() for _, e in failed)
-        if label == "repository-default" and flashinfer_only:
-            print(f"  [{label}] ENVIRONMENT: FlashInfer unavailable on this host "
-                  f"({len(failed)} module(s)); not a code defect, but this posture "
-                  f"is UNVERIFIED here")
+        if verbose:
+            for mod, err in failed:
+                print(f"  [{label}] IMPORT FAILED {mod}: {err}")
+        if label == "repository-default" and not have_fi:
+            # The dependency really is absent on this host, proven by probe, so
+            # this posture is UNVERIFIED rather than failed -- and unverified
+            # is still not a pass.
+            if verbose:
+                print(f"  [{label}] UNVERIFIED: flashinfer is not importable on "
+                      f"this host, so the production-default posture was not "
+                      f"checked ({len(failed)} module(s) affected)")
+            status = max(status, UNVERIFIED)
         else:
-            print(f"  [{label}] FAIL ({ok}/{len(mods)})")
-            rc = 1
-    print(f"PACKAGE IMPORTS: {'FAIL' if rc else 'PASS'} ({len(mods)} modules, "
-          f"{len(POSTURES)} postures)")
-    return rc
+            if verbose:
+                print(f"  [{label}] FAIL ({ok}/{len(mods)})")
+            status = FAILED
+    if verbose:
+        word = {OK: "PASS", FAILED: "FAIL", UNVERIFIED: "UNVERIFIED"}[status]
+        print(f"  flashinfer importable on this host: {have_fi}")
+        print(f"PACKAGE IMPORTS: {word} ({len(mods)} modules, {len(POSTURES)} postures)")
+    return status, mods, results
 
 
-def test_every_vpipe_module_imports():
+def main():
+    return run_all()[0]
+
+
+def test_every_vpipe_module_imports_flashinfer_disabled():
     mods = module_names()
     assert len(mods) >= 20, f"expected the vpipe package at {PKG}, found {len(mods)}"
     _, failed = sweep(dict(POSTURES[0][1]))
+    assert not failed, f"modules that fail to import: {dict(failed)}"
+
+
+def test_every_vpipe_module_imports_repository_default():
+    """The production-default posture, which pytest previously never ran.
+
+    Skips ONLY when the dependency is provably absent, established by importing
+    it -- not by pattern-matching an error message.
+    """
+    import pytest
+
+    if not flashinfer_available():
+        pytest.skip("flashinfer not importable on this host; posture unverifiable")
+    _, failed = sweep(dict(POSTURES[1][1]))
     assert not failed, f"modules that fail to import: {dict(failed)}"
 
 
