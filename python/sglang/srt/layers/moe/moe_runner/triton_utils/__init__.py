@@ -18,10 +18,8 @@ def override_config(config):
     global _config
     old_config = _config
     _config = config
-    try:
-        yield
-    finally:
-        _config = old_config
+    yield
+    _config = old_config
 
 
 def get_config() -> Optional[Dict[str, Any]]:
