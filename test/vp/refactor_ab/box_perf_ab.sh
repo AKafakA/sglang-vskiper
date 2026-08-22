@@ -63,7 +63,16 @@ $V $W/perf_client.py --url "http://127.0.0.1:$PORT" \
   --requests-jsonl $W/suites/gsm8k.first100.requests.jsonl \
   --n 60 --rate 0.5 --max-new-tokens 128 \
   --out "$OUT/metrics.json" 2>&1 | tee -a "$OUT/run.log"
+client_rc=${PIPESTATUS[0]}
 
 curl -s -m 10 "http://127.0.0.1:$PORT/server_info" > "$OUT/server_info.after.json"
 kill $SPID 2>/dev/null; sleep 8; kill -9 $SPID 2>/dev/null
+
+# The measurement IS the run. Without this the client's status dies in the tee
+# pipe and the final echo exits 0, so a caller reads "done" as "measured" -- the
+# swallowed-failure class csd3_ab_run.sh was rewritten to eliminate.
+if [ "$client_rc" -ne 0 ] || [ ! -s "$OUT/metrics.json" ]; then
+  echo "=== PERF-AB $ARM FAILED client_rc=$client_rc metrics=$([ -s "$OUT/metrics.json" ] && echo present || echo MISSING)" | tee -a "$OUT/run.log"
+  exit 4
+fi
 echo "=== PERF-AB $ARM done $(date -u +%FT%TZ)" | tee -a "$OUT/run.log"
