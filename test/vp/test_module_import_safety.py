@@ -68,15 +68,44 @@ def module_level_loads(tree):
     """Names LOADED by statements that execute at import, skipping nested scopes."""
     loads = []
     for stmt in tree.body:
-        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            # its body runs on CALL, not on import; only decorators/defaults run now
-            for part in list(stmt.decorator_list) + [
-                d for d in getattr(stmt, "args", ast.arguments(
-                    posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[], defaults=[]
-                )).defaults
-            ]:
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            # a function BODY runs on call, not on import; its decorators and
+            # default expressions run now
+            parts = list(stmt.decorator_list) + list(stmt.args.defaults) + [
+                d for d in stmt.args.kw_defaults if d is not None
+            ]
+            for part in parts:
                 for n in ast.walk(part):
                     if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
+                        loads.append((n.id, n.lineno))
+            continue
+        if isinstance(stmt, ast.ClassDef):
+            # A CLASS BODY DOES EXECUTE AT IMPORT, and so do its bases, keywords
+            # and decorators. Treating ClassDef like FunctionDef meant
+            # `class C(MissingBase)` -- or any missing name in a class body --
+            # passed this checker and still failed to import, leaving the
+            # catastrophic failure class only half covered.
+            for part in (list(stmt.decorator_list) + list(stmt.bases)
+                         + [k.value for k in stmt.keywords]):
+                for n in ast.walk(part):
+                    if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
+                        loads.append((n.id, n.lineno))
+            # the body executes in its own namespace, but names it LOADS still
+            # resolve outward to module scope
+            class_local = set()
+            for sub in stmt.body:
+                if isinstance(sub, ast.Assign):
+                    for t in sub.targets: class_local.update(_targets(t))
+                elif isinstance(sub, (ast.AnnAssign, ast.AugAssign)):
+                    class_local.update(_targets(sub.target))
+                elif isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    class_local.add(sub.name)
+            for sub in stmt.body:
+                if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue                      # method bodies run on call
+                for n in ast.walk(sub):
+                    if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) \
+                       and n.id not in class_local:
                         loads.append((n.id, n.lineno))
             continue
         stack = [stmt]
