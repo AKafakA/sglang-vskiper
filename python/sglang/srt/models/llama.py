@@ -650,18 +650,31 @@ class LlamaModel(nn.Module):
         # Checkpoint identity, so a skipper carrying calibration data can verify
         # that data was measured on THIS model. Layer count alone is not
         # identity: every Llama-3-8B derivative has 32 layers.
-        # Prefer the resolved Hub commit; a locally staged snapshot has none, so
-        # allow an EXPLICIT operator declaration. The checkpoint PATH is
-        # deliberately NOT used as identity: it is caller-controlled, and
-        # renaming a directory must not satisfy a provenance check.
-        _hub_commit = str(getattr(config, "_commit_hash", "") or "")
+        # config._commit_hash is NOT the weights' identity. This runs during
+        # __init__, BEFORE weights are loaded, and DefaultModelLoader resolves
+        # weights from model_config.revision -- the requested branch/tag/None --
+        # not from the commit the config happened to resolve to. A mutable Hub
+        # ref can therefore yield commit A for the config and commit B for the
+        # weights, and loaders like DummyModelLoader do not derive weights from
+        # that snapshot at all.
+        #
+        # So the OPERATOR DECLARATION is authoritative, and the config commit is
+        # only corroboration: if both are present they must AGREE, because a
+        # disagreement means the deployment is not what it claims. A skipper
+        # carrying checkpoint-specific calibration has to be told, explicitly,
+        # which checkpoint is being served.
+        _hub_commit = str(getattr(config, "_commit_hash", "") or "").strip()
         _declared = str(os.environ.get(ADASKIP_SERVED_REVISION_ENV, "") or "").strip()
+        if _hub_commit and _declared and _hub_commit != _declared:
+            raise ValueError(
+                f"{ADASKIP_SERVED_REVISION_ENV}={_declared!r} disagrees with the "
+                f"model config commit {_hub_commit!r}; refusing rather than "
+                "guessing which describes the weights being loaded"
+            )
         served_identity = {
-            "revision": _hub_commit or _declared,
-            "revision_source": (
-                "config._commit_hash" if _hub_commit
-                else (ADASKIP_SERVED_REVISION_ENV if _declared else "")
-            ),
+            "revision": _declared,
+            "revision_source": ADASKIP_SERVED_REVISION_ENV if _declared else "",
+            "config_commit": _hub_commit,
         }
         routed_layer_ids = full_graph_skipper.routed_layer_ids(
             num_hidden_layers=config.num_hidden_layers,
