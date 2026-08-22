@@ -24,6 +24,18 @@ R=/rds/user/wd312/hpc-work/llm/vpipe-csd3
 RUN=RUNDIR_PLACEHOLDER
 RES=$RUN/results; mkdir -p $RES
 
+# FRESHNESS. Reps are written to a fixed path per arm, so a re-run into a used
+# results dir leaves the previous attempt's rep files in place for any arm that
+# fails early -- and the comparator would read them as if they belonged to this
+# run. Refuse instead of silently mixing two runs' data.
+stale=$(find $RES -name 'rep[0-9].json' 2>/dev/null | head -5)
+if [ -n "$stale" ]; then
+  echo "FATAL: $RES already contains rep files from an earlier run:" >&2
+  echo "$stale" | sed 's/^/  /' >&2
+  echo "Use a fresh run directory; comparing across runs is not a controlled A/B." >&2
+  exit 5
+fi
+
 . /etc/profile.d/modules.sh; module purge
 GREAL=/usr/local/software/spack/csd3/opt-2025-06-01/linux-rocky8-zen3/gcc-14.3.0/gcc-14.3.0-vlhhcp6mk32jxxqtnhkkmlrf2rpwwkrd
 V=$R/envs/sglang-serve-w2-r1/bin/python

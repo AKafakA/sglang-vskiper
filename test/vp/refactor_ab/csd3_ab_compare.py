@@ -6,21 +6,39 @@ import json, pathlib, statistics, sys
 
 RES = pathlib.Path(sys.argv[1])
 
-def reps(arm):
-    out = []
-    for r in (1, 2, 3):
-        p = RES / arm / f"rep{r}.json"
-        if p.exists():
-            out.append(json.load(open(p))["summary"])
-    return out
+EXPECT_REPS = 3
 
-A, B = reps("refactored"), reps("frozen")
+def reps(arm):
+    """Collect the arm's reps. MISSING REPS ARE A FAILURE, NOT A SMALLER SAMPLE.
+
+    Collecting whatever happens to be on disk let one rep be compared against
+    three: the runner `continue`s past an arm whose server failed, and a client
+    that died on rep 2 leaves rep 1 behind. Both produce a partial arm that the
+    old `if not A or not B` accepted, so a mean over one sample was reported
+    against a mean over three as though they were the same instrument.
+    """
+    out, missing = [], []
+    for r in range(1, EXPECT_REPS + 1):
+        p = RES / arm / f"rep{r}.json"
+        if not p.exists():
+            missing.append(f"rep{r}")
+            continue
+        out.append(json.load(open(p))["summary"])
+    return out, missing
+
+A, miss_a = reps("refactored")
+B, miss_b = reps("frozen")
 print("\n" + "=" * 72)
 print("CSD3 A/B  refactored (sglang.srt.vpipe)  vs  frozen (sglang.srt.vp @ c3a1302668)")
 print("=" * 72)
-if not A or not B:
-    print(f"MISSING REPS: refactored={len(A)} frozen={len(B)} -- cannot compare")
+print(f"\nGATE completeness: expect {EXPECT_REPS} reps/arm; "
+      f"refactored={len(A)} frozen={len(B)}")
+if miss_a or miss_b:
+    print(f"  -> *** INCOMPLETE: refactored missing {miss_a or 'none'}, "
+          f"frozen missing {miss_b or 'none'} ***")
+    print("\nONE OR MORE GATES FAILED -- no deltas reported.")
     raise SystemExit(2)
+print("  -> PASS")
 
 def agg(rs, path):
     vals = []
@@ -42,6 +60,16 @@ tb = [r["total_output_tokens"] for r in B]
 print(f"GATE work identity: refactored tokens={ta} frozen tokens={tb}")
 work_ok = sorted(ta) == sorted(tb)
 print(f"  -> {'EXACT' if work_ok else '*** MISMATCH -- timings NOT comparable ***'}")
+
+# Request-count identity. Token identity alone can be satisfied by arms that
+# completed different numbers of requests, and a per-request mean over a
+# different denominator is a different statistic.
+oka = [r["ok"] for r in A]
+okb = [r["ok"] for r in B]
+count_ok = len(set(oka + okb)) == 1
+print(f"GATE request count: refactored ok={oka} frozen ok={okb}")
+print(f"  -> {'IDENTICAL' if count_ok else '*** DIFFERENT -- per-request means have different denominators ***'}")
+work_ok = work_ok and count_ok
 
 # ---- gate 3: saturation ----
 acc_a = agg(A, ["achieved_rate"]); acc_b = agg(B, ["achieved_rate"])
