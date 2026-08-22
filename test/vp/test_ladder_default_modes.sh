@@ -46,7 +46,7 @@ for n in names:
 print('SGBENCH_FD_EXECUTION_MODE=full_graph')
 print('SGBENCH_CANDIDATE_SERVER_PROFILE=breakable_dynamic')
 print('SGBENCH_BASELINE_SERVER_PROFILE=production')
-print('FD_WEIGHTS=/etc/hostname')       # -s true, so the weight check passes
+print('FD_WEIGHTS="${FD_WEIGHTS_STUB:?}"')   # a file this test creates, below
 print('MODEL_PATH=/tmp; PORT=30999; ROOT=.; DRY_RUN=1')
 print('HF_HOME=/tmp; HF_HUB_OFFLINE=1; TRANSFORMERS_OFFLINE=1')
 print('MODEL_ID=dummy; SERVER_PID=0')
@@ -59,6 +59,15 @@ print('die(){ echo "ERROR: $*" >&2; exit 1; }')
 print('capture_server_info(){ :; }; start_load_sampler(){ :; }; wait_sglang_ready(){ :; }')
 print("\n".join(body))
 PY
+# A weights file this test OWNS. The ladder gates on [[ -s "$FD_WEIGHTS" ]], and
+# an earlier version pointed at /etc/hostname because it existed locally -- it
+# is EMPTY on the dev box, so the check failed there and passed here. Never
+# depend on an incidental system file having content.
+FD_WEIGHTS_STUB="$WORK/fd_weights.stub"
+printf 'stub\n' > "$FD_WEIGHTS_STUB"
+[ -s "$FD_WEIGHTS_STUB" ] || { echo "FATAL: could not create $FD_WEIGHTS_STUB"; exit 2; }
+export FD_WEIGHTS_STUB
+
 # shellcheck disable=SC1090
 . "$WORK/harness.sh"
 
