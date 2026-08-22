@@ -98,4 +98,10 @@ print('ok=%s err=%s offered=%s achieved=%s toks=%s ttft_mean=%sms tpot_mean=%sms
 done
 
 $V $RUN/csd3_ab_compare.py $RES 2>&1 | tee -a $RES/summary.txt
-echo "=== CSD3 AB DONE $(date -u +%FT%TZ)" | tee -a $RES/summary.txt
+gate_rc=${PIPESTATUS[0]}
+echo "=== CSD3 AB DONE $(date -u +%FT%TZ) gate_rc=$gate_rc" | tee -a $RES/summary.txt
+# The comparator exits nonzero when errors, work identity, saturation or input
+# availability fail. Return THAT, not the status of the echo above -- otherwise
+# automation accepts an invalid A/B as successful, which is the swallowed-failure
+# class this script was written to replace.
+exit $gate_rc

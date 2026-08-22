@@ -1025,23 +1025,20 @@ class LlamaForCausalLM(nn.Module):
             self.model._vp_full_graph_attention_route_layer_order
         )
         full_graph_adapter = resolve_full_graph_skipper()
+        # Derive the attested execution from the LIVE dispatch, never from
+        # legacy environment variables. The chain here previously reported
+        # v4_split_stage_adapter / v2_scheduler_adapter / scheduler_stage_route
+        # / inline_vp_project purely because an env var was set -- all four
+        # implementations are deleted, so an experiment could be validated or
+        # compared under a treatment that never ran. The retained
+        # vast_a100_ladder.sh harness sets SGLANG_FD_VP_PROJECT=1, which made a
+        # direct_eager run attest inline_vp_project.
         if not routed_layers and not loaded_flexidepth_layers:
             execution = "disabled"
         elif flexidepth_execution_mode() == FD_EXECUTION_FULL_GRAPH:
             execution = f"full_graph_{full_graph_adapter.name}"
-        elif os.environ.get("SGLANG_VP_V4_CONFIG"):
-            execution = "v4_split_stage_adapter"
-        elif os.environ.get("SGLANG_VP_V2_CONFIG"):
-            execution = "v2_scheduler_adapter"
-        elif (
-            os.environ.get("SGLANG_VP_SCHED") == "1"
-            and os.environ.get("SGLANG_FD_VP_STAGE_ROUTE") == "1"
-        ):
-            execution = "scheduler_stage_route"
-        elif os.environ.get("SGLANG_FD_VP_PROJECT") == "1":
-            execution = "inline_vp_project"
         else:
-            execution = "direct_flexidepth"
+            execution = "direct_eager"
         flexidepth_state = {
             "loaded": bool(routed_layers),
             "loaded_layers": routed_layers,

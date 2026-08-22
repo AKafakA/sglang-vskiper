@@ -545,6 +545,24 @@ launch_sglang_server() {
     mode=vanilla
     matched_vanilla=1
   fi
+
+  # FAIL CLOSED on modes whose implementation was removed. The batched /
+  # asynchronous K/V subsystem is gone (see
+  # codex/asplos-plan/2026-08-21-removed-feature-register.md): no queue,
+  # tracker, launch, drain or BatchedKVWork reader remains. A run named
+  # *_scopedasync or *_batchedasync would therefore either fail at startup or,
+  # worse, succeed while running WITHOUT the treatment its label claims --
+  # producing an arm whose name is a lie. Refuse instead.
+  case "$mode" in
+    *_scopedasync|*_no_scopedasync|*_batchedasync|*_tokenasync|\
+    *_lookaheadasync|*_no_lookaheadasync|*_streamasync|*_kvonly|*_no_kvonly)
+      echo "FATAL: mode '$raw_mode' selects the removed batched/async K/V" \
+           "subsystem. That implementation is not in this build, so the arm" \
+           "would not run the treatment its name claims. Drop the suffix, or" \
+           "reimplement async K/V first (see the removed-feature register)." >&2
+      return 2
+      ;;
+  esac
   while :; do
     case "$mode" in
       *_no_mixed_async)

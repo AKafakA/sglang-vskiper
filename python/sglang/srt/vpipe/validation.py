@@ -192,6 +192,24 @@ def validate_full_graph_model_configuration(
             "key from the config; do not set it to 0."
         )
 
+    # Removed execution modes must be REJECTED, not silently ignored. Each of
+    # these selected an implementation that no longer exists; leaving them
+    # accepted let a run attest a treatment that never executed (the class this
+    # cleanup removed the self-sized ladder for).
+    for _removed_mode in (
+        "SGLANG_VP_V4_CONFIG",
+        "SGLANG_VP_V2_CONFIG",
+        "SGLANG_VP_SCHED",
+        "SGLANG_FD_VP_STAGE_ROUTE",
+        "SGLANG_FD_VP_PROJECT",
+    ):
+        if str(values.get(_removed_mode, "")).strip() not in ("", "0"):
+            raise ValueError(
+                f"{_removed_mode} selects an execution path that is not part of "
+                "this build (V1/V2/V4 and the inline VP-project body were "
+                "removed). Unset it; do not set it to 0-with-meaning."
+            )
+
     skipper_adapter = resolve_full_graph_skipper(values)
     # W1 regime switch is config-compatible with every full-graph knob below,
     # grouped-prefill MLP included: the switch changes only the per-pass
