@@ -17,12 +17,12 @@ from dataclasses import dataclass, replace
 from functools import lru_cache
 from typing import Any, Mapping, Optional
 import torch
-from pathlib import PurePosixPath
 from sglang.srt.vpipe.env import (
     ADASKIP_DENSE_REFERENCE_MLP_ENV,
     ADASKIP_FULL_GRAPH_SKIPPER,
     ADASKIP_MAX_GRAPH_ROWS_ENV,
     ADASKIP_MAX_REQUEST_SLOTS_ENV,
+    ADASKIP_SERVED_REVISION_ENV,
 )
 from sglang.srt.vpipe.env import (
     SUBLAYER_EXECUTION,
@@ -171,53 +171,54 @@ class AdaSkipFixedProfileFullGraphAdapter(FullGraphSkipperAdapter):
     ) -> None:
         """Bind the calibration profile to the CHECKPOINT it was measured on.
 
-        Layer count alone is not identity. Every Llama-3-8B derivative has 32
-        layers, so a profile calibrated on a different checkpoint used to load
-        happily and apply ITS skip masks and compensation scales -- silently
-        changing what the server generates, with no error and no attestation
-        difference. Skip decisions are checkpoint-specific by construction.
+        Layer count is not identity: every Llama-3-8B derivative has 32 layers,
+        so a profile calibrated elsewhere used to load happily and apply ITS
+        skip masks and compensation scales -- silently changing what the server
+        generates, with no error and no attestation difference.
 
-        Fail closed: a profile with no declared provenance, or a deployment
-        whose checkpoint identity cannot be determined, is refused rather than
-        assumed compatible.
+        A DIRECTORY NAME IS NOT IDENTITY EITHER. An earlier version of this
+        check fell back to comparing the checkpoint's basename when no commit
+        hash was available. Renaming any same-depth checkpoint to the calibrated
+        snapshot's directory name defeated it, restoring the original silent
+        miscalibration -- and locally staged checkpoints expose no commit hash
+        at all, so that fallback was the normal path, not the exception.
+
+        Accepted identity, in order:
+          1. the resolved Hub commit (config._commit_hash) -- immutable;
+          2. an EXPLICIT operator declaration of the staged revision. This is an
+             assertion, not loader-verified provenance, but it is deliberate,
+             recorded in the attestation, and cannot be triggered by renaming a
+             directory.
+        Anything else is refused.
         """
 
         want_rev = (self.profile.model_revision or "").strip()
-        want_id = (self.profile.model_id or "").strip()
-        if not want_rev and not want_id:
+        if not want_rev:
             raise ValueError(
-                "AdaSkip profile declares neither model_revision nor model_id, "
-                "so it cannot be bound to the served checkpoint; rebuild it "
-                "with provenance"
+                "AdaSkip profile declares no model_revision, so it cannot be "
+                "bound to the served checkpoint; rebuild it with provenance"
             )
         ident = dict(model_identity or {})
         got_rev = (ident.get("revision") or "").strip()
-        got_id = (ident.get("model_id") or "").strip()
-        if want_rev and got_rev:
-            if got_rev != want_rev:
-                raise ValueError(
-                    f"AdaSkip profile was calibrated on revision {want_rev!r} "
-                    f"but the served checkpoint is {got_rev!r}; its skip masks "
-                    "and compensation scales do not describe this model"
-                )
-            return
-        # No revision on one side: fall back to the checkpoint DIRECTORY NAME,
-        # which pins the released snapshot even when the absolute path differs
-        # between hosts. Comparing full paths would reject a correct profile
-        # merely staged elsewhere.
-        if want_id and got_id:
-            if PurePosixPath(want_id).name != PurePosixPath(got_id).name:
-                raise ValueError(
-                    f"AdaSkip profile was calibrated on {PurePosixPath(want_id).name!r} "
-                    f"but the served checkpoint is {PurePosixPath(got_id).name!r}"
-                )
-            return
-        raise ValueError(
-            "AdaSkip cannot verify the served checkpoint against the profile "
-            f"(profile revision={want_rev or '<none>'} id={want_id or '<none>'}; "
-            f"served revision={got_rev or '<none>'} id={got_id or '<none>'}). "
-            "Refusing rather than applying another checkpoint's skip masks."
-        )
+        source = (ident.get("revision_source") or "").strip()
+        if not got_rev:
+            raise ValueError(
+                "AdaSkip cannot identify the served checkpoint: the model "
+                "config exposes no commit hash (normal for a locally staged "
+                "snapshot) and no revision was declared. Set "
+                f"{ADASKIP_SERVED_REVISION_ENV}=<revision of the staged "
+                f"checkpoint> to assert it, or serve a checkpoint whose config "
+                "carries one. Refusing rather than applying another "
+                "checkpoint's skip masks."
+            )
+        if got_rev != want_rev:
+            raise ValueError(
+                f"AdaSkip profile was calibrated on revision {want_rev!r} but "
+                f"the served checkpoint is {got_rev!r}"
+                + (f" (declared via {source})" if source else "")
+                + "; its skip masks and compensation scales do not describe "
+                "this model"
+            )
 
     def routed_layer_ids(
         self,

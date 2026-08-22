@@ -18,6 +18,10 @@ ADASKIP_DENSE_REFERENCE_MLP_ENV = (
     "SGLANG_VP_ADASKIP_DENSE_REFERENCE_MLP"
 )
 ADASKIP_PROFILE_ENV = "SGLANG_VP_ADASKIP_PROFILE"
+# Operator declaration of the staged checkpoint's revision. Needed because
+# a locally staged snapshot exposes no commit hash, and a directory name is
+# not identity -- renaming any checkpoint would defeat it.
+ADASKIP_SERVED_REVISION_ENV = "SGLANG_VP_SERVED_MODEL_REVISION"
 DEVICE_ROUTE_DIGEST_ENV = "SGLANG_FD_FULL_GRAPH_DEVICE_ROUTE_DIGEST"
 FULL_GRAPH_MOCK_SEED_ENV = "SGLANG_VP_FULL_GRAPH_MOCK_SEED"
 FULL_GRAPH_MOCK_SKIPPED_DEPTH_RATIO_ENV = (

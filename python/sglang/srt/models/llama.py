@@ -56,6 +56,7 @@ from sglang.srt.model_loader.weight_utils import (
 )
 from sglang.srt.runtime_context import get_flags, get_parallel
 from sglang.srt.utils import add_prefix, is_cuda, is_npu, is_xpu, make_layers
+from sglang.srt.vpipe.env import ADASKIP_SERVED_REVISION_ENV
 from sglang.srt.vpipe.coverage import (
     record_dense_body_pass,
 )
@@ -649,9 +650,18 @@ class LlamaModel(nn.Module):
         # Checkpoint identity, so a skipper carrying calibration data can verify
         # that data was measured on THIS model. Layer count alone is not
         # identity: every Llama-3-8B derivative has 32 layers.
+        # Prefer the resolved Hub commit; a locally staged snapshot has none, so
+        # allow an EXPLICIT operator declaration. The checkpoint PATH is
+        # deliberately NOT used as identity: it is caller-controlled, and
+        # renaming a directory must not satisfy a provenance check.
+        _hub_commit = str(getattr(config, "_commit_hash", "") or "")
+        _declared = str(os.environ.get(ADASKIP_SERVED_REVISION_ENV, "") or "").strip()
         served_identity = {
-            "revision": str(getattr(config, "_commit_hash", "") or ""),
-            "model_id": str(getattr(config, "_name_or_path", "") or ""),
+            "revision": _hub_commit or _declared,
+            "revision_source": (
+                "config._commit_hash" if _hub_commit
+                else (ADASKIP_SERVED_REVISION_ENV if _declared else "")
+            ),
         }
         routed_layer_ids = full_graph_skipper.routed_layer_ids(
             num_hidden_layers=config.num_hidden_layers,
