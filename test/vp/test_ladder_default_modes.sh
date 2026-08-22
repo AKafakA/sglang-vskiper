@@ -50,12 +50,22 @@ print('FD_WEIGHTS="${FD_WEIGHTS_STUB:?}"')   # a file this test creates, below
 print('MODEL_PATH=/tmp; PORT=30999; ROOT=.; DRY_RUN=1')
 print('HF_HOME=/tmp; HF_HUB_OFFLINE=1; TRANSFORMERS_OFFLINE=1')
 print('MODEL_ID=dummy; SERVER_PID=0')
-print('join_by(){ local d=$1; shift; printf "%s" "$1"; shift; printf "%s%s" "$d" "$@"; }')
+# Join with the delimiter BETWEEN elements. The previous stub concatenated
+# them, so the whole command line came out as one token and any grep over it
+# matched everything -- a stub weaker than the function it replaces.
+# COPY the real helpers out of the ladder rather than stubbing them. Every stub
+# hand-written here has been weaker than the real thing: die() returned where
+# the real one exits, so execution continued past failed checks, and join_by
+# concatenated without its delimiter, so the command line became one token and
+# any grep over it matched everything. Extracting removes that class of drift.
+for helper in ("join_by", "die"):
+    i = next(k for k, l in enumerate(L) if l.startswith(helper + "()"))
+    j = next(k for k in range(i, len(L)) if L[k] == "}")
+    print("\n".join(L[i:j + 1]))
 # EXIT, not return -- matching the real die() at vast_a100_ladder.sh:162-165.
 # A stub that merely returned let execution continue past a failed check, so an
 # injected "missing required file" defect sailed through this gate. A stub
 # weaker than the thing it stands in for turns the test into theatre.
-print('die(){ echo "ERROR: $*" >&2; exit 1; }')
 print('capture_server_info(){ :; }; start_load_sampler(){ :; }; wait_sglang_ready(){ :; }')
 print("\n".join(body))
 PY
@@ -103,6 +113,31 @@ for m in "${defaults[@]}"; do
   else
     echo "  ok   default mode reaches launch construction: $m"
   fi
+done
+
+# 1b. the ONE live override suffix must still be admitted AND still emit its
+# variable. It was refused for a while by an over-broad whitelist even though
+# model_runner reads SGLANG_VP_FOREGROUND_STREAM_PRIORITY and changes the CUDA
+# stream priority -- a real treatment dropped along with the dead ones.
+for m in flexidepth_fgpriority flexidepth_no_fgpriority; do
+  out=$(launch_sglang_server "$m" 30999 /dev/null 2>&1); rc=$?
+  if [ $rc -eq 2 ] || [[ "$out" == *FATAL* ]]; then
+    echo "  *** LIVE SUFFIX REFUSED: $m"; fail=1; continue
+  fi
+  emitted=$(printf '%s' "$out" | grep -o 'SGLANG_VP_FOREGROUND_STREAM_PRIORITY=[^ ]*' | tail -1)
+  case "$m" in
+    *_no_fgpriority)
+      # the clearing entry only; no value
+      if [ "$emitted" = "SGLANG_VP_FOREGROUND_STREAM_PRIORITY=" ]; then
+        echo "  ok   $m admitted, priority left at default"
+      else echo "  *** $m emitted '$emitted', expected no value"; fail=1; fi
+      ;;
+    *)
+      if [ "$emitted" = "SGLANG_VP_FOREGROUND_STREAM_PRIORITY=-1" ]; then
+        echo "  ok   $m admitted and emits priority -1"
+      else echo "  *** $m emitted '$emitted', expected -1"; fail=1; fi
+      ;;
+  esac
 done
 
 # 2. removed modes must still be refused (the guard has not rotted)

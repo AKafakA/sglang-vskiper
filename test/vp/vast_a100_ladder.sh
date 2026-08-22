@@ -559,6 +559,28 @@ launch_sglang_server() {
     matched_vanilla=1
   fi
 
+  # _fgpriority / _no_fgpriority are the ONE override that still does anything:
+  # they set SGLANG_VP_FOREGROUND_STREAM_PRIORITY, which model_runner.py:581
+  # reads to change the foreground CUDA stream priority. Parse them BEFORE the
+  # whitelist. Refusing them would drop a treatment that genuinely executes --
+  # the over-broad refusal this file has already made twice (it once would have
+  # blocked every vanilla server, and once rejected an explicit ...=false).
+  while :; do
+    case "$mode" in
+      *_no_fgpriority)
+        mode="${mode%_no_fgpriority}"
+        vp_foreground_stream_priority=0
+        ;;
+      *_fgpriority)
+        mode="${mode%_fgpriority}"
+        vp_foreground_stream_priority=-1
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
   # WHITELIST, not a blacklist. A blacklist cannot be complete here: the
   # parser below still accepts ~50 override suffixes whose ONLY emission site
   # was the deleted flexidepth_vp block, so each one now yields an arm
@@ -597,243 +619,6 @@ launch_sglang_server() {
       return 2
       ;;
   esac
-  while :; do
-    case "$mode" in
-      *_no_stablebuf)
-        mode="${mode%_no_stablebuf}"
-        fd_stable_buffers=0
-        ;;
-      *_stablebuf)
-        mode="${mode%_stablebuf}"
-        fd_stable_buffers=1
-        ;;
-      *_no_postweight)
-        mode="${mode%_no_postweight}"
-        fd_post_weight=0
-        ;;
-      *_postweight)
-        mode="${mode%_postweight}"
-        fd_post_weight=1
-        ;;
-      *_no_inplaceweight)
-        mode="${mode%_no_inplaceweight}"
-        fd_inplace_weight=0
-        ;;
-      *_inplaceweight)
-        mode="${mode%_inplaceweight}"
-        fd_inplace_weight=1
-        ;;
-      *_no_parallelbranches)
-        mode="${mode%_no_parallelbranches}"
-        fd_parallel_branches=0
-        ;;
-      *_parallelbranches)
-        mode="${mode%_parallelbranches}"
-        fd_parallel_branches=1
-        ;;
-      *_no_nearallrun)
-        mode="${mode%_no_nearallrun}"
-        fd_near_all_run_full_mlp=0
-        ;;
-      *_nearallrun)
-        mode="${mode%_nearallrun}"
-        fd_near_all_run_full_mlp=1
-        ;;
-      *_no_fullprojbase)
-        mode="${mode%_no_fullprojbase}"
-        fd_full_project_base=0
-        ;;
-      *_fullprojbase)
-        mode="${mode%_fullprojbase}"
-        fd_full_project_base=1
-        ;;
-      *_no_reuseout)
-        mode="${mode%_no_reuseout}"
-        fd_reuse_output_buffer=0
-        ;;
-      *_reuseout)
-        mode="${mode%_reuseout}"
-        fd_reuse_output_buffer=1
-        ;;
-      *_no_shapelane)
-        mode="${mode%_no_shapelane}"
-        fd_shape_lane_buffers=0
-        ;;
-      *_shapelane)
-        mode="${mode%_shapelane}"
-        fd_shape_lane_buffers=1
-        ;;
-      *_no_splitgraph)
-        mode="${mode%_no_splitgraph}"
-        fd_split_graph=0
-        ;;
-      *_splitgraph)
-        mode="${mode%_splitgraph}"
-        fd_split_graph=1
-        ;;
-      *_no_routerfusion)
-        mode="${mode%_no_routerfusion}"
-        fd_fused_router_dec_head=0
-        ;;
-      *_routerfusion)
-        mode="${mode%_routerfusion}"
-        fd_fused_router_dec_head=1
-        ;;
-      *_no_routergraph)
-        mode="${mode%_no_routergraph}"
-        fd_router_graph=0
-        ;;
-      *_routergraph)
-        mode="${mode%_routergraph}"
-        fd_router_graph=1
-        ;;
-      *_no_projfusion)
-        mode="${mode%_no_projfusion}"
-        fd_fused_project_input=0
-        ;;
-      *_projfusion)
-        mode="${mode%_projfusion}"
-        fd_fused_project_input=1
-        ;;
-      *_no_fdstageroute)
-        mode="${mode%_no_fdstageroute}"
-        fd_stage_route=0
-        ;;
-      *_fdstageroute)
-        mode="${mode%_fdstageroute}"
-        fd_stage_route=1
-        decode_stage_sched=1
-        decode_stage_fuse_mixed=0
-        ;;
-      *_no_fusehomroute)
-        mode="${mode%_no_fusehomroute}"
-        fd_stage_route_fuse_homogeneous=0
-        ;;
-      *_fusehomroute)
-        mode="${mode%_fusehomroute}"
-        fd_stage_route_fuse_homogeneous=1
-        ;;
-      *_no_routerunahead)
-        mode="${mode%_no_routerunahead}"
-        fd_stage_route_runahead=0
-        ;;
-      *_routerunahead)
-        mode="${mode%_routerunahead}"
-        fd_stage_route_runahead=1
-        ;;
-      *_no_stageinline)
-        mode="${mode%_no_stageinline}"
-        fd_stage_route_min_split_skip_rows=1
-        fd_stage_route_min_split_run_rows=1
-        ;;
-      *_stageinline)
-        mode="${mode%_stageinline}"
-        ;;
-      *_no_layercoalesce)
-        mode="${mode%_no_layercoalesce}"
-        fd_coalesced_layer=0
-        ;;
-      *_layercoalesce)
-        mode="${mode%_layercoalesce}"
-        fd_coalesced_layer=1
-        ;;
-      *_no_gpusubbatch)
-        mode="${mode%_no_gpusubbatch}"
-        fd_triton_gpu_subbatch=0
-        ;;
-      *_gpusubbatch)
-        mode="${mode%_gpusubbatch}"
-        fd_triton_gpu_subbatch=1
-        ;;
-      *_no_scopedasync)
-        mode="${mode%_no_scopedasync}"
-        vp_async_kv=0
-        vp_async_kv_defer=0
-        vp_async_kv_batched=0
-        vp_async_kv_token_launch=0
-        vp_async_kv_lookahead_release=0
-        ;;
-      *_scopedasync)
-        mode="${mode%_scopedasync}"
-        vp_async_kv=1
-        vp_async_kv_defer=1
-        vp_async_kv_batched=0
-        vp_async_kv_token_launch=0
-        vp_async_kv_lookahead_release=0
-        ;;
-      *_batchedasync)
-        mode="${mode%_batchedasync}"
-        vp_async_kv=1
-        vp_async_kv_defer=1
-        vp_async_kv_batched=1
-        vp_async_kv_token_launch=0
-        vp_async_kv_lookahead_release=0
-        ;;
-      *_tokenasync)
-        mode="${mode%_tokenasync}"
-        vp_async_kv=1
-        vp_async_kv_defer=1
-        vp_async_kv_batched=1
-        vp_async_kv_token_launch=1
-        vp_async_kv_lookahead_release=0
-        ;;
-      *_no_lookaheadasync)
-        mode="${mode%_no_lookaheadasync}"
-        vp_async_kv_lookahead_release=0
-        ;;
-      *_lookaheadasync)
-        mode="${mode%_lookaheadasync}"
-        vp_async_kv=1
-        vp_async_kv_defer=1
-        vp_async_kv_batched=1
-        vp_async_kv_token_launch=0
-        vp_async_kv_lookahead_release=1
-        ;;
-      *_streamasync)
-        mode="${mode%_streamasync}"
-        vp_async_kv=1
-        vp_async_kv_defer=1
-        vp_async_kv_batched=0
-        vp_async_kv_token_launch=0
-        vp_async_kv_lookahead_release=0
-        ;;
-      *_no_kvonly)
-        mode="${mode%_no_kvonly}"
-        vp_kv_only_qkv=0
-        ;;
-      *_kvonly)
-        mode="${mode%_kvonly}"
-        vp_kv_only_qkv=1
-        ;;
-      *_no_fgpriority)
-        mode="${mode%_no_fgpriority}"
-        vp_foreground_stream_priority=0
-        ;;
-      *_fgpriority)
-        mode="${mode%_fgpriority}"
-        vp_foreground_stream_priority=-1
-        ;;
-      *_no_fusemixed)
-        mode="${mode%_no_fusemixed}"
-        decode_stage_fuse_mixed=0
-        ;;
-      *_fusemixed)
-        mode="${mode%_fusemixed}"
-        decode_stage_fuse_mixed=1
-        ;;
-      *_no_stagesched)
-        mode="${mode%_no_stagesched}"
-        decode_stage_sched=0
-        ;;
-      *_stagesched)
-        mode="${mode%_stagesched}"
-        decode_stage_sched=1
-        ;;
-      *)
-        break
-        ;;
-    esac
-  done
   if [[ "$vp_async_kv_lookahead_release" == "1" && "$vp_async_kv_batched" != "1" ]]; then
     die "VP lookahead K/V release requires batched K/V"
   fi
@@ -1409,63 +1194,19 @@ The V1 modes dynamic,dynamic_decode,dynamic_both,flexidepth_vp,flexidepth_vp_asy
 flexidepth_vp_sched,flexidepth_vp_sched_async are REMOVED and refused at preflight.
 vanilla uses SGBENCH_BASELINE_SERVER_PROFILE; vanilla_matched uses the same
 SGBENCH_CANDIDATE_SERVER_PROFILE as the skipper mode.
-FDVP modes also accept _mixed_async/_no_mixed_async, _stablebuf/_no_stablebuf,
-_postweight/_no_postweight, and _inplaceweight/_no_inplaceweight suffixes to
-override the corresponding SGBENCH_FD_VP knobs for that mode label. They also
-accept _nearallrun/_no_nearallrun for
-SGBENCH_FD_VP_MIXED_NEAR_ALL_RUN_FULL_MLP and
-_fullprojbase/_no_fullprojbase for
-SGBENCH_FD_VP_MIXED_FULL_PROJECT_BASE, plus _reuseout/_no_reuseout for
-SGBENCH_FD_VP_MIXED_REUSE_OUTPUT_BUFFER and _shapelane/_no_shapelane for
-SGBENCH_FD_VP_MIXED_SHAPE_LANE_BUFFERS. They also accept
-_splitgraph/_no_splitgraph for SGBENCH_FD_VP_MIXED_SPLIT_GRAPH. Suffixes can
-be composed. Use _routerfusion/_no_routerfusion for
-SGBENCH_FD_VP_FUSED_ROUTER_DEC_HEAD.
-Use _routergraph/_no_routergraph for exact per-layer router CUDA graphs keyed by
-the repeated row shape; bound them with SGBENCH_FD_VP_ROUTER_GRAPH_MAX_ROWS and
-SGBENCH_FD_VP_ROUTER_GRAPH_MAX_ENTRIES.
-Use _projfusion/_no_projfusion for the cached merged gate/down input projection
-inside the FlexiDepth compensation adapter.
-Use _fdstageroute/_no_fdstageroute for the scheduler-owned two-phase
-FlexiDepth route and homogeneous RUN/JUMP stage path.
-Use _fusehomroute/_no_fusehomroute to execute homogeneous route decisions in
-the route dispatch instead of scheduling a second execution dispatch.
-Use _routerunahead/_no_routerunahead to continue through consecutive routed
-layers until a profitable mixed split or the final-logits barrier.
-Use _stageinline with SGBENCH_FD_VP_STAGE_ROUTE_MIN_SPLIT_{SKIP,RUN}_ROWS to
-keep undersized mixed cohorts on the exact inline path; _no_stageinline resets
-both split thresholds to one for a matched control.
-Use _layercoalesce/_no_layercoalesce for in-model scheduler-owned homogeneous
-RUN/JUMP cohorts that rejoin at each routed layer.
-Use _gpusubbatch/_no_gpusubbatch to build dynamic retained/skip decode
-subbatches entirely on GPU when SGBENCH_ATTENTION_BACKEND=triton.
-Use _parallelbranches/_no_parallelbranches to isolate concurrent exact
-RUN-MLP and compensation execution for mixed FlexiDepth layers.
-Set SGBENCH_CANDIDATE_SERVER_PROFILE=graphless_overlap to keep the production
-overlap scheduler and radix cache while disabling only stock CUDA graphs for
-data-dependent routed models. matched_eager disables all three for mechanism
-controls.
-Set SGBENCH_CANDIDATE_SERVER_PROFILE=breakable_dynamic to capture fixed model
-regions and run routed FlexiDepth layers at explicit eager graph breaks.
-Use SGBENCH_CUDA_GRAPH_MAX_BS_DECODE and
-SGBENCH_CUDA_GRAPH_MAX_BS_PREFILL to bound graph capture on smaller GPUs.
-Dynamic decode modes accept `_stagesched` / `_no_stagesched` to isolate the
-production virtual-stage queue bridge. Compose `_scopedasync` or
-`_no_scopedasync` to select generic request-scoped asynchronous Project-Only
-K/V completion independently of the stage policy. Use `_fusemixed` or
-`_no_fusemixed` to select one shared-QKV mixed dispatch versus split lanes.
-`_batchedasync` also applies to FDVP async modes and defers repeated same-layer
-K/V completion into the request-scoped batching queue.
-Use `_batchedasync` for dependency-triggered layer-batched completion and
-`_tokenasync` to launch retained work after the current token's foreground
-work is queued. `_lookaheadasync` retains stable repair inputs and releases
-prior-token work inside routed layer `SGBENCH_VP_ASYNC_KV_RELEASE_LAYER` of the
-next decode, reusing its existing eager graph break; `_streamasync` remains the
-immediate side-stream ablation.
-Compose `_kvonly` to project only K/V rows from a supported fused-QKV weight.
-Compose `_fgpriority` to run foreground model work on CUDA priority -1 while
-the asynchronous K/V repair stream remains at default priority; use
-`_no_fgpriority` for the matched control.
+The only override suffix this build supports is _fgpriority/_no_fgpriority,
+which sets SGLANG_VP_FOREGROUND_STREAM_PRIORITY: model_runner.py reads it and
+runs foreground model work at CUDA priority -1. It is parsed before the mode
+whitelist precisely so that a live treatment is not refused along with the dead
+ones.
+
+Every other suffix that used to exist (_mixed_async, _stablebuf, _postweight,
+_inplaceweight, _nearallrun, _fullprojbase, _reuseout, _shapelane, _splitgraph,
+_routerfusion, _routergraph, _projfusion, _fdstageroute, _scopedasync,
+_batchedasync, _kvonly and the rest) is REFUSED. Their only emission site was
+the flexidepth_vp block removed with the V1 path, so an arm carrying one would
+have run identically to plain flexidepth under a name claiming a treatment.
+See codex/asplos-plan/2026-08-21-removed-feature-register.md.
 For FlexiDepth without training, run ACTION=stage-flexidepth once, then
 ACTION=sgbench-flexidepth with MODEL=NousResearch/Meta-Llama-3-8B-Instruct.
 EOF
