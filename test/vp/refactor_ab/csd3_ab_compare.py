@@ -69,14 +69,34 @@ okb = [r["ok"] for r in B]
 count_ok = len(set(oka + okb)) == 1
 # ...and equal to what was REQUESTED. Two symmetrically truncated arms agree
 # with each other perfectly while measuring less work than the run asked for.
-req = {r.get("requested_n") for r in A + B}
-if req != {None}:
-    if len(req) != 1 or oka[0] != next(iter(req)):
-        print(f"GATE requested count: requested={sorted(x for x in req if x is not None)} "
-              f"completed={oka[0]} -> *** ARMS AGREE BUT DID NOT DO THE REQUESTED WORK ***")
-        count_ok = False
-    else:
-        print(f"GATE requested count: {next(iter(req))} requested, {oka[0]} completed -> MATCH")
+#
+# requested_n is REQUIRED, not optional. Skipping this gate when the field is
+# absent made it fail OPEN: legacy or hand-built artifacts -- exactly the ones
+# least likely to be trustworthy -- bypassed the check entirely.
+req = [r.get("requested_n") for r in A + B]
+if any(x is None for x in req):
+    print(f"GATE requested count: {sum(x is None for x in req)}/{len(req)} artifacts omit "
+          f"requested_n -> *** CANNOT VERIFY THE RUN DID THE REQUESTED WORK ***")
+    count_ok = False
+elif len(set(req)) != 1 or not isinstance(req[0], int) or req[0] <= 0:
+    print(f"GATE requested count: inconsistent or non-positive requested_n={sorted(set(req))} -> *** FAIL ***")
+    count_ok = False
+elif any(v != req[0] for v in oka + okb):
+    print(f"GATE requested count: requested={req[0]} completed={sorted(set(oka + okb))} "
+          f"-> *** ARMS AGREE BUT DID NOT DO THE REQUESTED WORK ***")
+    count_ok = False
+else:
+    print(f"GATE requested count: {req[0]} requested, {req[0]} completed in every rep -> MATCH")
+
+# Offered rate must be identical across every repetition AND both arms.
+# Comparing a 2.0 rps arm against a 4.0 rps arm is not an A/B, and the
+# saturation gate below reads only A[0], so a mixed-load set slipped through.
+rates = [r["offered_rate"] for r in A + B]
+if len(set(rates)) != 1:
+    print(f"GATE offered rate: {sorted(set(rates))} -> *** ARMS RAN DIFFERENT LOADS ***")
+    count_ok = False
+else:
+    print(f"GATE offered rate: {rates[0]} identical across all {len(rates)} reps -> MATCH")
 print(f"GATE request count: refactored ok={oka} frozen ok={okb}")
 print(f"  -> {'IDENTICAL' if count_ok else '*** DIFFERENT -- per-request means have different denominators ***'}")
 work_ok = work_ok and count_ok

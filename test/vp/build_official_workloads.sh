@@ -20,7 +20,20 @@ fi
 # test/vp/labeled_workload.example.json, which is not in this tree, and it was
 # passed to every build_one call unchecked -- so the builder created OUT_DIR and
 # then failed on the first workload, leaving a half-made suite behind.
-for required in "$CONFIG" "$ROOT/test/vp/build_labeled_workload.py"; do
+# CONFIG must be a readable FILE and valid JSON, not merely something that
+# exists: a directory passes -e, and a malformed config fails only once the
+# first workload is already being written.
+if [[ ! -f "$CONFIG" ]]; then
+  echo "ERROR: CONFIG is not a file: $CONFIG" >&2
+  exit 1
+fi
+if ! "$PYTHON_BIN" -c 'import json,sys; json.load(open(sys.argv[1]))' "$CONFIG" 2>/dev/null; then
+  echo "ERROR: CONFIG is not valid JSON: $CONFIG" >&2
+  exit 1
+fi
+
+for required in "$CONFIG" "$ROOT/test/vp/build_labeled_workload.py" \
+                "$ROOT/test/vp/freeze_workload_suite.py"; do
   if [[ ! -e "$required" ]]; then
     echo "ERROR: required input does not exist: $required" >&2
     echo "       Set CONFIG=<path> explicitly; the default example config was" >&2
@@ -31,6 +44,20 @@ for required in "$CONFIG" "$ROOT/test/vp/build_labeled_workload.py"; do
 done
 
 mkdir -p "$OUT_DIR"
+
+# Any failure past this point leaves a partial suite behind, and OUT_DIR refuses
+# reuse -- so the next attempt needs manual cleanup before it can even start.
+# Remove the half-made directory on a non-zero exit instead. Success clears the
+# trap, so a completed suite is never touched.
+cleanup_partial() {
+  local rc=$?
+  if [[ $rc -ne 0 ]]; then
+    echo "ERROR: build failed (rc=$rc); removing partial $OUT_DIR" >&2
+    rm -rf "$OUT_DIR"
+  fi
+  exit $rc
+}
+trap cleanup_partial EXIT
 
 build_one() {
   local workload="$1"
@@ -56,3 +83,5 @@ build_one mixed 11520 --mode mixed --repeat-exhausted
 "$PYTHON_BIN" "$ROOT/test/vp/freeze_workload_suite.py" \
   --workload-dir "$OUT_DIR" \
   --output "$OUT_DIR/workload_suite_manifest.json"
+
+trap - EXIT   # the suite is complete; keep it
