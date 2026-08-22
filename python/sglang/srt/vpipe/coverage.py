@@ -97,49 +97,6 @@ def record_eager_skip_decode_layer_call(forward_batch: Any) -> None:
     if _serving_decode_layer_call(forward_batch):
         _c3_counters.eager_skip_decode_layer_calls += 1
 _c3_counters = CoverageDenseCounters.create()
-LADDER_STOP_POOL_CEILING = "pool_ceiling"
-LADDER_STOP_USER_FLAG = "user_flag"
-RESERVE_PROVENANCE_DEFAULT_ZERO = "default_zero_unmeasured"
-RESERVE_PROVENANCE_DECLARED = "declared_campaign_config"
-LADDER_SOURCE_SELF_SIZED = "self_sized"
-LADDER_SOURCE_USER_FLAG = "user_flag"
-LADDER_STOP_MEMORY_RESERVE = "memory_reserve"
-LADDER_STOP_CAPTURE_OOM = "capture_oom"
-LADDER_STOP_CAPTURE_ERROR = "capture_error"
-class CoverageLadderRecord(msgspec.Struct):
-    """Per-boot C-D capture-ladder provenance, served via ``/server_info``.
-
-    The realized ladder itself (``capture_bs`` / ``max_bs``) lives on the
-    decode graph runner — the oracle IS the runner state (R-C); this record
-    carries only derivation provenance and trim history.
-    """
-
-    ladder_source: str = LADDER_SOURCE_SELF_SIZED
-    # The derivation target: the pool ceiling (self_sized) or the verbatim
-    # user cap (user_flag).
-    target_max_bs: int = 0
-    req_to_token_pool_size: int = 0
-    stop_reason: str = LADDER_STOP_POOL_CEILING
-    reserve_bytes: int = 0
-    reserve_provenance: str = RESERVE_PROVENANCE_DEFAULT_ZERO
-    # Each trim: {"bucket": int, "stop_reason": str} in occurrence order.
-    capture_trim_events: list[dict[str, Any]] = []
-    derived: bool = False
-    # The realized SELF-SIZED ladder for THIS boot: recorded once at the single
-    # derivation site (post alignment/clamp filtering) and shrunk in lockstep
-    # with every descent/reserve trim. Source of truth for per-boot ladder
-    # idempotency: any later capture cycle (mid-serving recapture, runner
-    # rebuild) reuses this list instead of re-deriving from the pool ceiling —
-    # a recapture must capture only what previously succeeded, never re-run
-    # the multi-minute descent (measured 2026-08-04: a mid-serving recapture
-    # restarted the 4096 descent at bucket 1344 after the boot had already
-    # descended to 1216, stalling the scheduler and killing every in-flight
-    # stream). Always [] on a user_flag boot (stock behavior verbatim).
-    realized_capture_bs: list[int] = []
-
-    @classmethod
-    def create(cls) -> "CoverageLadderRecord":
-        return cls(capture_trim_events=[], realized_capture_bs=[])
 def coverage_dense_enabled() -> bool:
     """The ``SGLANG_VP_COVERAGE_DENSE`` kill switch (default ON, strict parse)."""
 
@@ -177,106 +134,6 @@ def vp_graph_lifecycle_mark() -> Iterator[None]:
         _graph_lifecycle_depth -= 1
 def record_recapture_event(step_index: int) -> None:
     _c3_counters.recapture_events.append(int(step_index))
-def coverage_reserve_bytes() -> int:
-    return int(envs.SGLANG_VP_COVERAGE_RESERVE_BYTES.get())
-def coverage_reserve_provenance() -> str:
-    return (
-        RESERVE_PROVENANCE_DECLARED
-        if envs.SGLANG_VP_COVERAGE_RESERVE_BYTES.is_set()
-        else RESERVE_PROVENANCE_DEFAULT_ZERO
-    )
-def note_ladder_derivation(
-    *, source: str, target_max_bs: int, pool_size: int
-) -> None:
-    """Record the C-D derivation decision (called from the single existing
-    derivation site, ``get_batch_sizes_to_capture``)."""
-
-    _c3_ladder.ladder_source = source
-    _c3_ladder.target_max_bs = int(target_max_bs)
-    _c3_ladder.req_to_token_pool_size = int(pool_size)
-    _c3_ladder.stop_reason = (
-        LADDER_STOP_POOL_CEILING
-        if source == LADDER_SOURCE_SELF_SIZED
-        else LADDER_STOP_USER_FLAG
-    )
-    _c3_ladder.reserve_bytes = coverage_reserve_bytes()
-    _c3_ladder.reserve_provenance = coverage_reserve_provenance()
-    _c3_ladder.derived = True
-    # A fresh derivation supersedes any stored realized ladder; the site
-    # records the new one via record_realized_ladder after filtering.
-    _c3_ladder.realized_capture_bs = []
-def record_realized_ladder(capture_bs: Sequence[int]) -> None:
-    """Store THIS boot's realized self-sized ladder (post alignment/clamp
-    filtering) for per-boot idempotent reuse. Called from the derivation site
-    exactly once per fresh SELF-SIZED derivation; user_flag boots never store
-    (stock behavior verbatim)."""
-
-    _c3_ladder.realized_capture_bs = [int(value) for value in capture_bs]
-def persisted_self_sized_ladder() -> Optional[list[int]]:
-    """The already-derived (and possibly descent-trimmed) SELF-SIZED ladder of
-    THIS boot, or ``None`` when no self-sized ladder was realized yet.
-
-    This makes the self-sized derivation idempotent per boot: a later capture
-    cycle — the mid-serving ``recapture_if_needed`` path, or a rebuilt decode
-    graph runner — reuses exactly the buckets that previously realized, so it
-    never re-derives from the pool ceiling and never re-runs the bounded
-    descent while requests are streaming. ``reset_coverage_dense_state()``
-    (CPU tests / fresh boot semantics) clears it, so a new boot re-derives.
-    """
-
-    if not _c3_ladder.derived:
-        return None
-    if _c3_ladder.ladder_source != LADDER_SOURCE_SELF_SIZED:
-        return None
-    if not _c3_ladder.realized_capture_bs:
-        return None
-    return list(_c3_ladder.realized_capture_bs)
-def coverage_self_sized_ladder_active() -> bool:
-    """True when THIS boot derived a self-sized ladder (descent/trim armed).
-
-    A verbatim user ladder is never trimmed — an OOM on it fails loudly,
-    exactly like the parent tag."""
-
-    return (
-        coverage_dense_armed()
-        and _c3_ladder.derived
-        and _c3_ladder.ladder_source == LADDER_SOURCE_SELF_SIZED
-    )
-def note_capture_trim(*, bucket: int, stop_reason: str, realized_max: int) -> None:
-    """Record one descent/reserve trim; update the ladder stop reason when the
-    trim bounds the realized maximum."""
-
-    if stop_reason not in (
-        LADDER_STOP_MEMORY_RESERVE,
-        LADDER_STOP_CAPTURE_OOM,
-        LADDER_STOP_CAPTURE_ERROR,
-    ):
-        raise ValueError(f"unknown capture trim stop_reason: {stop_reason!r}")
-    _c3_ladder.capture_trim_events.append(
-        {"bucket": int(bucket), "stop_reason": stop_reason}
-    )
-    # Keep the stored per-boot ladder in lockstep with the runner's trim so a
-    # later capture cycle reuses only buckets that actually realized.
-    _c3_ladder.realized_capture_bs = [
-        value for value in _c3_ladder.realized_capture_bs if value != int(bucket)
-    ]
-    if int(bucket) > int(realized_max):
-        _c3_ladder.stop_reason = stop_reason
-def trim_candidates(candidates: Sequence[int], bucket: int) -> list[int]:
-    """Pure bounded-descent step: drop ``bucket``; each step strictly shrinks
-    the candidate set (termination), and an empty result fails loudly."""
-
-    remaining = [value for value in candidates if value != bucket]
-    if len(remaining) == len(candidates):
-        raise ValueError(
-            f"capture descent asked to trim {bucket}, which is not a candidate"
-        )
-    if not remaining:
-        raise RuntimeError(
-            "capture descent exhausted every decode graph bucket; refusing to "
-            "serve with no captured decode coverage"
-        )
-    return remaining
 def record_dense_body_pass(forward_batch: Any) -> None:
     """Site-B positive witness (F2/F18): the dense body EXECUTED.
 
@@ -343,7 +200,6 @@ def reset_coverage_stamps(forward_batch: Any) -> None:
     forward_batch.vp_fd_decode_coverage_dense = False
     forward_batch.vp_fd_coverage_counted = False
     forward_batch.fd_full_graph_force_production_attention = False
-_c3_ladder = CoverageLadderRecord.create()
 
 
 BODY_GRAPH_SKIP = "graph_skip"
@@ -355,16 +211,12 @@ BODY_EAGER_SKIP = "eager_skip"
 def coverage_dense_counters() -> CoverageDenseCounters:
     return _c3_counters
 
-def coverage_ladder_record() -> CoverageLadderRecord:
-    return _c3_ladder
-
 def reset_coverage_dense_state() -> None:
     """Reset all module state (CPU tests only; serving never resets)."""
 
-    global _c3_counters, _c3_ladder, _graph_lifecycle_depth
+    global _c3_counters, _graph_lifecycle_depth
     global _fd_skip_decode_deployed_cache
     _c3_counters = CoverageDenseCounters.create()
-    _c3_ladder = CoverageLadderRecord.create()
     _graph_lifecycle_depth = 0
     _fd_skip_decode_deployed_cache = None
 

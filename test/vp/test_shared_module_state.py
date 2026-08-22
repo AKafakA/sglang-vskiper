@@ -44,11 +44,9 @@ for mod, nm in ((cohort, "_KV_READINESS_TRACKERS"), (kv_commit, "_KV_READINESS_T
 # F2: attestation must observe a reset, i.e. read through accessors rather than
 # holding the pre-reset objects.
 before_ctr = coverage.coverage_dense_counters()
-before_lad = coverage.coverage_ladder_record()
 coverage.reset_coverage_dense_state()
 after_ctr = coverage.coverage_dense_counters()
-after_lad = coverage.coverage_ladder_record()
-if after_ctr is before_ctr or after_lad is before_lad:
+if after_ctr is before_ctr:
     print("  NOTE  reset did not rebind; the accessor test is vacuous here")
 else:
     print("  OK    reset rebinds the coverage objects (so stale reads are possible)")

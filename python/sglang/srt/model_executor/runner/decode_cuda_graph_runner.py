@@ -104,14 +104,7 @@ from sglang.srt.utils import (
 )
 from sglang.srt.utils.profile_utils import export_cuda_graph_capture_trace
 from sglang.srt.vpipe.coverage import (
-    LADDER_STOP_CAPTURE_ERROR,
-    LADDER_STOP_CAPTURE_OOM,
-    LADDER_STOP_MEMORY_RESERVE,
-    coverage_reserve_bytes,
-    coverage_self_sized_ladder_active,
-    note_capture_trim,
     record_recapture_event,
-    trim_candidates,
     vp_graph_lifecycle_mark,
 )
 from sglang.srt.vpipe.coverage import (
@@ -296,7 +289,6 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
         self._last_reject_reason: Optional[str] = None
         # (c3) C-D bounded OOM-descent: the bucket currently being captured, so
         # a capture OutOfMemoryError can be attributed to its bucket.
-        self._vp_c3_capturing_bs: Optional[int] = None
 
         # If returning hidden states is enabled, set initial capture hidden mode to full to avoid double-capture on startup
         if model_runner.server_args.enable_return_hidden_states:
@@ -780,80 +772,38 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
                 self.model_runner, self.num_tokens_per_bs
             )
 
-        # (c3) C-D bounded OOM-descent (largest-first realization): capture in
-        # the in-tree reversed order so the largest graph establishes the pool
-        # high-water mark and smaller graphs alias into it. On a capture OOM at
-        # the current bucket of a SELF-SIZED ladder: free the pool, drop that
-        # bucket (each step strictly shrinks the candidate set — bounded), and
-        # retry from the next candidate down; the OOM boundary is observed, not
-        # modeled. A verbatim user ladder ((c1)-B1) or a non-(c3) boot raises
-        # exactly like the parent tag.
-        while True:
-            profile_context = empty_context()
-            if self.enable_profile_cuda_graph:
-                profile_context = self._init_profile_context_and_memory_record()
+        profile_context = empty_context()
+        if self.enable_profile_cuda_graph:
+            profile_context = self._init_profile_context_and_memory_record()
 
-            # share_buffers() coalesces seq_lens / seq_lens_cpu through the process-
-            # wide pool, so they may alias a buffer seeded by an earlier runner (the
-            # eager registry fills them with 0). The capture-time attention-metadata
-            # plan reads these as the per-request KV length, and the prefill wrapper
-            # (DLLM_EXTEND) asserts kv_len >= qo_len, so restore the fill value the
-            # captured graph needs before capturing.
-            self.buffers.seq_lens.fill_(self.seq_len_fill_value)
-            self.buffers.seq_lens_cpu.fill_(self.seq_len_fill_value)
+        # share_buffers() coalesces seq_lens / seq_lens_cpu through the process-
+        # wide pool, so they may alias a buffer seeded by an earlier runner (the
+        # eager registry fills them with 0). The capture-time attention-metadata
+        # plan reads these as the per-request KV length, and the prefill wrapper
+        # (DLLM_EXTEND) asserts kv_len >= qo_len, so restore the fill value the
+        # captured graph needs before capturing.
+        self.buffers.seq_lens.fill_(self.seq_len_fill_value)
+        self.buffers.seq_lens_cpu.fill_(self.seq_len_fill_value)
 
-            try:
-                # Trigger CUDA graph capture for specific shapes.
-                # Capture the large shapes first so that the smaller shapes
-                # can reuse the memory pool allocated for the large shapes.
-                with freeze_gc(self.model_runner.server_args.enable_cudagraph_gc):
-                    if not self.enable_pdmux:
-                        with graph_capture() as graph_capture_context, profile_context as prof:
-                            self.stream = graph_capture_context.stream
-                            with self.backend.capture_session(self.stream):
-                                self._capture_one_stream()
-                    else:
-                        set_pdmux_status(False)
-                        for i, sg in enumerate(self.stream_groups):
-                            with (
-                                graph_capture(stream=sg[1]) as graph_capture_context,
-                                profile_context as prof,
-                            ):
-                                self.stream = graph_capture_context.stream
-                                with self.backend.capture_session(self.stream):
-                                    self._capture_one_stream(i)
-            except Exception as capture_exc:
-                failed_bs = self._vp_c3_capturing_bs
-                if not coverage_self_sized_ladder_active() or failed_bs is None:
-                    raise
-                # Any capture failure at a SELF-SIZED bucket descends instead of
-                # killing the boot: the ladder is our own derived ambition, so a
-                # bucket the platform cannot capture (OOM, or e.g. flashinfer's
-                # fixed batch_prefill workspace overflowing at bs~4096 with the
-                # FD routed-attention kernels — measured 2026-08-04) is trimmed
-                # and attested, not fatal. User-pinned ladders still raise
-                # exactly like stock (guard above). A deterministic per-bucket
-                # bug stays loud: trim_candidates raises before the ladder can
-                # empty, so the worst case is a bounded retry chain then the
-                # original failure class surfacing.
-                stop_reason = (
-                    LADDER_STOP_CAPTURE_OOM
-                    if isinstance(capture_exc, torch.cuda.OutOfMemoryError)
-                    else LADDER_STOP_CAPTURE_ERROR
-                )
-                # Free the pool before retrying with the shrunken candidate set.
-                self.backend.cleanup()
-                self._vp_c3_trim_bucket(failed_bs, stop_reason)
-                logger.warning(
-                    "(c3) capture failure (%s: %s) at decode bucket %d; "
-                    "descending to capture_bs max %d",
-                    stop_reason,
-                    type(capture_exc).__name__,
-                    failed_bs,
-                    self.max_bs,
-                )
-                continue
-            break
+        # Trigger CUDA graph capture for specific shapes.
+        # Capture the large shapes first so that the smaller shapes
+        # can reuse the memory pool allocated for the large shapes.
+        with freeze_gc(self.model_runner.server_args.enable_cudagraph_gc):
+            if not self.enable_pdmux:
+                with graph_capture() as graph_capture_context, profile_context as prof:
+                    self.stream = graph_capture_context.stream
+                    with self.backend.capture_session(self.stream):
+                        self._capture_one_stream()
+            else:
+                set_pdmux_status(False)
+                for i, sg in enumerate(self.stream_groups):
+                    with (
+                        graph_capture(stream=sg[1]) as graph_capture_context,
+                        profile_context as prof,
+                    ):
+                        self.stream = graph_capture_context.stream
+                        with self.backend.capture_session(self.stream):
+                            self._capture_one_stream(i)
 
         if self.enable_profile_cuda_graph:
             self._post_process_after_profile(prof)
@@ -861,21 +811,6 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
         # No pool-side pin to clear: the captured full-physical write loc rides the
         # backend's `ForwardMetadata.out_cache_loc_full_physical` (-> KVWriteLoc.full_loc).
 
-    def _vp_c3_trim_bucket(self, bucket: int, stop_reason: str) -> None:
-        """(c3) C-D: drop one decode bucket from the SELF-SIZED ladder.
-
-        The runner state stays the coverage oracle by construction: max_bs and
-        capture_bs are updated here, and can_run_graph / _pad_to_bucket consume
-        them directly (R-C). Trims fail loudly rather than empty the ladder.
-        """
-
-        self.capture_bs = trim_candidates(self.capture_bs, bucket)
-        self.compile_bs = [bs for bs in self.compile_bs if bs != bucket]
-        self.max_bs = max(self.capture_bs)
-        self.max_num_token = self.max_bs * self.num_tokens_per_bs
-        note_capture_trim(
-            bucket=bucket, stop_reason=stop_reason, realized_max=self.max_bs
-        )
 
     def _capture_one_stream(self, stream_idx: Optional[int] = None) -> None:
         avail_mem = get_available_gpu_memory(
@@ -900,38 +835,7 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
         # W1 decode leg (Strategy B): capture each body flavor per bucket. Off ->
         # [None] -> one regime-free capture per (bs, lora) -> byte-identical.
         regime_bodies = self._vp_regime_dispatch.capture_bodies()
-        # (c3) C-D: pre-capture feasibility on a SELF-SIZED ladder only — a
-        # bucket whose capture would start below the declared reserve is
-        # trimmed (stop_reason memory_reserve) instead of attempted. The
-        # reserve protects runtime latency headroom, never correctness (F7);
-        # at the default 0 the check is inert.
-        c3_descent = coverage_self_sized_ladder_active()
-        c3_reserve_bytes = coverage_reserve_bytes() if c3_descent else 0
         for bs in capture_range:
-            if c3_descent and bs not in self.capture_bs:
-                # Trimmed earlier in this capture pass (reserve or descent).
-                continue
-            self._vp_c3_capturing_bs = bs
-            if c3_reserve_bytes > 0:
-                avail_bytes = (
-                    get_available_gpu_memory(
-                        self.model_runner.device,
-                        self.model_runner.gpu_id,
-                        empty_cache=False,
-                    )
-                    * (1 << 30)
-                )
-                if avail_bytes <= c3_reserve_bytes:
-                    self._vp_c3_trim_bucket(bs, LADDER_STOP_MEMORY_RESERVE)
-                    logger.warning(
-                        "(c3) reserve pre-check trimmed decode bucket %d "
-                        "(available %.0f B <= reserve %d B); capture_bs max %d",
-                        bs,
-                        avail_bytes,
-                        c3_reserve_bytes,
-                        self.max_bs,
-                    )
-                    continue
             if get_tensor_model_parallel_rank() == 0:
                 avail_mem = get_available_gpu_memory(
                     self.model_runner.device,
@@ -959,7 +863,6 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
                                 variant_label, regime_body
                             ),
                         )
-        self._vp_c3_capturing_bs = None
 
     def capture_one_shape(
         self,
