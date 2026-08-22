@@ -1,0 +1,318 @@
+{
+  "calibration": {
+    "dataset_id": "zai-org/LongBench:qasper:test:length_gt_4000:first20:prompt_set_sha256=08f148674ce31c911cee050f0630223410648f10e5c6bcdf64772c530d4a88a3:max_input_tokens=8192:head_tail_retokenize",
+    "dataset_revision": "38b3b9ec6c9d887c2b9f1587dc1476f6c8ff1a1a",
+    "request_count": 20,
+    "sha256": "93187d1e42107d27bac0dc3bdf4dc2fc4b35b3fa224cabde42ec2354ecf365b1"
+  },
+  "layers": [
+    {
+      "attention_scale": 1.3781035735740146,
+      "attention_similarity": 0.6507365047931671,
+      "layer_id": 0,
+      "mlp_scale": 1.38521907824617,
+      "mlp_similarity": 0.6835715591907501,
+      "skip_attention": false,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.239357843888633,
+      "attention_similarity": 0.842213585972786,
+      "layer_id": 1,
+      "mlp_scale": 4.442201572604118,
+      "mlp_similarity": 0.8476704269647598,
+      "skip_attention": false,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.0189022719379865,
+      "attention_similarity": 0.8686998873949051,
+      "layer_id": 2,
+      "mlp_scale": 1.0163487101832562,
+      "mlp_similarity": 0.8378309220075607,
+      "skip_attention": false,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.0273704932874155,
+      "attention_similarity": 0.9099542468786239,
+      "layer_id": 3,
+      "mlp_scale": 1.0205462949687218,
+      "mlp_similarity": 0.843731227517128,
+      "skip_attention": false,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.0389020245184504,
+      "attention_similarity": 0.9103205680847168,
+      "layer_id": 4,
+      "mlp_scale": 1.0129782365322009,
+      "mlp_similarity": 0.8352242559194565,
+      "skip_attention": false,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.0475944445864296,
+      "attention_similarity": 0.915422448515892,
+      "layer_id": 5,
+      "mlp_scale": 1.0045421498327882,
+      "mlp_similarity": 0.8336497873067856,
+      "skip_attention": false,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.0604581490271368,
+      "attention_similarity": 0.9118001759052277,
+      "layer_id": 6,
+      "mlp_scale": 0.9879321259798116,
+      "mlp_similarity": 0.8323265701532364,
+      "skip_attention": false,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.0649770058362822,
+      "attention_similarity": 0.8943070769309998,
+      "layer_id": 7,
+      "mlp_scale": 0.9785799341379768,
+      "mlp_similarity": 0.8481801241636276,
+      "skip_attention": false,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.057225866655227,
+      "attention_similarity": 0.9103447645902634,
+      "layer_id": 8,
+      "mlp_scale": 0.9757503028049573,
+      "mlp_similarity": 0.8579193174839019,
+      "skip_attention": false,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.071395125282383,
+      "attention_similarity": 0.9028765499591828,
+      "layer_id": 9,
+      "mlp_scale": 0.9761100483357149,
+      "mlp_similarity": 0.8634068369865417,
+      "skip_attention": false,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.0665237185716134,
+      "attention_similarity": 0.916145071387291,
+      "layer_id": 10,
+      "mlp_scale": 0.9744310052370813,
+      "mlp_similarity": 0.8688595324754715,
+      "skip_attention": false,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.0667510593205862,
+      "attention_similarity": 0.9222652554512024,
+      "layer_id": 11,
+      "mlp_scale": 0.9756773476829291,
+      "mlp_similarity": 0.875849136710167,
+      "skip_attention": false,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.0621385425034284,
+      "attention_similarity": 0.9113149881362915,
+      "layer_id": 12,
+      "mlp_scale": 0.9805367878978126,
+      "mlp_similarity": 0.8768435716629028,
+      "skip_attention": false,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.0767291715152578,
+      "attention_similarity": 0.9122981995344162,
+      "layer_id": 13,
+      "mlp_scale": 0.9873603330912621,
+      "mlp_similarity": 0.8826861202716827,
+      "skip_attention": false,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.0663613568725911,
+      "attention_similarity": 0.9213362038135529,
+      "layer_id": 14,
+      "mlp_scale": 0.9923273063066407,
+      "mlp_similarity": 0.8893191754817963,
+      "skip_attention": false,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.083741987094422,
+      "attention_similarity": 0.937161523103714,
+      "layer_id": 15,
+      "mlp_scale": 1.011471840629698,
+      "mlp_similarity": 0.8927971303462983,
+      "skip_attention": false,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.0647387553628005,
+      "attention_similarity": 0.9489543110132217,
+      "layer_id": 16,
+      "mlp_scale": 1.0217499044958107,
+      "mlp_similarity": 0.9107514292001724,
+      "skip_attention": false,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.0723456196497845,
+      "attention_similarity": 0.9643595546483994,
+      "layer_id": 17,
+      "mlp_scale": 1.0418735711275848,
+      "mlp_similarity": 0.9204411894083023,
+      "skip_attention": false,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.0450503809431875,
+      "attention_similarity": 0.9819606512784957,
+      "layer_id": 18,
+      "mlp_scale": 1.043957351397109,
+      "mlp_similarity": 0.9371230602264404,
+      "skip_attention": false,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.033805858480814,
+      "attention_similarity": 0.9852499842643738,
+      "layer_id": 19,
+      "mlp_scale": 1.0436166891873528,
+      "mlp_similarity": 0.946954095363617,
+      "skip_attention": true,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.0308662658366123,
+      "attention_similarity": 0.9865151584148407,
+      "layer_id": 20,
+      "mlp_scale": 1.0456748119954207,
+      "mlp_similarity": 0.9513769626617432,
+      "skip_attention": true,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.0609013979627928,
+      "attention_similarity": 0.9840418070554733,
+      "layer_id": 21,
+      "mlp_scale": 1.0662851920262415,
+      "mlp_similarity": 0.9549689292907715,
+      "skip_attention": false,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.0385113468480491,
+      "attention_similarity": 0.987406525015831,
+      "layer_id": 22,
+      "mlp_scale": 1.0611992333414766,
+      "mlp_similarity": 0.9645508259534836,
+      "skip_attention": true,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.039460011363858,
+      "attention_similarity": 0.9904364883899689,
+      "layer_id": 23,
+      "mlp_scale": 1.062017642919614,
+      "mlp_similarity": 0.9703732430934906,
+      "skip_attention": true,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.0318499757072355,
+      "attention_similarity": 0.9904183000326157,
+      "layer_id": 24,
+      "mlp_scale": 1.0503841481821414,
+      "mlp_similarity": 0.973886176943779,
+      "skip_attention": true,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.0476203244152884,
+      "attention_similarity": 0.9899995535612106,
+      "layer_id": 25,
+      "mlp_scale": 1.02320253282522,
+      "mlp_similarity": 0.9740786343812943,
+      "skip_attention": true,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.0770048089777136,
+      "attention_similarity": 0.9858314692974091,
+      "layer_id": 26,
+      "mlp_scale": 1.0311014172197819,
+      "mlp_similarity": 0.9745968222618103,
+      "skip_attention": true,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.0715358121269083,
+      "attention_similarity": 0.984786969423294,
+      "layer_id": 27,
+      "mlp_scale": 1.025734868385524,
+      "mlp_similarity": 0.9692250728607178,
+      "skip_attention": false,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.0792217210357022,
+      "attention_similarity": 0.9878003746271133,
+      "layer_id": 28,
+      "mlp_scale": 1.024513008556954,
+      "mlp_similarity": 0.9655326247215271,
+      "skip_attention": true,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.0768473505643428,
+      "attention_similarity": 0.9841738134622574,
+      "layer_id": 29,
+      "mlp_scale": 1.0057789739168659,
+      "mlp_similarity": 0.9529353827238083,
+      "skip_attention": false,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.1248188170437847,
+      "attention_similarity": 0.9747313469648361,
+      "layer_id": 30,
+      "mlp_scale": 1.0213986730228242,
+      "mlp_similarity": 0.8990804761648178,
+      "skip_attention": false,
+      "skip_mlp": false
+    },
+    {
+      "attention_scale": 1.0910637345615508,
+      "attention_similarity": 0.9533992290496827,
+      "layer_id": 31,
+      "mlp_scale": 1.2854513455945296,
+      "mlp_similarity": 0.5924313217401505,
+      "skip_attention": false,
+      "skip_mlp": false
+    }
+  ],
+  "model": {
+    "id": "/rds/user/wd312/hpc-work/llm/vpipe-csd3/models/Meta-Llama-3-8B-Instruct-53346005",
+    "num_hidden_layers": 32,
+    "revision": "53346005fb0ef11d3b6a83b12c895cca40156b6c"
+  },
+  "policy": {
+    "compensation": "mean_output_norm_over_input_norm",
+    "native_kv": "omit_on_skip_attention",
+    "online_decode_extra_mlp": false,
+    "online_decode_window": 20,
+    "online_extra_mlp_minimum": 0,
+    "selection": "topk_concat_attention_then_mlp_similarity",
+    "skip_sublayer_count": 8,
+    "vp_kv": "materialize_own_layer_projection"
+  },
+  "schema": "vpipe-adaskip-fixed-sublayer-profile-v2",
+  "source": {
+    "repository": "https://github.com/ASISys/AdaSkip",
+    "revision": "4ef686d6fd7b94756e4959f3f80191708dcec9e3"
+  }
+}
