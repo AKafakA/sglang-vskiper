@@ -24,6 +24,21 @@ SGBENCH_EXTRA_REQUEST_BODY="${SGBENCH_EXTRA_REQUEST_BODY:-}"
 SGBENCH_DATASET_PATH="${SGBENCH_DATASET_PATH:-}"
 SGBENCH_PORT="${SGBENCH_PORT:-30000}"
 SGBENCH_OUT_DIR="${SGBENCH_OUT_DIR:-$OUT_BASE/sgbench_vp}"
+# These eight knobs are LIVE: the package reads their SGLANG_ counterparts
+# outside any rejection list, and the canonical vdec_fd arm sets
+# SGLANG_FD_VP_FUSED_PROJECT_INPUT=1 -- so the ladder must be able to
+# reproduce that posture. They were wrongly swept into the removed list by a
+# name heuristic; membership is now decided by whether the package actually
+# reads the variable.
+SGBENCH_FD_VP_FUSED_PROJECT_INPUT="${SGBENCH_FD_VP_FUSED_PROJECT_INPUT:-0}"
+SGBENCH_FD_VP_FUSED_ROUTER_DEC_HEAD="${SGBENCH_FD_VP_FUSED_ROUTER_DEC_HEAD:-0}"
+SGBENCH_FD_VP_ROUTER_GRAPH="${SGBENCH_FD_VP_ROUTER_GRAPH:-0}"
+SGBENCH_FD_VP_ROUTER_GRAPH_MAX_ENTRIES="${SGBENCH_FD_VP_ROUTER_GRAPH_MAX_ENTRIES:-4}"
+SGBENCH_FD_VP_ROUTER_GRAPH_MAX_ROWS="${SGBENCH_FD_VP_ROUTER_GRAPH_MAX_ROWS:-64}"
+SGBENCH_FD_VP_TRACE="${SGBENCH_FD_VP_TRACE:-0}"
+SGBENCH_FD_VP_TRACE_FILE="${SGBENCH_FD_VP_TRACE_FILE:-}"
+SGBENCH_FD_VP_TRACE_TIMING="${SGBENCH_FD_VP_TRACE_TIMING:-0}"
+
 # Refuse removed treatment knobs the operator actually SET. The suffix
 # subsystem these drove was deleted with the V1 path: the ladder now emits only
 # SGLANG_FD_WEIGHTS, SGLANG_FD_EXECUTION_MODE and
@@ -54,8 +69,6 @@ for _k in SGBENCH_DECODE_BLOCK_SIZE \
     SGBENCH_FD_VP_COALESCED_MIN_RUN_ROWS \
     SGBENCH_FD_VP_COALESCED_MIN_SKIP_ROWS \
     SGBENCH_FD_VP_DECODE_SUBBATCH_CACHE \
-    SGBENCH_FD_VP_FUSED_PROJECT_INPUT \
-    SGBENCH_FD_VP_FUSED_ROUTER_DEC_HEAD \
     SGBENCH_FD_VP_GLOBAL_DECODE_SUBBATCH_CACHE \
     SGBENCH_FD_VP_GLOBAL_DECODE_SUBBATCH_CACHE_MAX_ENTRIES \
     SGBENCH_FD_VP_MINIMAL_KV_SUBBATCH \
@@ -83,9 +96,6 @@ for _k in SGBENCH_DECODE_BLOCK_SIZE \
     SGBENCH_FD_VP_MIXED_SPLIT_GRAPH_MAX_ENTRIES \
     SGBENCH_FD_VP_MIXED_SPLIT_GRAPH_MAX_ROWS \
     SGBENCH_FD_VP_MIXED_SPLIT_GRAPH_MIN_FREE_MB \
-    SGBENCH_FD_VP_ROUTER_GRAPH \
-    SGBENCH_FD_VP_ROUTER_GRAPH_MAX_ENTRIES \
-    SGBENCH_FD_VP_ROUTER_GRAPH_MAX_ROWS \
     SGBENCH_FD_VP_SCHED_GRAPH \
     SGBENCH_FD_VP_STABLE_MIXED_SPLIT_BUFFERS \
     SGBENCH_FD_VP_STABLE_MIXED_SPLIT_BUFFER_MAX_ENTRIES \
@@ -94,12 +104,9 @@ for _k in SGBENCH_DECODE_BLOCK_SIZE \
     SGBENCH_FD_VP_STAGE_ROUTE_MIN_SPLIT_RUN_ROWS \
     SGBENCH_FD_VP_STAGE_ROUTE_MIN_SPLIT_SKIP_ROWS \
     SGBENCH_FD_VP_STAGE_ROUTE_RUNAHEAD \
-    SGBENCH_FD_VP_TRACE \
     SGBENCH_FD_VP_TRACE_EVERY \
-    SGBENCH_FD_VP_TRACE_FILE \
     SGBENCH_FD_VP_TRACE_MASKS \
     SGBENCH_FD_VP_TRACE_MASK_CAP \
-    SGBENCH_FD_VP_TRACE_TIMING \
     SGBENCH_FD_VP_TRITON_GPU_SUBBATCH \
     SGBENCH_PREFILL_BLOCK_SIZE \
     SGBENCH_PREFILL_POLICY \
@@ -731,6 +738,34 @@ launch_sglang_server() {
       SGLANG_FD_WEIGHTS="$FD_WEIGHTS"
       SGLANG_FD_EXECUTION_MODE="$SGBENCH_FD_EXECUTION_MODE"
     )
+    # Live full-graph knobs: emitted only when the operator changed them from
+    # the default, so a default run stays byte-identical to before. Accepting
+    # a knob the ladder never emits would be its own kind of lie -- the arm
+    # would record a treatment it did not receive.
+    if [[ "${SGBENCH_FD_VP_FUSED_PROJECT_INPUT}" != "0" ]]; then
+      env_args+=(SGLANG_FD_VP_FUSED_PROJECT_INPUT="${SGBENCH_FD_VP_FUSED_PROJECT_INPUT}")
+    fi
+    if [[ "${SGBENCH_FD_VP_FUSED_ROUTER_DEC_HEAD}" != "0" ]]; then
+      env_args+=(SGLANG_FD_VP_FUSED_ROUTER_DEC_HEAD="${SGBENCH_FD_VP_FUSED_ROUTER_DEC_HEAD}")
+    fi
+    if [[ "${SGBENCH_FD_VP_ROUTER_GRAPH}" != "0" ]]; then
+      env_args+=(SGLANG_FD_VP_ROUTER_GRAPH="${SGBENCH_FD_VP_ROUTER_GRAPH}")
+    fi
+    if [[ "${SGBENCH_FD_VP_ROUTER_GRAPH_MAX_ENTRIES}" != "4" ]]; then
+      env_args+=(SGLANG_FD_VP_ROUTER_GRAPH_MAX_ENTRIES="${SGBENCH_FD_VP_ROUTER_GRAPH_MAX_ENTRIES}")
+    fi
+    if [[ "${SGBENCH_FD_VP_ROUTER_GRAPH_MAX_ROWS}" != "64" ]]; then
+      env_args+=(SGLANG_FD_VP_ROUTER_GRAPH_MAX_ROWS="${SGBENCH_FD_VP_ROUTER_GRAPH_MAX_ROWS}")
+    fi
+    if [[ "${SGBENCH_FD_VP_TRACE}" != "0" ]]; then
+      env_args+=(SGLANG_FD_VP_TRACE="${SGBENCH_FD_VP_TRACE}")
+    fi
+    if [[ "${SGBENCH_FD_VP_TRACE_FILE}" != "" ]]; then
+      env_args+=(SGLANG_FD_VP_TRACE_FILE="${SGBENCH_FD_VP_TRACE_FILE}")
+    fi
+    if [[ "${SGBENCH_FD_VP_TRACE_TIMING}" != "0" ]]; then
+      env_args+=(SGLANG_FD_VP_TRACE_TIMING="${SGBENCH_FD_VP_TRACE_TIMING}")
+    fi
   elif [[ "$mode" != "vanilla" ]]; then
     die "unknown SGBENCH mode $raw_mode; expected vanilla, vanilla_matched, flexidepth, or flexidepth with override suffixes. The V1 modes (dynamic*, flexidepth_vp*) are not in this build and are refused earlier"
   fi

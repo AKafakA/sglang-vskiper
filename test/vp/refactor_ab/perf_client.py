@@ -53,6 +53,7 @@ def one(url, prompt, max_new):
     ntok = 0
     last = None
     malformed = 0
+    text_events = 0
     last_err = ""
     with urllib.request.urlopen(req, timeout=600) as r:
         for raw in r:
@@ -62,13 +63,20 @@ def one(url, prompt, max_new):
             payload = line[5:].strip()
             if payload in ("", "[DONE]"):
                 continue
-            if ttft is None:
-                ttft = time.perf_counter() - t0
             try:
                 obj = json.loads(payload)
                 m = obj.get("meta_info") or {}
                 if "completion_tokens" in m:
                     ntok = m["completion_tokens"]
+                # A TOKEN-BEARING event is one that actually carries generated
+                # output. Counting any well-formed JSON let a metadata-only
+                # stream -- {"meta_info":{"completion_tokens":128}} then close --
+                # self-report a full count with no text at all, passing the
+                # token-mass gate while producing nothing.
+                if obj.get("text") or obj.get("output_ids") or obj.get("token_ids"):
+                    text_events += 1
+                    if ttft is None:
+                        ttft = time.perf_counter() - t0
                 last = obj
             except Exception as exc:
                 # Do NOT swallow this. A malformed SSE payload used to be
@@ -88,6 +96,11 @@ def one(url, prompt, max_new):
     # latency deltas for no inference work at all.
     if malformed:
         raise RuntimeError(f"{malformed} malformed SSE payload(s); {last_err}")
+    if text_events == 0:
+        raise RuntimeError(
+            "no token-bearing response event: the stream carried metadata only, "
+            "so the self-reported completion count describes no generated output"
+        )
     if ntok != max_new:
         raise RuntimeError(
             f"incomplete generation: {ntok} tokens, expected exactly {max_new} "

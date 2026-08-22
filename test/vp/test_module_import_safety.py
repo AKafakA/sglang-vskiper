@@ -140,9 +140,42 @@ def module_level_loads(tree):
 
 
 def unbound_module_level_names(path):
+    """Names loaded at import before anything binds them.
+
+    Collecting every module binding up front made `value = later; later = 1`
+    look safe, though executing the module raises NameError on the first
+    statement -- the same ordering bug that was fixed inside class bodies. Walk
+    module statements in order: check each statement's import-time loads, THEN
+    record what it binds.
+    """
     tree = ast.parse(path.read_text(), str(path))
-    bound = module_level_bindings(tree) | SAFE
-    return sorted({(n, ln) for n, ln in module_level_loads(tree) if n not in bound})
+    bound = set(SAFE)
+    bad = []
+    for stmt in tree.body:
+        sub = ast.Module(body=[stmt], type_ignores=[])
+        # Names a comprehension or lambda binds are LOCAL to this statement and
+        # are in scope for loads inside it, even though the statement has not
+        # finished executing. Without this, {a.x: a for a in Thing} reported its
+        # own loop variable as unbound.
+        local = set()
+        for n in ast.walk(stmt):
+            if isinstance(n, ast.comprehension):
+                local.update(_targets(n.target))
+            elif isinstance(n, ast.Lambda):
+                a = n.args
+                local.update(x.arg for x in
+                             list(a.posonlyargs) + list(a.args) + list(a.kwonlyargs))
+                if a.vararg: local.add(a.vararg.arg)
+                if a.kwarg: local.add(a.kwarg.arg)
+            elif isinstance(n, ast.NamedExpr):
+                local.update(_targets(n.target))
+            elif isinstance(n, ast.ExceptHandler) and n.name:
+                local.add(n.name)
+        for name, lineno in module_level_loads(sub):
+            if name not in bound and name not in local:
+                bad.append((name, lineno))
+        bound |= module_level_bindings(sub)
+    return sorted(set(bad))
 
 
 def scan():

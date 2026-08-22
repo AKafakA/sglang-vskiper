@@ -21,7 +21,19 @@ TREE="${2:?usage: box_perf_ab.sh <arm> <tree_root>}"
 W=/local/scratch/tmp/wd312
 V=$W/serve-venv-d248/bin/python
 PORT=30260
+# ARM is interpolated into a path that is then rm -rf'd. Unvalidated, an
+# argument like ../suites resolves OUTSIDE the result root and deletes a sibling
+# tree. Restrict it to the supported identifiers.
+case "$ARM" in
+  refactored|frozen|rewritten) ;;
+  *) echo "ERROR: unsupported arm '$ARM' (expected refactored|frozen|rewritten)" >&2; exit 2 ;;
+esac
 OUT=$W/perf-ab/$ARM
+# belt and braces: the resolved path must still sit under the result root
+case "$(readlink -m "$OUT")" in
+  "$(readlink -m "$W/perf-ab")"/*) ;;
+  *) echo "ERROR: refusing to clean $OUT -- outside $W/perf-ab" >&2; exit 2 ;;
+esac
 rm -rf "$OUT"; mkdir -p "$OUT"
 
 # --- identical decode posture for both arms (the box T0 config) ---
