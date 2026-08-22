@@ -54,7 +54,8 @@ def one(url, prompt, max_new):
     last = None
     malformed = 0
     text_events = 0
-    observed_ids = []
+    incremental_ids = 0
+    cumulative_ids = 0
     last_err = ""
     with urllib.request.urlopen(req, timeout=600) as r:
         for raw in r:
@@ -76,14 +77,15 @@ def one(url, prompt, max_new):
                 # token-mass gate while producing nothing.
                 ids = obj.get("output_ids") or obj.get("token_ids")
                 if ids:
-                    # SGLang may stream these CUMULATIVELY or INCREMENTALLY.
-                    # Prefix-containment tells them apart without guessing: a
-                    # cumulative payload extends what we already have.
-                    if len(ids) >= len(observed_ids) and \
-                       list(ids[:len(observed_ids)]) == observed_ids:
-                        observed_ids = list(ids)
-                    else:
-                        observed_ids.extend(ids)
+                    # SGLang may stream these CUMULATIVELY or INCREMENTALLY, and
+                    # NO per-event heuristic can tell them apart: with
+                    # ignore_eos=True a repeated token is legitimate, so the
+                    # incremental stream [17],[17],[18] is indistinguishable
+                    # from a cumulative prefix repeat. A prefix rule rejected
+                    # such valid streams. Track BOTH readings and let the final
+                    # reported count disambiguate.
+                    incremental_ids += len(ids)
+                    cumulative_ids = max(cumulative_ids, len(ids))
                 if ids or obj.get("text"):
                     text_events += 1
                     if ttft is None:
@@ -112,14 +114,19 @@ def one(url, prompt, max_new):
             "no token-bearing response event: the stream carried metadata only, "
             "so the self-reported completion count describes no generated output"
         )
-    # Reconcile the SELF-REPORTED count against tokens we actually observed.
-    # One event carrying output_ids=[17] alongside completion_tokens=128 clears
-    # the token-bearing check while proving a single token; trusting meta_info
-    # after one such event narrowed the hole rather than closing it.
-    if observed_ids and len(observed_ids) != max_new:
+    # Reconcile the SELF-REPORTED count against ids we actually observed. One
+    # event carrying output_ids=[17] alongside completion_tokens=128 clears the
+    # token-bearing check while proving a single token, so meta_info alone is
+    # not evidence. Accept if EITHER reading accounts for the full generation --
+    # that is exactly the ambiguity the server's streaming mode leaves open, and
+    # both readings agreeing on "too few" is unambiguous evidence of a short
+    # stream.
+    if (incremental_ids or cumulative_ids) and \
+       max_new not in (incremental_ids, cumulative_ids):
         raise RuntimeError(
-            f"observed {len(observed_ids)} streamed token ids but meta_info "
-            f"reports {ntok} and {max_new} were requested"
+            f"streamed token ids account for {cumulative_ids} (cumulative) or "
+            f"{incremental_ids} (incremental), neither of which is the "
+            f"{max_new} requested; meta_info reports {ntok}"
         )
     if ntok != max_new:
         raise RuntimeError(

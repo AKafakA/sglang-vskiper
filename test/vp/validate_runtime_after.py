@@ -47,37 +47,66 @@ def _stage_graph_runtime_key(expected: dict) -> str | None:
 def validate_v3_graph_activity(attestations: list) -> list:
     """Post-run: the routed decode path must have ACTUALLY executed, captured.
 
-    Asserts on counters the live attestation really emits, so the gate can fail.
+    Field names and nesting are taken from the PRODUCER
+    (vpipe/attestation.py:1163-1173), not from a grep of counter names. The
+    first version of this function read ``decode_dispatches_total`` and
+    ``decode_graph_dispatches_total`` at the TOP LEVEL of the v3_full_graph
+    block. Neither exists there: the counters are nested under ``counters`` and
+    the captured count is ``whole_step_graph_replays``. Both defaulted to zero,
+    so the gate rejected every genuine run -- a check that always fails, which
+    is no better than one that never does. Missing keys are now an explicit
+    error rather than a silent zero.
     """
     activity = []
     if not attestations:
         raise ValueError("v3_full_graph expectation has no runtime attestation")
     for rank, runtime in enumerate(attestations):
-        block = runtime.get("v3_full_graph") or {}
-        counters = (runtime.get("fd_c3") or {}).get("counters", {})
-        dispatches = int(block.get("decode_dispatches_total", 0) or 0)
-        graphed = int(block.get("decode_graph_dispatches_total", 0) or 0)
-        eager = int(counters.get("eager_skip_decode_layer_calls", 0) or 0)
+        block = runtime.get("v3_full_graph")
+        if not isinstance(block, dict):
+            raise ValueError(f"rank {rank}: no v3_full_graph attestation block")
+        counters = block.get("counters")
+        if not isinstance(counters, dict):
+            raise ValueError(f"rank {rank}: v3_full_graph has no counters block")
+        for key in ("decode_dispatches_total", "whole_step_graph_replays",
+                    "eager_dispatches"):
+            if key not in counters:
+                raise ValueError(
+                    f"rank {rank}: v3_full_graph.counters is missing {key!r}; "
+                    "the attestation shape changed and this gate would "
+                    "otherwise read it as zero"
+                )
+        dispatches = int(counters["decode_dispatches_total"])
+        graphed = int(counters["whole_step_graph_replays"])
+        eager_dispatch = int(counters["eager_dispatches"])
+        fd_c3 = runtime.get("fd_c3") or {}
+        eager_layer = int((fd_c3.get("counters") or {}).get(
+            "eager_skip_decode_layer_calls", 0) or 0)
         if dispatches <= 0:
             raise ValueError(
                 f"rank {rank}: zero routed decode dispatches after the run"
             )
         if graphed <= 0:
             raise ValueError(
-                f"rank {rank}: zero captured decode dispatches after the run "
-                f"({dispatches} ran, none graphed)"
+                f"rank {rank}: {dispatches} decode dispatches ran but none were "
+                "graph-replayed"
             )
-        if eager:
+        if eager_dispatch:
             raise ValueError(
-                f"rank {rank}: {eager} eager skip-decode layer call(s); the "
-                "routed body must be structurally unreachable in serving"
+                f"rank {rank}: {eager_dispatch} eager decode dispatch(es); the "
+                "routed step must run captured"
+            )
+        if eager_layer:
+            raise ValueError(
+                f"rank {rank}: {eager_layer} eager skip-decode layer call(s); "
+                "the eager body must be structurally unreachable in serving"
             )
         activity.append(
             {
                 "rank": rank,
                 "decode_dispatches_total": dispatches,
-                "decode_graph_dispatches_total": graphed,
-                "eager_skip_decode_layer_calls": eager,
+                "whole_step_graph_replays": graphed,
+                "eager_dispatches": eager_dispatch,
+                "eager_skip_decode_layer_calls": eager_layer,
             }
         )
     return activity

@@ -116,16 +116,24 @@ print(h.hexdigest())" 2>&1)
   echo "  $ARM package=$WANT_PKG digest=${ARM_ID:0:16} tree=$TREE" | tee -a $RES/summary.txt
   echo "$ARM_ID" > $OUT/arm_identity.sha256
 
-  # Port vacancy before EVERY arm, not once before the loop. If the first arm
-  # (or a child of it) survives shutdown, the second arm's PID can be alive and
-  # merely loading while the OLD server answers /health -- so the frozen arm
-  # would measure the refactored server and every gate would still pass.
-  for _w in $(seq 1 30); do
-    curl -sf -m 2 http://127.0.0.1:$PORT/health >/dev/null 2>&1 || break
-    sleep 2
-  done
-  if curl -sf -m 2 http://127.0.0.1:$PORT/health >/dev/null 2>&1; then
-    echo "  $ARM ABORT: port $PORT still served by a previous process" | tee -a $RES/summary.txt
+  # TCP BIND vacancy before EVERY arm. Testing /health for a 2xx was not a
+  # vacancy test: a process already listening but still starting, returning 503,
+  # or timing out, all read as "vacant" -- and then the old server answers the
+  # workload while the new PID is merely alive and loading.
+  port_free() {
+    ! $V -c "
+import socket, sys
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+try:
+    s.bind(('127.0.0.1', $PORT)); s.close(); sys.exit(1)   # bound => free
+except OSError:
+    sys.exit(0)                                            # in use
+"
+  }
+  for _w in $(seq 1 45); do port_free && break; sleep 2; done
+  if ! port_free; then
+    echo "  $ARM ABORT: port $PORT is still bound by another process" | tee -a $RES/summary.txt
     exit 8
   fi
 
@@ -185,18 +193,29 @@ else:
     exit 7
   fi
   echo "    warmup ok (24/24, zero errors, full token mass)" | tee -a $RES/summary.txt
-  # The SERVER that answered must be running THIS arm's code. server_info
-  # reports the package the live process loaded; a stale server from the other
-  # arm would report the other package.
-  SRV_PKG=$(curl -s -m 10 http://127.0.0.1:$PORT/server_info \
-            | $V -c "
-import json,sys
-d=json.load(sys.stdin)
-for st in (d.get('internal_states') or []):
-    rt = st.get('vp_runtime') or st.get('runtime') or {}
-    if rt: print('vpipe'); break
-else: print('unknown')" 2>/dev/null)
-  echo "    served package family: ${SRV_PKG:-unknown}" | tee -a $RES/summary.txt
+  # ASSERT that the process LISTENING on the port belongs to the process group
+  # we spawned. This is the only check that actually ties the endpoint to this
+  # arm; the previous family probe could only ever print 'vpipe' or 'unknown',
+  # could never identify the frozen vp arm, turned parse failures into
+  # 'unknown', and was echoed rather than asserted.
+  SPGID=$(ps -o pgid= -p $SPID 2>/dev/null | tr -d ' ')
+  LPIDS=$(ss -ltnpH "sport = :$PORT" 2>/dev/null | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u)
+  if [ -z "$SPGID" ] || [ -z "$LPIDS" ]; then
+    echo "  $ARM ABORT: cannot identify the listener on port $PORT" \
+         "(spgid='$SPGID' listeners='$LPIDS')" | tee -a $RES/summary.txt
+    exit 8
+  fi
+  owned=0
+  for lp in $LPIDS; do
+    lpgid=$(ps -o pgid= -p "$lp" 2>/dev/null | tr -d ' ')
+    [ "$lpgid" = "$SPGID" ] && owned=1
+  done
+  if [ $owned -ne 1 ]; then
+    echo "  $ARM ABORT: port $PORT is served by pid(s) '$LPIDS' outside our" \
+         "process group $SPGID -- this arm would measure another server" | tee -a $RES/summary.txt
+    exit 8
+  fi
+  echo "    endpoint owned by our process group ($SPGID)" | tee -a $RES/summary.txt
 
   for REP in 1 2 3; do
     $V $RUN/perf_client.py --url http://127.0.0.1:$PORT \

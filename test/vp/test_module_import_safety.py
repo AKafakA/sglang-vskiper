@@ -43,21 +43,45 @@ def module_level_bindings(tree):
                 bound.add(alias.asname or alias.name.split(".")[0])
         elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             bound.add(stmt.name)
+        elif isinstance(stmt, ast.If):
+            # DEFINITE assignment: a name counts as bound after an if only if
+            # BOTH arms bind it. Unioning the branches (what ast.walk does) let
+            # a name bound only in the else-arm satisfy later statements.
+            then_b = module_level_bindings(ast.Module(body=stmt.body, type_ignores=[]))
+            else_b = (module_level_bindings(ast.Module(body=stmt.orelse, type_ignores=[]))
+                      if stmt.orelse else set())
+            bound |= (then_b & else_b) if stmt.orelse else set()
+        elif isinstance(stmt, ast.Try):
+            # try/except binds only what EVERY completing path binds. The common
+            # `try: import x / except ImportError: x = None` binds x on both, so
+            # it stays clean; a name bound only in the try body does not.
+            body_b = module_level_bindings(ast.Module(body=stmt.body, type_ignores=[]))
+            handler_bs = [
+                module_level_bindings(ast.Module(body=h.body, type_ignores=[]))
+                for h in stmt.handlers
+            ]
+            common = body_b
+            for hb in handler_bs:
+                common &= hb
+            if stmt.orelse:
+                common |= module_level_bindings(
+                    ast.Module(body=stmt.orelse, type_ignores=[]))
+            if stmt.finalbody:
+                common |= module_level_bindings(
+                    ast.Module(body=stmt.finalbody, type_ignores=[]))
+            bound |= common
+        elif isinstance(stmt, (ast.For, ast.AsyncFor, ast.While)):
+            # a loop body may execute zero times, so it binds nothing definitely
+            pass
         else:
-            # assignments, for-targets, with-items, except-names that really do
-            # execute at module scope
             for sub in ast.walk(stmt):
                 if isinstance(sub, ast.Assign):
                     for t in sub.targets:
                         bound.update(_targets(t))
                 elif isinstance(sub, (ast.AnnAssign, ast.AugAssign)):
                     bound.update(_targets(sub.target))
-                elif isinstance(sub, (ast.For, ast.AsyncFor, ast.comprehension)):
-                    bound.update(_targets(sub.target))
                 elif isinstance(sub, ast.withitem) and sub.optional_vars is not None:
                     bound.update(_targets(sub.optional_vars))
-                elif isinstance(sub, ast.ExceptHandler) and sub.name:
-                    bound.add(sub.name)
                 elif isinstance(sub, (ast.Import, ast.ImportFrom)):
                     for alias in sub.names:
                         bound.add(alias.asname or alias.name.split(".")[0])
