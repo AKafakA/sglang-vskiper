@@ -107,11 +107,22 @@ def scan():
 
 
 def test_no_import_time_nameerror():
+    # The package must actually have been found. Without this the test passes
+    # when PKG resolves to the wrong place: zero modules scanned, no problems
+    # found, green. A check whose subject can be empty is not a check.
+    modules = list(PKG.glob("*.py"))
+    assert len(modules) >= 20, (
+        f"expected the vpipe package at {PKG}, found {len(modules)} modules"
+    )
     problems = scan()
     assert not problems, "module-level names that would NameError on import: " + repr(problems)
 
 
 if __name__ == "__main__":
+    modules = list(PKG.glob("*.py"))
+    if len(modules) < 20:
+        print(f"  FATAL: expected the vpipe package at {PKG}, found {len(modules)} modules")
+        sys.exit(2)
     found = scan()
     for name, bad in found.items():
         for n, ln in bad:
