@@ -17,6 +17,7 @@ from dataclasses import dataclass, replace
 from functools import lru_cache
 from typing import Any, Mapping, Optional
 import torch
+from pathlib import PurePosixPath
 from sglang.srt.vpipe.env import (
     ADASKIP_DENSE_REFERENCE_MLP_ENV,
     ADASKIP_FULL_GRAPH_SKIPPER,
@@ -165,11 +166,65 @@ class AdaSkipFixedProfileFullGraphAdapter(FullGraphSkipperAdapter):
         # adapter lives (reset_runtime_state must NOT drop it).
         self._fixed_tensor_cache: dict[Any, tuple] = {}
 
+    def assert_profile_matches_checkpoint(
+        self, model_identity: Optional[Mapping[str, str]]
+    ) -> None:
+        """Bind the calibration profile to the CHECKPOINT it was measured on.
+
+        Layer count alone is not identity. Every Llama-3-8B derivative has 32
+        layers, so a profile calibrated on a different checkpoint used to load
+        happily and apply ITS skip masks and compensation scales -- silently
+        changing what the server generates, with no error and no attestation
+        difference. Skip decisions are checkpoint-specific by construction.
+
+        Fail closed: a profile with no declared provenance, or a deployment
+        whose checkpoint identity cannot be determined, is refused rather than
+        assumed compatible.
+        """
+
+        want_rev = (self.profile.model_revision or "").strip()
+        want_id = (self.profile.model_id or "").strip()
+        if not want_rev and not want_id:
+            raise ValueError(
+                "AdaSkip profile declares neither model_revision nor model_id, "
+                "so it cannot be bound to the served checkpoint; rebuild it "
+                "with provenance"
+            )
+        ident = dict(model_identity or {})
+        got_rev = (ident.get("revision") or "").strip()
+        got_id = (ident.get("model_id") or "").strip()
+        if want_rev and got_rev:
+            if got_rev != want_rev:
+                raise ValueError(
+                    f"AdaSkip profile was calibrated on revision {want_rev!r} "
+                    f"but the served checkpoint is {got_rev!r}; its skip masks "
+                    "and compensation scales do not describe this model"
+                )
+            return
+        # No revision on one side: fall back to the checkpoint DIRECTORY NAME,
+        # which pins the released snapshot even when the absolute path differs
+        # between hosts. Comparing full paths would reject a correct profile
+        # merely staged elsewhere.
+        if want_id and got_id:
+            if PurePosixPath(want_id).name != PurePosixPath(got_id).name:
+                raise ValueError(
+                    f"AdaSkip profile was calibrated on {PurePosixPath(want_id).name!r} "
+                    f"but the served checkpoint is {PurePosixPath(got_id).name!r}"
+                )
+            return
+        raise ValueError(
+            "AdaSkip cannot verify the served checkpoint against the profile "
+            f"(profile revision={want_rev or '<none>'} id={want_id or '<none>'}; "
+            f"served revision={got_rev or '<none>'} id={got_id or '<none>'}). "
+            "Refusing rather than applying another checkpoint's skip masks."
+        )
+
     def routed_layer_ids(
         self,
         *,
         num_hidden_layers: int,
         flexidepth_layer_ids: tuple[int, ...],
+        model_identity: Optional[Mapping[str, str]] = None,
     ) -> tuple[int, ...]:
         if flexidepth_layer_ids:
             raise ValueError(
@@ -179,6 +234,7 @@ class AdaSkipFixedProfileFullGraphAdapter(FullGraphSkipperAdapter):
             raise ValueError(
                 "AdaSkip profile layer count does not match the served model"
             )
+        self.assert_profile_matches_checkpoint(model_identity)
         if self.profile.online_decode_extra_mlp:
             return tuple(range(num_hidden_layers))
         return self.profile.routed_layer_ids
@@ -188,10 +244,12 @@ class AdaSkipFixedProfileFullGraphAdapter(FullGraphSkipperAdapter):
         *,
         num_hidden_layers: int,
         flexidepth_layer_ids: tuple[int, ...],
+        model_identity: Optional[Mapping[str, str]] = None,
     ) -> tuple[int, ...]:
         self.routed_layer_ids(
             num_hidden_layers=num_hidden_layers,
             flexidepth_layer_ids=flexidepth_layer_ids,
+            model_identity=model_identity,
         )
         return tuple(
             layer.layer_id

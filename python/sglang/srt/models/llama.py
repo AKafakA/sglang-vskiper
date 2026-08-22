@@ -646,14 +646,23 @@ class LlamaModel(nn.Module):
             if getattr(layer, "fd_router", None) is not None
         ]
         loaded_fd_layer_ids = tuple(int(layer.layer_id) for layer in loaded_fd_layers)
+        # Checkpoint identity, so a skipper carrying calibration data can verify
+        # that data was measured on THIS model. Layer count alone is not
+        # identity: every Llama-3-8B derivative has 32 layers.
+        served_identity = {
+            "revision": str(getattr(config, "_commit_hash", "") or ""),
+            "model_id": str(getattr(config, "_name_or_path", "") or ""),
+        }
         routed_layer_ids = full_graph_skipper.routed_layer_ids(
             num_hidden_layers=config.num_hidden_layers,
             flexidepth_layer_ids=loaded_fd_layer_ids,
+            model_identity=served_identity,
         )
         attention_routed_layer_ids = (
             full_graph_skipper.attention_routed_layer_ids(
                 num_hidden_layers=config.num_hidden_layers,
                 flexidepth_layer_ids=loaded_fd_layer_ids,
+                model_identity=served_identity,
             )
         )
         routed_layer_id_set = frozenset(routed_layer_ids)
