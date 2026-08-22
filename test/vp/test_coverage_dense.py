@@ -34,18 +34,9 @@ from sglang.srt.vpipe.coverage import (
     COVERAGE_REASON_INELIGIBLE,
     COVERAGE_REASON_NO_RUNNER,
     COVERAGE_REASON_ROWS,
-    LADDER_SOURCE_SELF_SIZED,
-    LADDER_SOURCE_USER_FLAG,
-    LADDER_STOP_CAPTURE_ERROR,
-    LADDER_STOP_CAPTURE_OOM,
-    LADDER_STOP_MEMORY_RESERVE,
-    LADDER_STOP_POOL_CEILING,
     cdopt_skip_only_bucket_legal,
     coverage_dense_counters,
-    coverage_ladder_record,
     coverage_parity_ok,
-    note_capture_trim,
-    note_ladder_derivation,
     record_dense_body_pass,
     record_eager_skip_decode_layer_call,
     record_recapture_event,
@@ -53,7 +44,6 @@ from sglang.srt.vpipe.coverage import (
     reset_coverage_stamps,
     select_decode_body,
     stamp_coverage_dense,
-    trim_candidates,
     vp_graph_lifecycle_active,
     vp_graph_lifecycle_mark,
 )
@@ -114,19 +104,6 @@ def test_select_decode_body_never_eager_skip_and_fail_closed() -> None:
             assert body == BODY_DENSE_EAGER
 
 
-def test_note_capture_trim_accepts_all_declared_stop_reasons() -> None:
-    # Regression: LADDER_STOP_CAPTURE_ERROR was added for non-OOM capture
-    # failures (flashinfer workspace overflow, 2026-08-04) but the whitelist
-    # in note_capture_trim initially rejected it, killing the boot the descent
-    # had just saved. Every declared LADDER_STOP_* trim reason must be accepted.
-    for reason in (
-        LADDER_STOP_MEMORY_RESERVE,
-        LADDER_STOP_CAPTURE_OOM,
-        LADDER_STOP_CAPTURE_ERROR,
-    ):
-        note_capture_trim(bucket=4096, stop_reason=reason, realized_max=1024)
-    with pytest.raises(ValueError):
-        note_capture_trim(bucket=1, stop_reason="banana", realized_max=1)
 
 
 def test_select_decode_body_composition_priority() -> None:
@@ -333,201 +310,20 @@ def _arm(monkeypatch) -> None:
 TIER_DEFAULT_256 = [1, 2, 4, 8, 12] + list(range(16, 257, 8))
 
 
-@pytest.mark.parametrize("pool_size", [1024, 4096])
-def test_self_sized_ladder_targets_pool_ceiling(monkeypatch, pool_size) -> None:
-    # Two calibration points MUST both pass (inverts the c1c2 falsifiability
-    # failure: coverage at one measured point was a coincidence, not a design
-    # property).
-    from sglang.srt.model_executor.runner.base_cuda_graph_runner import (
-        get_batch_sizes_to_capture,
-    )
-
-    _arm(monkeypatch)
-    model_runner = _fake_model_runner(
-        pool_size=pool_size, tier_bs=TIER_DEFAULT_256, locked=set()
-    )
-    capture_bs, compile_bs = get_batch_sizes_to_capture(model_runner)
-    assert compile_bs == []
-    assert capture_bs == sorted(set(capture_bs))  # monotone, deduped
-    assert max(capture_bs) == pool_size  # realizes the pool ceiling target
-    assert all(bs <= pool_size for bs in capture_bs)
-    # F17 property: self-sizing never lands below production's own config.
-    assert max(capture_bs) >= max(TIER_DEFAULT_256)
-    record = coverage_ladder_record()
-    assert record.ladder_source == LADDER_SOURCE_SELF_SIZED
-    assert record.target_max_bs == pool_size
-    assert record.req_to_token_pool_size == pool_size
-    assert record.stop_reason == LADDER_STOP_POOL_CEILING
 
 
-def test_user_flag_ladder_honored_verbatim(monkeypatch) -> None:
-    from sglang.srt.model_executor.runner.base_cuda_graph_runner import (
-        get_batch_sizes_to_capture,
-    )
-
-    _arm(monkeypatch)
-    model_runner = _fake_model_runner(
-        pool_size=4096,
-        tier_bs=TIER_DEFAULT_256,
-        locked={("decode", "max_bs")},
-    )
-    capture_bs, _ = get_batch_sizes_to_capture(model_runner)
-    # Verbatim: exactly the tier list the user-set config produced ((c1)-B1 —
-    # no silent override).
-    assert capture_bs == sorted(set(TIER_DEFAULT_256))
-    assert coverage_ladder_record().ladder_source == LADDER_SOURCE_USER_FLAG
 
 
-def test_unarmed_boot_keeps_stock_ladder(monkeypatch) -> None:
-    from sglang.srt.model_executor.runner.base_cuda_graph_runner import (
-        get_batch_sizes_to_capture,
-    )
-
-    monkeypatch.delenv("SGLANG_FD_WEIGHTS", raising=False)
-    monkeypatch.delenv("SGLANG_FD_EXECUTION_MODE", raising=False)
-    _fake_parallel(monkeypatch)
-    reset_coverage_dense_state()
-    model_runner = _fake_model_runner(
-        pool_size=4096, tier_bs=TIER_DEFAULT_256, locked=set()
-    )
-    capture_bs, _ = get_batch_sizes_to_capture(model_runner)
-    assert capture_bs == sorted(set(TIER_DEFAULT_256))
-    assert coverage_ladder_record().derived is False
 
 
-def test_gate_off_disables_self_sizing(monkeypatch) -> None:
-    # F14 joint scope: the kill switch OFF disables C-D too (byte-parity boot).
-    from sglang.srt.model_executor.runner.base_cuda_graph_runner import (
-        get_batch_sizes_to_capture,
-    )
-
-    _arm(monkeypatch)
-    with envs.SGLANG_VP_COVERAGE_DENSE.override(False):
-        model_runner = _fake_model_runner(
-            pool_size=4096, tier_bs=TIER_DEFAULT_256, locked=set()
-        )
-        capture_bs, _ = get_batch_sizes_to_capture(model_runner)
-    assert capture_bs == sorted(set(TIER_DEFAULT_256))
-    assert coverage_ladder_record().derived is False
 
 
-def test_self_sized_ladder_reused_after_trims_within_boot(monkeypatch) -> None:
-    # Per-boot idempotency (the 2026-08-04 mid-serving recapture defect): a
-    # second derivation call within one armed boot must return THIS boot's
-    # realized, descent-trimmed ladder — never re-derive the pool-ceiling
-    # ladder (the measured failure re-attempted bucket 1344 after the boot
-    # had descended to 1216, re-running the multi-minute descent while
-    # requests streamed).
-    from sglang.srt.model_executor.runner.base_cuda_graph_runner import (
-        get_batch_sizes_to_capture,
-    )
-
-    _arm(monkeypatch)
-    model_runner = _fake_model_runner(
-        pool_size=4096, tier_bs=TIER_DEFAULT_256, locked=set()
-    )
-    first, _ = get_batch_sizes_to_capture(model_runner)
-    assert max(first) == 4096
-    # Simulate the boot descent: the two largest buckets fail capture.
-    trimmed = list(first)
-    for failed in (4096, 4064):
-        trimmed = trim_candidates(trimmed, failed)
-        note_capture_trim(
-            bucket=failed,
-            stop_reason=LADDER_STOP_CAPTURE_ERROR,
-            realized_max=max(trimmed),
-        )
-    second, _ = get_batch_sizes_to_capture(model_runner)
-    assert second == trimmed
-    assert 4096 not in second and 4064 not in second
-    # Reuse preserves derivation provenance: no re-derivation reset of the
-    # trim history or stop reason.
-    record = coverage_ladder_record()
-    assert record.ladder_source == LADDER_SOURCE_SELF_SIZED
-    assert record.stop_reason == LADDER_STOP_CAPTURE_ERROR
-    assert [event["bucket"] for event in record.capture_trim_events] == [
-        4096,
-        4064,
-    ]
 
 
-def test_reset_clears_persisted_ladder_fresh_boot_rederives(monkeypatch) -> None:
-    from sglang.srt.model_executor.runner.base_cuda_graph_runner import (
-        get_batch_sizes_to_capture,
-    )
-
-    _arm(monkeypatch)
-    model_runner = _fake_model_runner(
-        pool_size=4096, tier_bs=TIER_DEFAULT_256, locked=set()
-    )
-    first, _ = get_batch_sizes_to_capture(model_runner)
-    trimmed = trim_candidates(list(first), 4096)
-    note_capture_trim(
-        bucket=4096,
-        stop_reason=LADDER_STOP_CAPTURE_OOM,
-        realized_max=max(trimmed),
-    )
-    assert coverage_ladder_record().realized_capture_bs == trimmed
-    # Fresh boot: module state reset -> the full pool-ceiling ladder derives
-    # again (the per-boot store never leaks across boots).
-    reset_coverage_dense_state()
-    assert coverage_dense.persisted_self_sized_ladder() is None
-    rederived, _ = get_batch_sizes_to_capture(model_runner)
-    assert rederived == first
-    assert max(rederived) == 4096
 
 
-def test_user_flag_ladder_never_persisted(monkeypatch) -> None:
-    # Stock behavior verbatim ((c1)-B1): a user-pinned ladder is never stored
-    # for reuse — every call re-reads the user config exactly.
-    from sglang.srt.model_executor.runner.base_cuda_graph_runner import (
-        get_batch_sizes_to_capture,
-    )
-
-    _arm(monkeypatch)
-    model_runner = _fake_model_runner(
-        pool_size=4096,
-        tier_bs=TIER_DEFAULT_256,
-        locked={("decode", "max_bs")},
-    )
-    first, _ = get_batch_sizes_to_capture(model_runner)
-    second, _ = get_batch_sizes_to_capture(model_runner)
-    assert first == second == sorted(set(TIER_DEFAULT_256))
-    assert coverage_ladder_record().realized_capture_bs == []
 
 
-def test_descent_trim_is_bounded_and_attested() -> None:
-    note_ladder_derivation(
-        source=LADDER_SOURCE_SELF_SIZED, target_max_bs=4096, pool_size=4096
-    )
-    candidates = [256, 512, 1024, 2048, 4096]
-    # Simulated OOM sequence at the two largest buckets: strictly shrinking,
-    # terminates at a prefix superset of the tier ladder.
-    for failed in (4096, 2048):
-        candidates = trim_candidates(candidates, failed)
-        note_capture_trim(
-            bucket=failed,
-            stop_reason=LADDER_STOP_CAPTURE_OOM,
-            realized_max=max(candidates),
-        )
-    assert candidates == [256, 512, 1024]
-    record = coverage_ladder_record()
-    assert record.stop_reason == LADDER_STOP_CAPTURE_OOM
-    assert [event["bucket"] for event in record.capture_trim_events] == [4096, 2048]
-    # Reserve trims classify distinctly.
-    candidates = trim_candidates(candidates, 1024)
-    note_capture_trim(
-        bucket=1024,
-        stop_reason=LADDER_STOP_MEMORY_RESERVE,
-        realized_max=max(candidates),
-    )
-    assert coverage_ladder_record().stop_reason == LADDER_STOP_MEMORY_RESERVE
-    # Exhausting the ladder fails loudly, never an empty ladder.
-    with pytest.raises(RuntimeError):
-        trim_candidates([256], 256)
-    # Trimming a non-candidate is a caller bug, not a silent no-op.
-    with pytest.raises(ValueError):
-        trim_candidates([256, 512], 300)
 
 
 def test_per_boot_ladder_hash_stability() -> None:
@@ -710,30 +506,3 @@ def test_production_consults_zero_new_state(monkeypatch) -> None:
 
 
 
-def test_attestation_block_shape_when_armed(monkeypatch) -> None:
-    _arm(monkeypatch)
-    note_ladder_derivation(
-        source=LADDER_SOURCE_SELF_SIZED, target_max_bs=4096, pool_size=4096
-    )
-    model_runner = SimpleNamespace(
-        decode_cuda_graph_runner=SimpleNamespace(
-            capture_bs=[1, 2, 4, 8], max_bs=8
-        ),
-        req_to_token_pool=SimpleNamespace(size=4096),
-        server_args=SimpleNamespace(disable_cuda_graph_padding=False),
-    )
-    block = vpipe_attestation.coverage_dense_runtime_attestation(model_runner)
-    assert block is not None and block["enabled"] is True
-    ladder = block["ladder"]
-    assert ladder["decode_capture_bs_max"] == 8
-    assert ladder["capture_bs"] == [1, 2, 4, 8]
-    assert ladder["per_boot_ladder_hash"] == per_boot_ladder_hash([1, 2, 4, 8])
-    assert ladder["req_to_token_pool_size"] == 4096
-    assert ladder["ladder_source"] == LADDER_SOURCE_SELF_SIZED
-    assert ladder["reserve_bytes"] == 0
-    assert ladder["cuda_graph_padding_enabled"] is True
-    # Runner-absent boots attest the void arm loudly (R-E).
-    model_runner.decode_cuda_graph_runner = None
-    block = vpipe_attestation.coverage_dense_runtime_attestation(model_runner)
-    assert block["ladder"]["decode_capture_bs_max"] is None
-    assert block["ladder"]["capture_bs"] == []

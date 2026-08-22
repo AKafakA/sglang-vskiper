@@ -150,9 +150,7 @@ def stable_server_identity(server_info: dict[str, Any]) -> dict[str, Any]:
                     "decode_capture_bs_max",
                     "capture_bs",
                     "per_boot_ladder_hash",
-                    "capture_trim_events",
                     "coverage_ratio",
-                    "stop_reason",
                 ):
                     fd_c3_ladder.pop(key, None)
         model = runtime.get("model")
