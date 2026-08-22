@@ -381,6 +381,19 @@ class ModelRunner(ModelRunnerKVCacheMixin):
     ):
         # Parse args
         self.mem_fraction_static = mem_fraction_static
+        # Removed-execution-mode flags are refused for EVERY model, not just the
+        # one vPipe hooks. The full validator runs from LlamaForCausalLM only,
+        # so without this a non-Llama server accepted SGLANG_VP_SCHED=1
+        # unchallenged while the scheduler still published a vp_runtime
+        # attestation block for it.
+        # Imported locally, as every other vpipe import in this class is:
+        # vpipe.validation reaches vpipe.routing, which imports back into
+        # model_executor.runner_backend_utils, so a module-level import here
+        # risks a cycle.
+        from sglang.srt.vpipe.validation import assert_no_removed_execution_flags
+
+        assert_no_removed_execution_flags()
+
         # Set on target by `_resolve_memory_pool_config`; passed in for draft
         # workers so they reuse target's resolved sizes (replaces legacy
         # `server_args._draft_pool_config` mutation hack).

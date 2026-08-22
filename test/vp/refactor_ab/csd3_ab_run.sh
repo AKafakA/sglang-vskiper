@@ -98,6 +98,16 @@ for mod in ('sglang.srt.vpipe', 'sglang.srt.vp'):
        --requests-jsonl $R/serving/gsm8k.first100.requests.jsonl \
        --n $N --rate $RATE --seed $((1234+REP)) --max-new-tokens $MAXNEW \
        --out $OUT/rep$REP.json > $OUT/rep$REP.log 2>&1
+    rep_rc=$?
+    if [ $rep_rc -ne 0 ] || [ ! -s $OUT/rep$REP.json ]; then
+      # Stop the arm at the FIRST failed repetition. Continuing leaves a
+      # partial arm whose remaining reps look healthy, and a partial arm is
+      # what let one repetition be compared against three.
+      echo "    rep$REP FAILED rc=$rep_rc -- aborting this arm" | tee -a $RES/summary.txt
+      tail -5 $OUT/rep$REP.log 2>/dev/null | sed 's/^/      /' | tee -a $RES/summary.txt
+      kill $SPID 2>/dev/null; sleep 5; kill -9 $SPID 2>/dev/null
+      exit 6
+    fi
     echo "    rep$REP $($V -c "
 import json;d=json.load(open('$OUT/rep$REP.json'))['summary']
 print('ok=%s err=%s offered=%s achieved=%s toks=%s ttft_mean=%sms tpot_mean=%sms'%(
