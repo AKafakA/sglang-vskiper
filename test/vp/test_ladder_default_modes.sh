@@ -21,11 +21,42 @@ python3 - "$LADDER" > "$WORK/harness.sh" <<'PY'
 import re, sys, pathlib
 L = pathlib.Path(sys.argv[1]).read_text().splitlines()
 start = next(i for i, l in enumerate(L) if l.startswith("launch_sglang_server()"))
-end = next(i for i in range(start, len(L)) if L[i].strip() == "esac" and i > start + 40)
-body = L[start:end + 1] + ["}"]
+# WHOLE function, to its closing brace at column 0. Cutting at the first "esac"
+# stopped right after the removed-mode rejection, so an ALLOWED mode returned
+# immediately and never reached the weight check, execution-mode and profile
+# resolution, the direct_eager graph check, unknown-mode handling, or command
+# construction -- the test passed while those were broken.
+end = next(i for i in range(start + 1, len(L)) if L[i] == "}")
+body = L[start:end + 1]
 print("#!/usr/bin/env bash"); print("set -uo pipefail")
-for n in sorted(set(re.findall(r'\$\{?(SGBENCH_[A-Z0-9_]+)', "\n".join(body)))):
-    print(f'{n}=0')
+# Auto-stub EVERY uppercase environment-looking name the function reads, not a
+# hand-kept list: chasing them one NameError at a time is how a stub list drifts
+# out of date and quietly turns a real failure into a missing-variable failure.
+provided = {"FD_WEIGHTS", "MODEL_PATH", "PORT", "ROOT", "DRY_RUN", "SERVER_PID",
+            "PATH", "HOME", "PYTHONPATH", "IFS", "PIPESTATUS", "BASH_SOURCE"}
+names = sorted(set(re.findall(r'\$\{?([A-Z][A-Z0-9_]{2,})', "\n".join(body))) - provided)
+for n in names:
+    print(f'{n}="${{{n}:-0}}"')
+# inputs the full function reads beyond SGBENCH_*, stubbed so a supported mode
+# can traverse every pre-launch check instead of dying on the environment
+# DIRECT assignment, after the auto-stubs. Using ${VAR:-default} here resolved
+# to the stub value (0), not the default, because the stub had already bound the
+# name -- which surfaced as "unknown server profile 0" the moment the die stub
+# was made to exit like the real one.
+print('SGBENCH_FD_EXECUTION_MODE=full_graph')
+print('SGBENCH_CANDIDATE_SERVER_PROFILE=breakable_dynamic')
+print('SGBENCH_BASELINE_SERVER_PROFILE=production')
+print('FD_WEIGHTS=/etc/hostname')       # -s true, so the weight check passes
+print('MODEL_PATH=/tmp; PORT=30999; ROOT=.; DRY_RUN=1')
+print('HF_HOME=/tmp; HF_HUB_OFFLINE=1; TRANSFORMERS_OFFLINE=1')
+print('MODEL_ID=dummy; SERVER_PID=0')
+print('join_by(){ local d=$1; shift; printf "%s" "$1"; shift; printf "%s%s" "$d" "$@"; }')
+# EXIT, not return -- matching the real die() at vast_a100_ladder.sh:162-165.
+# A stub that merely returned let execution continue past a failed check, so an
+# injected "missing required file" defect sailed through this gate. A stub
+# weaker than the thing it stands in for turns the test into theatre.
+print('die(){ echo "ERROR: $*" >&2; exit 1; }')
+print('capture_server_info(){ :; }; start_load_sampler(){ :; }; wait_sglang_ready(){ :; }')
 print("\n".join(body))
 PY
 # shellcheck disable=SC1090
@@ -43,8 +74,18 @@ mapfile -t defaults < <(grep -oE 'SGBENCH_MODES="(\$\{SGBENCH_MODES:-)?[a-z_,]+'
                         | sed -E 's/.*[:-]-?//; s/SGBENCH_MODES="//' | tr ',' '\n' | sort -u | grep -v '^$')
 echo "default modes found: ${defaults[*]}"
 for m in "${defaults[@]}"; do
-  if refused "$m"; then echo "  *** DEFAULT MODE REFUSED BY PREFLIGHT: $m"; fail=1
-  else echo "  ok   default mode runnable: $m"; fi
+  out=$(launch_sglang_server "$m" 30999 /dev/null 2>&1); rc=$?
+  if [ $rc -eq 2 ] && [[ "$out" == *FATAL* ]]; then
+    echo "  *** DEFAULT MODE REFUSED BY PREFLIGHT: $m"; fail=1
+  elif [[ "$out" != *"launch_server"* ]]; then
+    # "not refused" is too weak: the mode must actually reach command
+    # construction. Otherwise a mode that dies midway on some other check
+    # still counts as runnable, which is how the missing-profile failure
+    # survived this gate.
+    echo "  *** DEFAULT MODE DID NOT REACH LAUNCH: $m (rc=$rc) $(echo "$out" | tail -1)"; fail=1
+  else
+    echo "  ok   default mode reaches launch construction: $m"
+  fi
 done
 
 # 2. removed modes must still be refused (the guard has not rotted)

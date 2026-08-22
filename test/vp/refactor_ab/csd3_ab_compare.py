@@ -67,6 +67,16 @@ print(f"  -> {'EXACT' if work_ok else '*** MISMATCH -- timings NOT comparable **
 oka = [r["ok"] for r in A]
 okb = [r["ok"] for r in B]
 count_ok = len(set(oka + okb)) == 1
+# ...and equal to what was REQUESTED. Two symmetrically truncated arms agree
+# with each other perfectly while measuring less work than the run asked for.
+req = {r.get("requested_n") for r in A + B}
+if req != {None}:
+    if len(req) != 1 or oka[0] != next(iter(req)):
+        print(f"GATE requested count: requested={sorted(x for x in req if x is not None)} "
+              f"completed={oka[0]} -> *** ARMS AGREE BUT DID NOT DO THE REQUESTED WORK ***")
+        count_ok = False
+    else:
+        print(f"GATE requested count: {next(iter(req))} requested, {oka[0]} completed -> MATCH")
 print(f"GATE request count: refactored ok={oka} frozen ok={okb}")
 print(f"  -> {'IDENTICAL' if count_ok else '*** DIFFERENT -- per-request means have different denominators ***'}")
 work_ok = work_ok and count_ok

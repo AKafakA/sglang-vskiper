@@ -53,7 +53,10 @@ for path in \
   "$SERVER_SOURCE_ARCHIVE" \
   "$RUNNER_SOURCE_ARCHIVE" \
   "$EXPECTED_RUNTIME" \
-  "$QPS_CONFIG"; do
+  "$QPS_CONFIG" \
+  "$ROOT/test/vp/launch_qps_server.py" \
+  "$ROOT/test/vp/run_qps_evaluation.py" \
+  "$ROOT/test/vp/validate_runtime_after.py"; do
   if [[ ! -e "$path" ]]; then
     echo "ERROR: required path does not exist: $path" >&2
     exit 1

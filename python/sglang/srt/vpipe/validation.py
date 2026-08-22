@@ -131,39 +131,41 @@ def assert_no_removed_execution_flags(
     """
 
     values = os.environ if environ is None else environ
-# Two SHAPES here, and conflating them was a defect. The V2/V4 keys name a
-# config PATH: any non-empty value selects the removed runtime. The other
-# three are BOOLEANS: only a truthy value ever did. Rejecting everything
-# "not in ('', '0')" refused an explicit SGLANG_VP_SCHED=false -- a
-# deployment saying OFF -- which is the same over-broad refusal this
-# validator already got wrong once (it briefly rejected every vanilla
-# server). Truthy/falsy sets match the package convention in
-# common.py:215-220.
-_TRUTHY = frozenset({"1", "true", "yes", "on"})
-_FALSY = frozenset({"0", "false", "no", "off", ""})
-for _removed_path in ("SGLANG_VP_V4_CONFIG", "SGLANG_VP_V2_CONFIG"):
-    if str(values.get(_removed_path, "")).strip():
+
+    # Two SHAPES here, and conflating them was a defect. The V2/V4 keys name a
+    # config PATH: any non-empty value selects the removed runtime. The other
+    # three are BOOLEANS: only a truthy value ever did. Rejecting everything
+    # "not in ('', '0')" refused an explicit SGLANG_VP_SCHED=false -- a
+    # deployment saying OFF -- which is the same over-broad refusal this
+    # validator already got wrong once (it briefly rejected every vanilla
+    # server). Truthy/falsy sets match the package convention in
+    # common.py:215-220.
+    truthy = frozenset({"1", "true", "yes", "on"})
+    falsy = frozenset({"0", "false", "no", "off", ""})
+    for removed_path in ("SGLANG_VP_V4_CONFIG", "SGLANG_VP_V2_CONFIG"):
+        if str(values.get(removed_path, "")).strip():
+            raise ValueError(
+                f"{removed_path} names a config for the removed V2/V4 "
+                "runtime, which is not part of this build. Unset it."
+            )
+    for removed_flag in (
+        "SGLANG_VP_SCHED",
+        "SGLANG_FD_VP_STAGE_ROUTE",
+        "SGLANG_FD_VP_PROJECT",
+    ):
+        value = str(values.get(removed_flag, "")).strip().lower()
+        if value in falsy:
+            continue
+        if value in truthy:
+            raise ValueError(
+                f"{removed_flag} selects an execution path that is not part "
+                "of this build (V1/V2/V4 and the inline VP-project body were "
+                "removed). Unset it, or set it to a falsy value."
+            )
         raise ValueError(
-            f"{_removed_path} names a config for the removed V2/V4 "
-            "runtime, which is not part of this build. Unset it."
+            f"{removed_flag} must be a boolean value; got {value!r}"
         )
-for _removed_flag in (
-    "SGLANG_VP_SCHED",
-    "SGLANG_FD_VP_STAGE_ROUTE",
-    "SGLANG_FD_VP_PROJECT",
-):
-    _value = str(values.get(_removed_flag, "")).strip().lower()
-    if _value in _FALSY:
-        continue
-    if _value in _TRUTHY:
-        raise ValueError(
-            f"{_removed_flag} selects an execution path that is not part "
-            "of this build (V1/V2/V4 and the inline VP-project body were "
-            "removed). Unset it, or set it to a falsy value."
-        )
-    raise ValueError(
-        f"{_removed_flag} must be a boolean value; got {_value!r}"
-    )
+
 
 def assert_regime_switch_skipper_capability(adapter: Any) -> None:
     """Fail closed unless the resolved skipper is a binary RUN/PROJECT FlexiDepth.
