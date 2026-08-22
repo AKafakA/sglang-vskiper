@@ -1,4 +1,20 @@
-"""Every vpipe module must be importable without a NameError.
+"""Fast STATIC pre-check for import-time NameErrors.
+
+NOT the authoritative gate. test_package_imports.py imports every module for
+real, in a subprocess, and that is the ground truth. This file exists because
+the package's dependencies are not installed on the source-edit box, so a real
+import cannot run there -- this catches the common cases seconds after an edit
+instead of minutes later on a GPU host.
+
+Treat a disagreement between the two as a bug in THIS file. It approximates
+Python's scoping rules, and that approximation has been wrong in six distinct
+ways (class-body annotations, mutually exclusive branch scopes, aug-assign
+targets, walrus ordering, try/else paths, lambda parameters). A real import
+cannot be wrong about semantics because it does not model them.
+
+Original rationale follows.
+
+Every vpipe module must be importable without a NameError.
 
 This exists because a refactor dedented a function body out to module scope:
 the function ended after binding its first local, and the loops that followed
