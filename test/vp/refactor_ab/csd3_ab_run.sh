@@ -88,10 +88,36 @@ for mod in ('sglang.srt.vpipe', 'sglang.srt.vp'):
     echo "  FATAL: $RUN/perf_client.py missing -- refusing to run a server for nothing" | tee -a $RES/summary.txt
     kill $SPID 2>/dev/null; exit 4
   fi
-  echo "  warmup (discarded)" | tee -a $RES/summary.txt
+  echo "  warmup (discarded, but must SUCCEED)" | tee -a $RES/summary.txt
+  # A failed warmup used to be ignored entirely -- no status check, no set -e.
+  # The first MEASURED repetition then absorbed the cold Triton JIT compile,
+  # which is exactly the false +34.7% TTFT regression this script's header
+  # warns about, while the comparator still reported "valid" deltas.
   $V $RUN/perf_client.py --url http://127.0.0.1:$PORT \
      --requests-jsonl $R/serving/gsm8k.first100.requests.jsonl \
-     --n 24 --rate $RATE --max-new-tokens $MAXNEW --out $OUT/warmup.json > /dev/null 2>&1
+     --n 24 --rate $RATE --max-new-tokens $MAXNEW --out $OUT/warmup.json \
+     > $OUT/warmup.log 2>&1
+  warm_rc=$?
+  warm_ok=$($V -c "
+import json,sys
+try:
+    d = json.load(open('$OUT/warmup.json'))['summary']
+except Exception as e:
+    print('unreadable: %s' % e); sys.exit()
+if d['errors'] or d['ok'] != 24 or d['requested_n'] != 24:
+    print('ok=%s errors=%s requested=%s' % (d['ok'], d['errors'], d['requested_n']))
+elif d['total_output_tokens'] != d['expected_total_output_tokens']:
+    print('tokens %s != expected %s' % (d['total_output_tokens'], d['expected_total_output_tokens']))
+else:
+    print('OK')" 2>&1)
+  if [ $warm_rc -ne 0 ] || [ "$warm_ok" != "OK" ]; then
+    echo "    WARMUP FAILED rc=$warm_rc ($warm_ok) -- aborting this arm; the first" \
+         "measured rep would absorb cold-JIT work" | tee -a $RES/summary.txt
+    tail -5 $OUT/warmup.log 2>/dev/null | sed 's/^/      /' | tee -a $RES/summary.txt
+    kill $SPID 2>/dev/null; sleep 5; kill -9 $SPID 2>/dev/null
+    exit 7
+  fi
+  echo "    warmup ok (24/24, zero errors, full token mass)" | tee -a $RES/summary.txt
 
   for REP in 1 2 3; do
     $V $RUN/perf_client.py --url http://127.0.0.1:$PORT \
