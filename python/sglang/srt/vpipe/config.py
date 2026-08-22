@@ -59,6 +59,7 @@ from sglang.srt.vpipe.env import (
     DEVICE_ROUTE_DIGEST_ENV,
 )
 from sglang.srt.vpipe.common import (
+    _strict_bool,
     DECODE_BODY_HIGH,
     DECODE_BODY_LOW,
     _DECODE_BODIES,
@@ -103,52 +104,28 @@ def full_graph_eager_semantic_debug_enabled(
     """Return whether the trace-only eager execution gate is enabled."""
 
     values = os.environ if environ is None else environ
-    value = str(values.get(FD_EAGER_SEMANTIC_DEBUG_ENV, "0")).strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off", ""}:
-        return False
-    raise ValueError(f"{FD_EAGER_SEMANTIC_DEBUG_ENV} must be a boolean value")
+    return _strict_bool(values, FD_EAGER_SEMANTIC_DEBUG_ENV)
 def full_graph_defer_project_kv_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether PROJECT-row K/V completion runs as graph side work."""
 
     values = os.environ if environ is None else environ
-    value = str(values.get(FD_DEFER_PROJECT_KV_ENV, "0")).strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off", ""}:
-        return False
-    raise ValueError(f"{FD_DEFER_PROJECT_KV_ENV} must be a boolean value")
+    return _strict_bool(values, FD_DEFER_PROJECT_KV_ENV)
 def full_graph_forced_all_run_fastpath_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Bypass conditional branches in the sealed all-RUN control only."""
 
     values = os.environ if environ is None else environ
-    value = str(
-        values.get(FD_FORCED_ALL_RUN_FASTPATH_ENV, "0")
-    ).strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off", ""}:
-        return False
-    raise ValueError(
-        f"{FD_FORCED_ALL_RUN_FASTPATH_ENV} must be a boolean value"
-    )
+    return _strict_bool(values, FD_FORCED_ALL_RUN_FASTPATH_ENV)
 def full_graph_weighted_scatter_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether compact branches fuse route weighting into scatter."""
 
     values = os.environ if environ is None else environ
-    value = str(values.get(FD_WEIGHTED_SCATTER_ENV, "0")).strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off", ""}:
-        return False
-    raise ValueError(f"{FD_WEIGHTED_SCATTER_ENV} must be a boolean value")
+    return _strict_bool(values, FD_WEIGHTED_SCATTER_ENV)
 def full_graph_layer_policies(
     environ: Optional[Mapping[str, str]] = None,
 ) -> dict[int, tuple[str, Optional[float], Optional[float]]]:
@@ -245,24 +222,14 @@ def full_graph_prefill_grouped_mlp_enabled(
     """Return whether prefill uses variable-size RUN/PROJECT GEMM cohorts."""
 
     values = os.environ if environ is None else environ
-    value = str(values.get(FD_PREFILL_GROUPED_MLP_ENV, "0")).strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off", ""}:
-        return False
-    raise ValueError(f"{FD_PREFILL_GROUPED_MLP_ENV} must be a boolean value")
+    return _strict_bool(values, FD_PREFILL_GROUPED_MLP_ENV)
 def full_graph_virtual_cohort_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether compact branches use mapped virtual-tensor I/O."""
 
     values = os.environ if environ is None else environ
-    value = str(values.get(FD_VIRTUAL_COHORT_ENV, "0")).strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off", ""}:
-        return False
-    raise ValueError(f"{FD_VIRTUAL_COHORT_ENV} must be a boolean value")
+    return _strict_bool(values, FD_VIRTUAL_COHORT_ENV)
 def full_graph_compact_config(
     environ: Optional[Mapping[str, str]] = None,
 ) -> tuple[bool, int, float, int]:
@@ -309,12 +276,7 @@ def full_graph_scheduler_convergence_enabled(
     """Return whether scheduler identity and inline K/V readiness are attested."""
 
     values = os.environ if environ is None else environ
-    value = str(values.get(FD_SCHEDULER_CONVERGENCE_ENV, "0")).strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off", ""}:
-        return False
-    raise ValueError(f"{FD_SCHEDULER_CONVERGENCE_ENV} must be a boolean value")
+    return _strict_bool(values, FD_SCHEDULER_CONVERGENCE_ENV)
 def full_graph_layer_counters_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
@@ -325,82 +287,51 @@ def full_graph_layer_counters_enabled(
     if value in {"0", "false", "no", "off", ""}:
         return False
     raise ValueError(f"{FD_LAYER_COUNTERS_ENV} must be a boolean value")
+
+    values = os.environ if environ is None else environ
+    return _strict_bool(values, FD_LAYER_COUNTERS_ENV)
 def full_graph_route_accounting_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether route and compact-work counters run inside graph replay."""
 
     values = os.environ if environ is None else environ
-    value = str(values.get(FD_ROUTE_ACCOUNTING_ENV, "0")).strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off", ""}:
-        return False
-    raise ValueError(f"{FD_ROUTE_ACCOUNTING_ENV} must be a boolean value")
+    return _strict_bool(values, FD_ROUTE_ACCOUNTING_ENV)
 def full_graph_device_route_tape_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether routed actions use one graph-stable device tensor."""
 
     values = os.environ if environ is None else environ
-    value = str(values.get(FD_DEVICE_ROUTE_TAPE_ENV, "0")).strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off", ""}:
-        return False
-    raise ValueError(f"{FD_DEVICE_ROUTE_TAPE_ENV} must be a boolean value")
+    return _strict_bool(values, FD_DEVICE_ROUTE_TAPE_ENV)
 def full_graph_device_route_digest_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether graph replay accumulates a device-only action digest."""
 
     values = os.environ if environ is None else environ
-    value = str(values.get(FD_DEVICE_ROUTE_DIGEST_ENV, "0")).strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off", ""}:
-        return False
-    raise ValueError(f"{FD_DEVICE_ROUTE_DIGEST_ENV} must be a boolean value")
+    return _strict_bool(values, FD_DEVICE_ROUTE_DIGEST_ENV)
 def full_graph_fused_evidence_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether replay evidence is reduced by two fixed-shape kernels."""
 
     values = os.environ if environ is None else environ
-    value = str(values.get(FD_FUSED_EVIDENCE_ENV, "0")).strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off", ""}:
-        return False
-    raise ValueError(f"{FD_FUSED_EVIDENCE_ENV} must be a boolean value")
+    return _strict_bool(values, FD_FUSED_EVIDENCE_ENV)
 def full_graph_forced_all_run_production_attention_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Use the production decode backend in the sealed all-RUN body."""
 
     values = os.environ if environ is None else environ
-    value = str(
-        values.get(FD_FORCED_ALL_RUN_PRODUCTION_ATTN_ENV, "0")
-    ).strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off", ""}:
-        return False
-    raise ValueError(
-        f"{FD_FORCED_ALL_RUN_PRODUCTION_ATTN_ENV} must be a boolean value"
-    )
+    return _strict_bool(values, FD_FORCED_ALL_RUN_PRODUCTION_ATTN_ENV)
 def full_graph_masked_decode_attention_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether Triton decode attention suppresses JUMP-row reads."""
 
     values = os.environ if environ is None else environ
-    value = str(values.get(FD_MASKED_DECODE_ATTN_ENV, "0")).strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off", ""}:
-        return False
-    raise ValueError(f"{FD_MASKED_DECODE_ATTN_ENV} must be a boolean value")
+    return _strict_bool(values, FD_MASKED_DECODE_ATTN_ENV)
 def full_graph_compact_o_proj_config(
     environ: Optional[Mapping[str, str]] = None,
 ) -> tuple[bool, dict[int, float]]:
@@ -458,9 +389,4 @@ def full_graph_mapped_decode_attention_enabled(
     """Return whether sparse RUN rows use persistent virtual-row attention."""
 
     values = os.environ if environ is None else environ
-    value = str(values.get(FD_MAPPED_DECODE_ATTN_ENV, "0")).strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off", ""}:
-        return False
-    raise ValueError(f"{FD_MAPPED_DECODE_ATTN_ENV} must be a boolean value")
+    return _strict_bool(values, FD_MAPPED_DECODE_ATTN_ENV)
