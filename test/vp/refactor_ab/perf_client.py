@@ -52,6 +52,8 @@ def one(url, prompt, max_new):
     ttft = None
     ntok = 0
     last = None
+    malformed = 0
+    last_err = ""
     with urllib.request.urlopen(req, timeout=600) as r:
         for raw in r:
             line = raw.decode(errors="ignore").strip()
@@ -68,11 +70,29 @@ def one(url, prompt, max_new):
                 if "completion_tokens" in m:
                     ntok = m["completion_tokens"]
                 last = obj
-            except Exception:
-                pass
+            except Exception as exc:
+                # Do NOT swallow this. A malformed SSE payload used to be
+                # ignored, so a request that decoded no valid token event still
+                # returned normally and was counted in `ok`.
+                malformed += 1
+                last_err = f"malformed SSE payload: {str(exc)[:60]}"
     e2e = time.perf_counter() - t0
     if ntok == 0 and last is not None:
         ntok = (last.get("meta_info") or {}).get("completion_tokens", 0)
+
+    # sampling_params sets ignore_eos=True with a fixed max_new_tokens, so a
+    # SUCCESSFUL request produces exactly that many tokens. Anything else is a
+    # failed request, not a fast one. Without this, two arms both returning
+    # empty responses give positive request counts, zero errors, identical zero
+    # token totals and adequate achieved rate -- and the comparator reports
+    # latency deltas for no inference work at all.
+    if malformed:
+        raise RuntimeError(f"{malformed} malformed SSE payload(s); {last_err}")
+    if ntok != max_new:
+        raise RuntimeError(
+            f"incomplete generation: {ntok} tokens, expected exactly {max_new} "
+            f"(ignore_eos=True). An empty or truncated response is a failure."
+        )
     tpot = (e2e - (ttft or 0.0)) / max(1, ntok - 1)
     return ttft or e2e, tpot, e2e, ntok
 
@@ -153,6 +173,8 @@ out = {
     # requested_n travels with the artifact so the comparator can gate on the
     # count that was ASKED for, not merely on the two arms agreeing.
     "requested_n": a.n,
+    "max_new_tokens": a.max_new_tokens,
+    "expected_total_output_tokens": a.n * a.max_new_tokens,
     "requests": len(res), "ok": len(ok), "errors": len(errs),
     "offered_rate": a.rate, "achieved_rate": round(len(ok) / wall, 3) if wall else 0,
     "total_output_tokens": sum(r["toks"] for r in ok),
@@ -166,3 +188,14 @@ out = {
 with open(a.out, "w") as fh:
     json.dump({"summary": out, "per_request": res}, fh, indent=1)
 print(json.dumps(out, indent=1))
+
+# EXIT NON-ZERO when anything failed. The process used to return 0 even if every
+# request errored, so a caller checking only the exit status -- including this
+# repository's own per-repetition abort -- could never detect a failed run.
+if errs:
+    raise SystemExit(f"{len(errs)} of {len(res)} requests failed")
+if out["total_output_tokens"] != out["expected_total_output_tokens"]:
+    raise SystemExit(
+        f"token mass {out['total_output_tokens']} != expected "
+        f"{out['expected_total_output_tokens']}"
+    )

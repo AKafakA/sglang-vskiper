@@ -119,7 +119,9 @@ done
 # variable. It was refused for a while by an over-broad whitelist even though
 # model_runner reads SGLANG_VP_FOREGROUND_STREAM_PRIORITY and changes the CUDA
 # stream priority -- a real treatment dropped along with the dead ones.
-for m in flexidepth_fgpriority flexidepth_no_fgpriority; do
+for m in flexidepth_fgpriority flexidepth_no_fgpriority \
+         vanilla_fgpriority vanilla_no_fgpriority \
+         vanilla_matched_fgpriority vanilla_matched_no_fgpriority; do
   out=$(launch_sglang_server "$m" 30999 /dev/null 2>&1); rc=$?
   if [ $rc -eq 2 ] || [[ "$out" == *FATAL* ]]; then
     echo "  *** LIVE SUFFIX REFUSED: $m"; fail=1; continue
@@ -138,6 +140,16 @@ for m in flexidepth_fgpriority flexidepth_no_fgpriority; do
       else echo "  *** $m emitted '$emitted', expected -1"; fail=1; fi
       ;;
   esac
+done
+
+# 1c. a repeated or contradictory suffix chain must be REFUSED, not silently
+# resolved to whichever suffix happens to be leftmost.
+for m in flexidepth_fgpriority_no_fgpriority flexidepth_no_fgpriority_fgpriority \
+         flexidepth_fgpriority_fgpriority; do
+  out=$(launch_sglang_server "$m" 30999 /dev/null 2>&1 >/dev/null); rc=$?
+  if [ $rc -eq 2 ] && [[ "$out" == *"repeats or contradicts"* ]]; then
+    echo "  ok   contradictory chain refused: $m"
+  else echo "  *** AMBIGUOUS CHAIN ACCEPTED rc=$rc: $m"; fail=1; fi
 done
 
 # 2. removed modes must still be refused (the guard has not rotted)

@@ -91,6 +91,23 @@ else:
 # Offered rate must be identical across every repetition AND both arms.
 # Comparing a 2.0 rps arm against a 4.0 rps arm is not an A/B, and the
 # saturation gate below reads only A[0], so a mixed-load set slipped through.
+# Expected token MASS. With ignore_eos and a fixed max_new_tokens, a valid run
+# produces exactly requested_n * max_new_tokens tokens. Equal-but-empty arms
+# otherwise satisfy every other gate -- identical counts, zero errors, adequate
+# achieved rate -- and deltas get reported for no inference work.
+exp = [r.get("expected_total_output_tokens") for r in A + B]
+act = [r["total_output_tokens"] for r in A + B]
+if any(x is None for x in exp):
+    print(f"GATE token mass: {sum(x is None for x in exp)}/{len(exp)} artifacts omit "
+          f"expected_total_output_tokens -> *** CANNOT VERIFY REAL WORK WAS DONE ***")
+    work_ok = False
+elif any(e != g for e, g in zip(exp, act)):
+    print(f"GATE token mass: expected {sorted(set(exp))} got {sorted(set(act))} "
+          f"-> *** ARMS AGREE BUT PRODUCED THE WRONG AMOUNT OF WORK ***")
+    work_ok = False
+else:
+    print(f"GATE token mass: {exp[0]} tokens produced in every rep -> MATCH")
+
 rates = [r["offered_rate"] for r in A + B]
 if len(set(rates)) != 1:
     print(f"GATE offered rate: {sorted(set(rates))} -> *** ARMS RAN DIFFERENT LOADS ***")
