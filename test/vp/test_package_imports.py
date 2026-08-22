@@ -123,7 +123,12 @@ def run_all(verbose=True):
                 print(f"  [{label}] UNVERIFIED: flashinfer is not importable on "
                       f"this host, so the production-default posture was not "
                       f"checked ({len(failed)} module(s) affected)")
-            status = max(status, UNVERIFIED)
+            # FAILED must WIN over UNVERIFIED. These are exit codes, not a
+            # severity scale -- FAILED is 1 and UNVERIFIED is 3, so max() picked
+            # UNVERIFIED and relabelled an already-proven code failure as an
+            # environment limitation.
+            if status == OK:
+                status = UNVERIFIED
         else:
             if verbose:
                 print(f"  [{label}] FAIL ({ok}/{len(mods)})")
@@ -149,15 +154,27 @@ def test_every_vpipe_module_imports_flashinfer_disabled():
 def test_every_vpipe_module_imports_repository_default():
     """The production-default posture, which pytest previously never ran.
 
-    Skips ONLY when the dependency is provably absent, established by importing
-    it -- not by pattern-matching an error message.
+    Runs the sweep BEFORE classifying. A skip leaves the pytest process
+    successful, so skipping on an absent dependency made a default-only import
+    defect green on any host without FlashInfer -- contradicting this file's own
+    rule that UNVERIFIED is not success. Only a CLEAN sweep may skip; a sweep
+    with failures fails the test whether or not the dependency is present.
     """
     import pytest
 
-    if not flashinfer_available():
-        pytest.skip("flashinfer not importable on this host; posture unverifiable")
+    mods = module_names()
+    assert len(mods) >= 20, f"expected the vpipe package at {PKG}, found {len(mods)}"
     _, failed = sweep(dict(POSTURES[1][1]))
-    assert not failed, f"modules that fail to import: {dict(failed)}"
+    if not failed:
+        return                                  # verified clean; nothing to skip over
+    if not flashinfer_available():
+        pytest.fail(
+            "repository-default posture UNVERIFIED and failing: flashinfer is "
+            f"not importable on this host and {len(failed)} module(s) failed "
+            f"under the production default: {dict(failed)}. Unverified is not "
+            "success -- run this on a host with the dependency."
+        )
+    pytest.fail(f"modules that fail to import: {dict(failed)}")
 
 
 if __name__ == "__main__":
