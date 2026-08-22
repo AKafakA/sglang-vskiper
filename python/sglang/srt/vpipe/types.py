@@ -267,6 +267,7 @@ class FullGraphSkipperAdapter(ABC):
         *,
         num_hidden_layers: int,
         flexidepth_layer_ids: tuple[int, ...],
+        model_identity: Optional[Mapping[str, str]] = None,
     ) -> tuple[int, ...]:
         """Return ordered layers owned by this adapter in the model forward."""
 
@@ -282,6 +283,7 @@ class FullGraphSkipperAdapter(ABC):
         *,
         num_hidden_layers: int,
         flexidepth_layer_ids: tuple[int, ...],
+        model_identity: Optional[Mapping[str, str]] = None,
     ) -> tuple[int, ...]:
         """Return layers whose attention backend consumes component masks."""
 
