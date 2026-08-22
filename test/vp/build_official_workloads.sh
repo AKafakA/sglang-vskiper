@@ -15,6 +15,21 @@ if [[ -e "$OUT_DIR" ]]; then
   echo "ERROR: refusing to reuse OUT_DIR=$OUT_DIR" >&2
   exit 1
 fi
+
+# Validate inputs BEFORE creating the output directory. CONFIG defaults to
+# test/vp/labeled_workload.example.json, which is not in this tree, and it was
+# passed to every build_one call unchecked -- so the builder created OUT_DIR and
+# then failed on the first workload, leaving a half-made suite behind.
+for required in "$CONFIG" "$ROOT/test/vp/build_labeled_workload.py"; do
+  if [[ ! -e "$required" ]]; then
+    echo "ERROR: required input does not exist: $required" >&2
+    echo "       Set CONFIG=<path> explicitly; the default example config was" >&2
+    echo "       dropped with the evaluation tooling (see the removed-feature" >&2
+    echo "       register)." >&2
+    exit 1
+  fi
+done
+
 mkdir -p "$OUT_DIR"
 
 build_one() {
