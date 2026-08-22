@@ -72,6 +72,14 @@ fail=0
 # 1. every DEFAULT mode list in the ladder must be runnable
 mapfile -t defaults < <(grep -oE 'SGBENCH_MODES="(\$\{SGBENCH_MODES:-)?[a-z_,]+' "$LADDER" \
                         | sed -E 's/.*[:-]-?//; s/SGBENCH_MODES="//' | tr ',' '\n' | sort -u | grep -v '^$')
+# The subject must be non-empty. If the grep stops matching -- because the
+# declaration is reformatted, say -- the loop body never runs and this gate goes
+# green having tested nothing.
+if [ "${#defaults[@]}" -eq 0 ]; then
+  echo "FATAL: found no SGBENCH_MODES defaults in $LADDER -- this gate would"
+  echo "       otherwise pass by testing nothing at all."
+  exit 2
+fi
 echo "default modes found: ${defaults[*]}"
 for m in "${defaults[@]}"; do
   out=$(launch_sglang_server "$m" 30999 /dev/null 2>&1); rc=$?
