@@ -72,7 +72,10 @@ if ! port_free; then
 fi
 
 echo "=== PERF-AB $ARM  tree=$TREE  $(date -u +%FT%TZ)" | tee "$OUT/run.log"
-$V -m sglang.launch_server --model-path $W/models/Meta-Llama-3-8B-Instruct-53346005 \
+# setsid puts the server in its OWN process group. Without it the background
+# process inherits this script's group in a non-interactive shell, so comparing
+# PGIDs proves nothing -- any sibling listener in the same job would match.
+setsid $V -m sglang.launch_server --model-path $W/models/Meta-Llama-3-8B-Instruct-53346005 \
   --port $PORT --dtype float16 \
   --attention-backend triton --prefill-attention-backend triton --decode-attention-backend triton \
   --disable-radix-cache > "$OUT/server.log" 2>&1 &
@@ -96,12 +99,21 @@ if [ -z "$SPGID" ] || [ -z "$LPIDS" ]; then
   echo "$ARM ABORT: cannot identify the listener on port $PORT" | tee -a "$OUT/run.log"
   kill $SPID 2>/dev/null; exit 3
 fi
-owned=0
+# EVERY listener must belong to our isolated group. Accepting "any match" let a
+# foreign listener share the endpoint with ours and still pass.
+foreign=""
 for lp in $LPIDS; do
-  [ "$(ps -o pgid= -p "$lp" 2>/dev/null | tr -d ' ')" = "$SPGID" ] && owned=1
+  if [ "$(ps -o pgid= -p "$lp" 2>/dev/null | tr -d ' ')" != "$SPGID" ]; then
+    foreign="$foreign $lp"
+  fi
 done
-if [ $owned -ne 1 ]; then
-  echo "$ARM ABORT: port $PORT served by pid(s) '$LPIDS' outside our group $SPGID" \
+if [ -n "$foreign" ]; then
+  echo "$ARM ABORT: port $PORT also served by pid(s)$foreign outside our group $SPGID" \
+    | tee -a "$OUT/run.log"
+  kill $SPID 2>/dev/null; exit 3
+fi
+if [ "$SPGID" = "$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')" ]; then
+  echo "$ARM ABORT: server shares this script's process group; setsid did not isolate it" \
     | tee -a "$OUT/run.log"
   kill $SPID 2>/dev/null; exit 3
 fi

@@ -152,7 +152,12 @@ def _ordered_loads(stmt, outer_bound):
                 visit(sub, inner)
                 if isinstance(sub, ast.Assign):
                     for t in sub.targets: inner.update(_targets(t))
-                elif isinstance(sub, (ast.AnnAssign, ast.AugAssign)):
+                elif isinstance(sub, ast.AnnAssign):
+                    # `class C: x: int` binds nothing at class-execution time,
+                    # so a later `y = x` in the same body still raises.
+                    if sub.value is not None:
+                        inner.update(_targets(sub.target))
+                elif isinstance(sub, ast.AugAssign):
                     inner.update(_targets(sub.target))
             scope.add(node.name)
             return
@@ -172,6 +177,33 @@ def _ordered_loads(stmt, outer_bound):
                 if name not in scope:
                     bad.append((name, node.lineno))
             scope.update(_targets(node.target))
+            return
+        if isinstance(node, ast.If):
+            # MUTUALLY EXCLUSIVE arms. Sharing one mutable scope leaked the
+            # then-arm's bindings into the else-arm, so `if F: def x(): pass
+            # else: y = x` looked clean. Visit each arm with its own copy and
+            # merge by intersection (definite assignment).
+            visit(node.test, scope)
+            then_scope, else_scope = set(scope), set(scope)
+            for sub in node.body: visit(sub, then_scope)
+            for sub in node.orelse: visit(sub, else_scope)
+            scope |= (then_scope & else_scope) if node.orelse else set()
+            return
+        if isinstance(node, ast.Try):
+            body_scope = set(scope)
+            for sub in node.body: visit(sub, body_scope)
+            for sub in node.orelse: visit(sub, body_scope)
+            handler_scopes = []
+            for h in node.handlers:
+                hs = set(scope)
+                if h.name: hs.add(h.name)
+                for sub in h.body: visit(sub, hs)
+                handler_scopes.append(hs)
+            common = body_scope
+            for hs in handler_scopes:
+                common &= hs
+            scope |= common
+            for sub in node.finalbody: visit(sub, scope)
             return
         for child in ast.iter_child_nodes(node):
             visit(child, scope)
