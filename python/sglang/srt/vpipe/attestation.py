@@ -288,13 +288,7 @@ class ReqVPMixin:
         self.current_block: int = 0
         self.skip_blocks_remaining: int = 0
 
-    def is_vp(self: "Req") -> bool:
-        return getattr(self, "vp_enabled", False)
 
-    def reset_vp_token(self: "Req") -> None:
-        """Reset block state for the next decode token (called on final-span completion)."""
-        self.current_block = 0
-        self.skip_blocks_remaining = 0
 def _env_scan() -> bool:
     for key, value in os.environ.items():
         if key.startswith(_VP_ENV_PREFIXES) and str(value).strip():

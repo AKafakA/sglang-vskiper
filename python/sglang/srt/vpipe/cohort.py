@@ -1023,116 +1023,6 @@ def fd_parity_trace_advance(layer_id: int, forward_batch) -> None:
         and mode.is_decode()
     ):
         _FD_PARITY_EPOCHS[target] = int(_FD_PARITY_EPOCHS.get(target, 0)) + 1
-def _fdvp_stage_route_min_split_skip_rows():
-    try:
-        return max(
-            1,
-            int(
-                os.environ.get(
-                    "SGLANG_FD_VP_STAGE_ROUTE_MIN_SPLIT_SKIP_ROWS", "1"
-                )
-            ),
-        )
-    except ValueError:
-        return 1
-def _fdvp_stage_route_min_split_run_rows():
-    try:
-        return max(
-            1,
-            int(
-                os.environ.get(
-                    "SGLANG_FD_VP_STAGE_ROUTE_MIN_SPLIT_RUN_ROWS", "1"
-                )
-            ),
-        )
-    except ValueError:
-        return 1
-def fd_prepare_qkv_private(attn, positions, hidden_states):
-    """Project own-layer rotated Q/K/V without mutating the live cache."""
-
-    if hasattr(attn, "forward_prepare_native"):
-        return attn.forward_prepare_native(
-            positions=positions,
-            hidden_states=hidden_states,
-        )
-    qkv, _ = attn.qkv_proj(hidden_states)
-    q, k, v = qkv.split([attn.q_size, attn.kv_size, attn.kv_size], dim=-1)
-    q, k = attn.rotary_emb(positions, q, k)
-    return q, k, v
-def _fd_prepare_qkv(attn, positions, hidden_states):
-    return fd_prepare_qkv_private(attn, positions, hidden_states)
-def _fdvp_all_skip_kv_only_qkv():
-    return (
-        os.environ.get("SGLANG_VP_KV_ONLY_QKV", "0") == "1"
-        or os.environ.get("SGLANG_FD_VP_ALL_SKIP_KV_ONLY_QKV", "0") == "1"
-    )
-def fd_prepare_kv_only_private(attn, positions, hidden_states):
-    """Project own-layer rotated K/V without mutating the live cache."""
-
-    qkv_proj = getattr(attn, "qkv_proj", None)
-    if qkv_proj is None:
-        return None
-    if type(getattr(qkv_proj, "quant_method", None)).__name__ != "UnquantizedLinearMethod":
-        return None
-    if bool(getattr(qkv_proj, "gather_output", False)):
-        return None
-    weight = getattr(qkv_proj, "weight", None)
-    if weight is None or not torch.is_tensor(weight) or weight.ndim != 2:
-        return None
-
-    q_size = int(getattr(attn, "q_size", 0))
-    kv_size = int(getattr(attn, "kv_size", 0))
-    if q_size <= 0 or kv_size <= 0:
-        return None
-    if weight.shape[0] < q_size + 2 * kv_size:
-        return None
-
-    bias = getattr(qkv_proj, "bias", None)
-    kv_bias = None
-    if bias is not None:
-        if not torch.is_tensor(bias) or bias.shape[0] < q_size + 2 * kv_size:
-            return None
-        kv_bias = bias.narrow(0, q_size, 2 * kv_size)
-
-    kv = F.linear(
-        hidden_states,
-        weight.narrow(0, q_size, 2 * kv_size),
-        kv_bias,
-    )
-    k, v = kv.split([kv_size, kv_size], dim=-1)
-    q_dummy = hidden_states.new_empty((hidden_states.shape[0], q_size))
-    if hasattr(attn, "q_norm") and hasattr(attn, "k_norm"):
-        from sglang.srt.models.utils import apply_qk_norm
-
-        q_dummy, k = apply_qk_norm(
-            q=q_dummy,
-            k=k,
-            q_norm=attn.q_norm,
-            k_norm=attn.k_norm,
-            head_dim=attn.head_dim,
-            alt_stream=getattr(attn, "alt_stream", None),
-        )
-    _, k = attn.rotary_emb(positions, q_dummy, k)
-    return k, v
-def _fd_prepare_kv_only(attn, positions, hidden_states):
-    if not _fdvp_all_skip_kv_only_qkv():
-        return None
-    result = fd_prepare_kv_only_private(attn, positions, hidden_states)
-    if result is None:
-        return None
-    k, v = result
-    return None, k, v
-def _fdvp_device_key(device):
-    if device is None or getattr(device, "type", None) != "cuda":
-        return -1
-    index = device.index
-    if index is None:
-        index = torch.cuda.current_device()
-    return int(index)
-def _fdvp_deferred_entry_layer_event(entry):
-    if isinstance(entry, tuple) and len(entry) == 2:
-        return int(entry[0]), entry[1]
-    return -1, entry
 class BatchedCommitPlan(msgspec.Struct, frozen=True):
     """Capture-frozen launch arguments for the batched commit kernel."""
 
@@ -1339,9 +1229,6 @@ def run_batched_commit(plan: BatchedCommitPlan) -> None:
         plan.hd_v,
         256,
     )
-def _fdvp_record_stream(value, stream):
-    if torch.is_tensor(value) and value.is_cuda:
-        value.record_stream(stream)
 def device_key(device=None) -> int:
     if isinstance(device, str):
         device = torch.device(device)
@@ -1351,12 +1238,6 @@ def device_key(device=None) -> int:
     if index is None:
         index = torch.cuda.current_device()
     return int(index)
-def _forward_batch_device(forward_batch):
-    for name in ("out_cache_loc", "req_pool_indices", "positions", "seq_lens"):
-        value = getattr(forward_batch, name, None)
-        if torch.is_tensor(value):
-            return value.device
-    return None
 def _current_stream(device):
     if device is None or getattr(device, "type", None) != "cuda":
         return None

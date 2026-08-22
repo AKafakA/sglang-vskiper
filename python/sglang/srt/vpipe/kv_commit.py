@@ -31,31 +31,6 @@ def _fdvp_record_cache_counter(name, delta=1):
         return
     state = _fdvp_state()
     state[name] = int(state.get(name, 0)) + int(delta)
-def _execute_projection(first, hidden, positions, out_cache_loc) -> None:
-    from sglang.srt.vpipe.cohort import (
-        _fd_prepare_kv_only,
-        _fd_prepare_qkv,
-    )
-
-    with torch.no_grad():
-        qkv = _fd_prepare_kv_only(first.attn, positions, hidden)
-        if qkv is None:
-            _q, k, v = _fd_prepare_qkv(first.attn, positions, hidden)
-        else:
-            _q, k, v = qkv
-            _trace_counter("batched_kv_kv_only_batches")
-            _trace_counter("batched_kv_kv_only_rows", int(hidden.shape[0]))
-        radix_attn = first.attn.attn
-        k = k.view(-1, radix_attn.tp_k_head_num, radix_attn.qk_head_dim)
-        v = v.view(-1, radix_attn.tp_v_head_num, radix_attn.v_head_dim)
-        first.kv_pool.set_kv_buffer(
-            radix_attn,
-            out_cache_loc,
-            k,
-            v,
-            radix_attn.k_scale,
-            radix_attn.v_scale,
-        )
 def _fdvp_trace_enabled():
     return os.environ.get("SGLANG_FD_VP_TRACE") == "1"
 def _fdvp_state():
@@ -88,45 +63,6 @@ def _fdvp_state():
     )
     return _FDVP_TRACE_STATE
 _FDVP_TRACE_STATE = {}
-def _repair_graph_max_rows() -> int:
-    try:
-        return max(
-            0,
-            int(os.environ.get("SGLANG_VP_ASYNC_KV_REPAIR_GRAPH_MAX_ROWS", "64") or "64"),
-        )
-    except ValueError:
-        return 64
-def _repair_graph_max_entries() -> int:
-    try:
-        return max(
-            0,
-            int(
-                os.environ.get("SGLANG_VP_ASYNC_KV_REPAIR_GRAPH_MAX_ENTRIES", "64")
-                or "64"
-            ),
-        )
-    except ValueError:
-        return 64
-def _trace_value(name: str, value: int) -> None:
-    try:
-        
-        _fdvp_record_cache_value(name, value)
-    except Exception:
-        pass
-def _repair_graph_key(first, hidden, positions, out_cache_loc) -> tuple:
-    return (
-        _device_key(hidden.device),
-        id(first.attn),
-        id(first.kv_pool),
-        tuple(int(dim) for dim in hidden.shape),
-        str(hidden.dtype),
-        tuple(int(dim) for dim in positions.shape),
-        str(positions.dtype),
-        tuple(int(dim) for dim in out_cache_loc.shape),
-        str(out_cache_loc.dtype),
-        os.environ.get("SGLANG_VP_KV_ONLY_QKV", "0") == "1"
-        or os.environ.get("SGLANG_FD_VP_ALL_SKIP_KV_ONLY_QKV", "0") == "1",
-    )
 def _fdvp_install_trace_signal_handlers():
     global _FDVP_TRACE_SIGNAL_HANDLERS_INSTALLED
     if _FDVP_TRACE_SIGNAL_HANDLERS_INSTALLED:
