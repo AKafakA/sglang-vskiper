@@ -16,22 +16,18 @@ from typing import (
 import os
 from sglang.srt.vpipe.attestation import (
     _conflicting_env_enabled,
-    full_graph_commit_overlap_enabled,
     full_graph_conditional_branch_counters_enabled,
     full_graph_conditional_graph_enabled,
     full_graph_conditional_max_rows,
     full_graph_conditional_production_all_run_enabled,
     full_graph_defer_project_kv_diagnostic_stage,
-    full_graph_repair_group_size,
 )
 from sglang.srt.vpipe.common import (
     full_graph_compact_o_proj_min_rows,
     full_graph_compact_phases,
     full_graph_compact_q_proj_enabled,
-    full_graph_contiguous_routed_qkv_config,
     full_graph_low_row_policy,
     flexidepth_execution_mode,
-    full_graph_compact_routed_qkv_enabled,
     flexidepth_active_phases,
     regime_switch_config,
     resolve_full_graph_skipper,
@@ -58,20 +54,17 @@ from sglang.srt.vpipe.config import (
 )
 from sglang.srt.vpipe.env import (
     FD_ACTIVE_PHASES_ENV,
-    FD_COMMIT_OVERLAP_ENV,
     FD_COMPACT_ENABLED_ENV,
     FD_COMPACT_MIN_ROWS_ENV,
     FD_COMPACT_O_PROJ_ENV,
     FD_COMPACT_O_PROJ_LAYERS_ENV,
     FD_COMPACT_PHASES_ENV,
     FD_COMPACT_Q_PROJ_ENV,
-    FD_COMPACT_ROUTED_QKV_ENV,
     FD_CONDITIONAL_BRANCH_COUNTERS_ENV,
     FD_CONDITIONAL_GRAPH_ENV,
     FD_CONDITIONAL_GRAPH_HELPER_ENV,
     FD_CONDITIONAL_MAX_ROWS_ENV,
     FD_CONDITIONAL_PRODUCTION_ALL_RUN_ENV,
-    FD_CONTIGUOUS_ROUTED_QKV_ENV,
     FD_DEFER_PROJECT_KV_DIAGNOSTIC_STAGE_ENV,
     FD_DEFER_PROJECT_KV_ENV,
     FD_DEVICE_ROUTE_DIGEST_ENV,
@@ -90,14 +83,12 @@ from sglang.srt.vpipe.env import (
     FD_MAPPED_DECODE_ATTN_ENV,
     FD_MASKED_DECODE_ATTN_ENV,
     FD_PREFILL_GROUPED_MLP_ENV,
-    FD_REPAIR_GROUP_SIZE_ENV,
-    FD_ROUTED_QKV_CAPACITIES_ENV,
     FD_ROUTE_ACCOUNTING_ENV,
     FD_SCHEDULER_CONVERGENCE_ENV,
     FD_VIRTUAL_COHORT_ENV,
     FD_WEIGHTED_SCATTER_ENV,
     _CONFLICTING_FULL_GRAPH_ENV,
-    SUBLAYER_EXECUTION,
+    _REMOVED_FEATURE_ENVS,
     REGIME_SWITCH_ENV,
 )
 from sglang.srt.vpipe.mlp_compact import (
@@ -164,7 +155,7 @@ def assert_regime_switch_skipper_capability(adapter: Any) -> None:
 
     Ports the M3.57 prereq-B capability check
     (``v4/production_executor.py:188-206``) to the V3 full-graph activation
-    site so the W1 regime switch never runs over an AdaSkip / non-binary-action
+    site so the W1 regime switch never runs over a non-binary-action
     adapter.  The resolvers are imported lazily to keep the config/predicate
     surface dependency-light.
     """
@@ -326,14 +317,6 @@ def validate_full_graph_model_configuration(
     defer_project_kv_stage = (
         full_graph_defer_project_kv_diagnostic_stage(values)
     )
-    compact_routed_qkv = full_graph_compact_routed_qkv_enabled(values)
-    (
-        contiguous_routed_qkv,
-        _,
-        _,
-        routed_qkv_capacities,
-    ) = full_graph_contiguous_routed_qkv_config(values)
-    repair_group_size = full_graph_repair_group_size(values)
     if conditional_branch_counters and not conditional_graph:
         raise ValueError(
             f"{FD_CONDITIONAL_BRANCH_COUNTERS_ENV}=1 requires "
@@ -363,43 +346,6 @@ def validate_full_graph_model_configuration(
         raise ValueError(
             f"{FD_DEFER_PROJECT_KV_DIAGNOSTIC_STAGE_ENV}="
             f"{defer_project_kv_stage} requires {FD_DEFER_PROJECT_KV_ENV}=1"
-        )
-    commit_overlap = full_graph_commit_overlap_enabled(values)
-    if commit_overlap and not defer_project_kv:
-        raise ValueError(
-            f"{FD_COMMIT_OVERLAP_ENV}=1 requires "
-            f"{FD_DEFER_PROJECT_KV_ENV}=1"
-        )
-    if commit_overlap and defer_project_kv_stage != "full":
-        raise ValueError(
-            f"{FD_COMMIT_OVERLAP_ENV}=1 requires "
-            f"{FD_DEFER_PROJECT_KV_DIAGNOSTIC_STAGE_ENV}=full; diagnostic "
-            "stages have no K/V commit to overlap"
-        )
-    if compact_routed_qkv and not defer_project_kv:
-        raise ValueError(
-            f"{FD_COMPACT_ROUTED_QKV_ENV}=1 requires "
-            f"{FD_DEFER_PROJECT_KV_ENV}=1"
-        )
-    if compact_routed_qkv and defer_project_kv_stage != "full":
-        raise ValueError(
-            f"{FD_COMPACT_ROUTED_QKV_ENV}=1 requires "
-            f"{FD_DEFER_PROJECT_KV_DIAGNOSTIC_STAGE_ENV}=full"
-        )
-    if contiguous_routed_qkv and not compact_routed_qkv:
-        raise ValueError(
-            f"{FD_CONTIGUOUS_ROUTED_QKV_ENV}=1 requires "
-            f"{FD_COMPACT_ROUTED_QKV_ENV}=1"
-        )
-    if contiguous_routed_qkv and repair_group_size != 1:
-        raise ValueError(
-            f"{FD_CONTIGUOUS_ROUTED_QKV_ENV}=1 requires "
-            f"{FD_REPAIR_GROUP_SIZE_ENV}=1"
-        )
-    if repair_group_size > 1 and not compact_routed_qkv:
-        raise ValueError(
-            f"{FD_REPAIR_GROUP_SIZE_ENV}>1 requires "
-            f"{FD_COMPACT_ROUTED_QKV_ENV}=1"
         )
     if eager_semantic_debug:
         if execution_mode != FD_EXECUTION_FULL_GRAPH:
@@ -650,50 +596,6 @@ def validate_full_graph_model_configuration(
         )
     full_graph_layer_policies(values)
     compact_enabled, _, _, _ = full_graph_compact_config(values)
-    if skipper_adapter.execution_kind == SUBLAYER_EXECUTION:
-        if not device_route_tape:
-            raise ValueError(
-                f"{skipper_adapter.name} sublayer execution requires "
-                f"{FD_DEVICE_ROUTE_TAPE_ENV}=1"
-            )
-        incompatible = {
-            FD_EAGER_SEMANTIC_DEBUG_ENV: eager_semantic_debug,
-            FD_CONDITIONAL_GRAPH_ENV: conditional_graph,
-            FD_DEFER_PROJECT_KV_ENV: defer_project_kv,
-            FD_COMPACT_ROUTED_QKV_ENV: compact_routed_qkv,
-            FD_CONTIGUOUS_ROUTED_QKV_ENV: contiguous_routed_qkv,
-            FD_COMPACT_ENABLED_ENV: compact_enabled,
-            FD_VIRTUAL_COHORT_ENV: virtual_cohort,
-            FD_WEIGHTED_SCATTER_ENV: weighted_scatter,
-            FD_FUSED_EVIDENCE_ENV: fused_evidence,
-            FD_COMPACT_O_PROJ_ENV: compact_o_proj,
-            FD_COMPACT_Q_PROJ_ENV: compact_q_proj,
-            FD_MAPPED_DECODE_ATTN_ENV: mapped_decode_attention,
-            FD_SCHEDULER_CONVERGENCE_ENV: scheduler_convergence,
-            FD_FORCED_ALL_RUN_FASTPATH_ENV: forced_all_run_fastpath,
-            FD_FORCED_ALL_RUN_PRODUCTION_ATTN_ENV: (
-                forced_all_run_production_attention
-            ),
-            FD_CONDITIONAL_PRODUCTION_ALL_RUN_ENV: (
-                conditional_production_all_run
-            ),
-        }
-        enabled = sorted(name for name, active in incompatible.items() if active)
-        if enabled:
-            raise ValueError(
-                f"{skipper_adapter.name} sublayer execution does not yet support "
-                + ", ".join(enabled)
-            )
-        if forced_route is not None:
-            raise ValueError(
-                f"{skipper_adapter.name} sublayer execution does not support "
-                f"{FD_FORCE_ROUTE_ENV}"
-            )
-        if full_graph_layer_policies(values):
-            raise ValueError(
-                f"{skipper_adapter.name} sublayer execution does not support "
-                f"{FD_LAYER_POLICIES_ENV}"
-            )
     if virtual_cohort and not compact_enabled:
         raise ValueError(
             f"{FD_VIRTUAL_COHORT_ENV}=1 requires {FD_COMPACT_ENABLED_ENV}=1"
@@ -759,21 +661,6 @@ def validate_full_graph_model_configuration(
             f"{FD_COMPACT_O_PROJ_LAYERS_ENV} names unloaded layers: "
             + ", ".join(str(layer_id) for layer_id in unknown_compact_o_layers)
         )
-    if contiguous_routed_qkv:
-        configured_layers = set(routed_qkv_capacities)
-        loaded_layer_set = set(loaded_layers)
-        missing_layers = sorted(loaded_layer_set - configured_layers)
-        unknown_layers = sorted(configured_layers - loaded_layer_set)
-        if missing_layers:
-            raise ValueError(
-                f"{FD_ROUTED_QKV_CAPACITIES_ENV} omits loaded layers: "
-                + ", ".join(str(layer_id) for layer_id in missing_layers)
-            )
-        if unknown_layers:
-            raise ValueError(
-                f"{FD_ROUTED_QKV_CAPACITIES_ENV} names unloaded layers: "
-                + ", ".join(str(layer_id) for layer_id in unknown_layers)
-            )
     if (
         masked_decode_attention
         and flexidepth_execution_mode(values) != FD_EXECUTION_FULL_GRAPH
@@ -818,6 +705,18 @@ def validate_full_graph_model_configuration(
         raise ValueError(
             f"{FD_EXECUTION_MODE_ENV}=full_graph is incompatible with "
             + ", ".join(conflicts)
+        )
+    removed = [
+        name
+        for name in _REMOVED_FEATURE_ENVS
+        if _conflicting_env_enabled(name, values.get(name))
+    ]
+    if removed:
+        raise ValueError(
+            "these knobs name features removed from this build (owner "
+            "ruling 2026-08-23; see "
+            "codex/asplos-plan/2026-08-21-removed-feature-register.md): "
+            + ", ".join(removed)
         )
     if tp_size != 1 or pp_size != 1:
         raise ValueError(

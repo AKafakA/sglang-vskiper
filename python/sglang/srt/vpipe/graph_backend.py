@@ -13,17 +13,9 @@ from sglang.srt.vpipe.graphs import (
 )
 from sglang.srt.vpipe.attestation import (
     binary_cohort_attestation,
-    full_graph_commit_overlap_enabled,
     full_graph_conditional_max_rows,
     full_graph_conditional_production_all_run_enabled,
     full_graph_defer_project_kv_diagnostic_stage,
-    full_graph_repair_group_size,
-)
-from sglang.srt.vpipe.common import (
-    full_graph_contiguous_routed_qkv_config,
-)
-from sglang.srt.vpipe.common import (
-    full_graph_compact_routed_qkv_enabled,
 )
 from sglang.srt.vpipe.config import (
     full_graph_defer_project_kv_enabled,
@@ -351,14 +343,6 @@ class FlexiDepthConditionalCudaGraphBackend(FullCudaGraphBackend):
             str(shape_key): capture.graph.attestation.join_body_count
             for shape_key, capture in self._captures.items()
         }
-        join_overlap_shapes = {
-            str(shape_key): capture.graph.attestation.join_overlap
-            for shape_key, capture in self._captures.items()
-        }
-        epilogue_body_counts = {
-            str(shape_key): capture.graph.attestation.epilogue_body_count
-            for shape_key, capture in self._captures.items()
-        }
         repair_input_buffers = {
             str(shape_key): capture.repair_input_buffers
             for shape_key, capture in self._captures.items()
@@ -369,10 +353,6 @@ class FlexiDepthConditionalCudaGraphBackend(FullCudaGraphBackend):
         }
         repair_commit_graphs = {
             str(shape_key): capture.repair_commit_graphs
-            for shape_key, capture in self._captures.items()
-        }
-        repair_commit_batched = {
-            str(shape_key): capture.repair_commit_batched
             for shape_key, capture in self._captures.items()
         }
         repair_graph_pool_counts = {
@@ -388,11 +368,6 @@ class FlexiDepthConditionalCudaGraphBackend(FullCudaGraphBackend):
             for shape_key, capture in self._captures.items()
         }
         deferred_project_kv = full_graph_defer_project_kv_enabled()
-        compact_routed_qkv = full_graph_compact_routed_qkv_enabled()
-        contiguous_routed_qkv, _, _, _ = (
-            full_graph_contiguous_routed_qkv_config()
-        )
-        repair_group_size = full_graph_repair_group_size()
         repair_diagnostic_stage = (
             full_graph_defer_project_kv_diagnostic_stage()
         )
@@ -451,9 +426,6 @@ class FlexiDepthConditionalCudaGraphBackend(FullCudaGraphBackend):
             "stable_state_buffers": 2,
             "side_body_counts": side_body_counts,
             "join_body_counts": join_body_counts,
-            "commit_overlap_enabled": full_graph_commit_overlap_enabled(),
-            "join_overlap_shapes": join_overlap_shapes,
-            "epilogue_body_counts": epilogue_body_counts,
             "deferred_project_kv": deferred_project_kv,
             "repair_diagnostic_stage": repair_diagnostic_stage,
             "repair_semantic_kv_complete": (
@@ -462,29 +434,17 @@ class FlexiDepthConditionalCudaGraphBackend(FullCudaGraphBackend):
             "repair_input_buffers": repair_input_buffers,
             "repair_kv_output_buffers": repair_kv_output_buffers,
             "repair_commit_graphs": repair_commit_graphs,
-            "repair_commit_batched": repair_commit_batched,
             "binary_cohort": binary_cohort_attestation(),
             "repair_graph_pool_counts": repair_graph_pool_counts,
             "repair_capture_stream_counts": repair_capture_stream_counts,
-            "repair_group_size": repair_group_size,
             "repair_group_counts": repair_group_counts,
             "repair_memory_isolation": (
-                "group_private_streams_graph_pools_and_kv_outputs"
-                if deferred_project_kv and repair_group_size > 1
-                else "stage_private_streams_graph_pools_and_kv_outputs"
+                "stage_private_streams_graph_pools_and_kv_outputs"
                 if deferred_project_kv
                 else None
             ),
             "repair_compute": (
-                "stage_side_fixed_capacity_project_kv_cublas_mapped_overflow_rope"
-                if deferred_project_kv
-                and repair_diagnostic_stage == "full"
-                and contiguous_routed_qkv
-                else "grouped_side_mapped_project_kv_rope_into_stable_buffers"
-                if deferred_project_kv
-                and repair_diagnostic_stage == "full"
-                and compact_routed_qkv
-                else "side_qkv_rope_into_stable_private_buffers"
+                "side_qkv_rope_into_stable_private_buffers"
                 if deferred_project_kv and repair_diagnostic_stage == "full"
                 else f"diagnostic_{repair_diagnostic_stage}"
                 if deferred_project_kv
@@ -496,29 +456,14 @@ class FlexiDepthConditionalCudaGraphBackend(FullCudaGraphBackend):
                 else None
             ),
             "repair_topology": (
-                "route_group_fork_compact_side_compute_overlapped_commit_suffix_evidence"
-                if deferred_project_kv
-                and repair_diagnostic_stage == "full"
-                and compact_routed_qkv
-                and full_graph_commit_overlap_enabled()
-                else "route_prefix_fork_side_compute_overlapped_commit_suffix_evidence"
-                if deferred_project_kv
-                and repair_diagnostic_stage == "full"
-                and full_graph_commit_overlap_enabled()
-                else "route_group_fork_compact_side_compute_join_cache_commit_suffix"
-                if deferred_project_kv
-                and repair_diagnostic_stage == "full"
-                and compact_routed_qkv
-                else "route_prefix_fork_side_compute_join_cache_commit_suffix"
+                "route_prefix_fork_side_compute_join_cache_commit_suffix"
                 if deferred_project_kv and repair_diagnostic_stage == "full"
                 else "route_prefix_fork_diagnostic_side_compute_suffix_join"
                 if deferred_project_kv
                 else None
             ),
             "foreground_projection": (
-                "mapped_run_qkv"
-                if compact_routed_qkv
-                else "full_batch_qkv_with_run_only_cache_write"
+                "full_batch_qkv_with_run_only_cache_write"
                 if deferred_project_kv
                 else "full_batch_qkv_with_complete_cache_write"
             ),

@@ -17,6 +17,6 @@ Modules:
   executor    attention path + policy-selected MLP body
   graphs      conditional CUDA-graph capture for the routed decode body
   kv_commit   deferred PROJECT_ONLY K/V production, ordering-fenced
-  skipper     pluggable policy: FlexiDepth / RandomSkip / AdaSkip
+  skipper     pluggable policy: FlexiDepth / RandomSkip
 """
 

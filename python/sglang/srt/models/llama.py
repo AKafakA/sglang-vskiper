@@ -56,7 +56,7 @@ from sglang.srt.model_loader.weight_utils import (
 )
 from sglang.srt.runtime_context import get_flags, get_parallel
 from sglang.srt.utils import add_prefix, is_cuda, is_npu, is_xpu, make_layers
-from sglang.srt.vpipe.env import ADASKIP_SERVED_REVISION_ENV
+from sglang.srt.vpipe.env import SERVED_MODEL_REVISION_ENV
 from sglang.srt.vpipe.coverage import (
     record_dense_body_pass,
 )
@@ -664,16 +664,16 @@ class LlamaModel(nn.Module):
         # carrying checkpoint-specific calibration has to be told, explicitly,
         # which checkpoint is being served.
         _hub_commit = str(getattr(config, "_commit_hash", "") or "").strip()
-        _declared = str(os.environ.get(ADASKIP_SERVED_REVISION_ENV, "") or "").strip()
+        _declared = str(os.environ.get(SERVED_MODEL_REVISION_ENV, "") or "").strip()
         if _hub_commit and _declared and _hub_commit != _declared:
             raise ValueError(
-                f"{ADASKIP_SERVED_REVISION_ENV}={_declared!r} disagrees with the "
+                f"{SERVED_MODEL_REVISION_ENV}={_declared!r} disagrees with the "
                 f"model config commit {_hub_commit!r}; refusing rather than "
                 "guessing which describes the weights being loaded"
             )
         served_identity = {
             "revision": _declared,
-            "revision_source": ADASKIP_SERVED_REVISION_ENV if _declared else "",
+            "revision_source": SERVED_MODEL_REVISION_ENV if _declared else "",
             "config_commit": _hub_commit,
         }
         routed_layer_ids = full_graph_skipper.routed_layer_ids(
@@ -1103,24 +1103,14 @@ class LlamaForCausalLM(nn.Module):
         if counters is not None:
             values = [int(value) for value in counters.detach().cpu().tolist()]
             layer_rows, run_rows, project_rows = values[:3]
-            if full_graph_adapter.execution_kind == RUN_PROJECT_EXECUTION:
-                flexidepth_state["full_graph_routes"] = {
-                    "layer_rows": layer_rows,
-                    "run_rows": run_rows,
-                    "project_rows": project_rows,
-                    "skip_ratio": (
-                        project_rows / layer_rows if layer_rows else 0.0
-                    ),
-                }
-            else:
-                flexidepth_state["full_graph_routes"] = {
-                    "sublayer_rows": layer_rows,
-                    "run_sublayer_rows": run_rows,
-                    "skip_sublayer_rows": project_rows,
-                    "skip_ratio": (
-                        project_rows / layer_rows if layer_rows else 0.0
-                    ),
-                }
+            flexidepth_state["full_graph_routes"] = {
+                "layer_rows": layer_rows,
+                "run_rows": run_rows,
+                "project_rows": project_rows,
+                "skip_ratio": (
+                    project_rows / layer_rows if layer_rows else 0.0
+                ),
+            }
             if (
                 len(values) >= 6
                 and full_graph_adapter.execution_kind == RUN_PROJECT_EXECUTION
@@ -1156,18 +1146,11 @@ class LlamaForCausalLM(nn.Module):
             for phase, (layer_rows, run_rows, project_rows) in zip(
                 ("decode", "prefill"), phase_values
             ):
-                if full_graph_adapter.execution_kind == RUN_PROJECT_EXECUTION:
-                    record = {
-                        "layer_rows": int(layer_rows),
-                        "run_rows": int(run_rows),
-                        "project_rows": int(project_rows),
-                    }
-                else:
-                    record = {
-                        "sublayer_rows": int(layer_rows),
-                        "run_sublayer_rows": int(run_rows),
-                        "skip_sublayer_rows": int(project_rows),
-                    }
+                record = {
+                    "layer_rows": int(layer_rows),
+                    "run_rows": int(run_rows),
+                    "project_rows": int(project_rows),
+                }
                 record["skip_ratio"] = (
                     project_rows / layer_rows if layer_rows else 0.0
                 )
@@ -1182,20 +1165,12 @@ class LlamaForCausalLM(nn.Module):
             for layer_id, (layer_rows, run_rows, project_rows) in zip(
                 routed_layers, layer_values
             ):
-                if full_graph_adapter.execution_kind == RUN_PROJECT_EXECUTION:
-                    record = {
-                        "layer_id": layer_id,
-                        "layer_rows": int(layer_rows),
-                        "run_rows": int(run_rows),
-                        "project_rows": int(project_rows),
-                    }
-                else:
-                    record = {
-                        "layer_id": layer_id,
-                        "sublayer_rows": int(layer_rows),
-                        "run_sublayer_rows": int(run_rows),
-                        "skip_sublayer_rows": int(project_rows),
-                    }
+                record = {
+                    "layer_id": layer_id,
+                    "layer_rows": int(layer_rows),
+                    "run_rows": int(run_rows),
+                    "project_rows": int(project_rows),
+                }
                 record["run_ratio"] = (
                     run_rows / layer_rows if layer_rows else 0.0
                 )
@@ -1231,9 +1206,6 @@ class LlamaForCausalLM(nn.Module):
             logical_digest = route_digest_uses_logical_request_ids(
                 full_graph_adapter
             )
-            sublayer_digest = (
-                full_graph_adapter.execution_kind != RUN_PROJECT_EXECUTION
-            )
             flexidepth_state["full_graph_routes"]["device_route_tape"] = {
                 "dispatches": dispatches,
                 "action_rows": action_rows,
@@ -1246,32 +1218,22 @@ class LlamaForCausalLM(nn.Module):
                     + format(digest_ordered & mask, "016x")
                 ),
                 "digest_input": (
-                    "stable_request_hash_token_epoch_layer_component_action"
-                    if logical_digest and sublayer_digest
-                    else "stable_request_hash_token_epoch_layer_action"
+                    "stable_request_hash_token_epoch_layer_action"
                     if logical_digest
                     else "dispatch_order_layer_row_request_slot_token_epoch_"
                     "cache_position_action"
                 ),
                 "batching_invariant": logical_digest,
                 "digest_algorithm": (
-                    "batching_invariant_dual_sublayer_int64_weighted_"
-                    "fingerprint"
-                    if logical_digest and sublayer_digest
-                    else "batching_invariant_logical_action_int64_weighted_"
+                    "batching_invariant_logical_action_int64_weighted_"
                     "fingerprint"
                     if logical_digest
                     else "ordered_dual_int64_weighted_fingerprint"
                 ),
             }
-            if full_graph_adapter.execution_kind == RUN_PROJECT_EXECUTION:
-                flexidepth_state["full_graph_routes"]["device_route_tape"][
-                    "project_rows"
-                ] = action_rows - run_rows
-            else:
-                flexidepth_state["full_graph_routes"]["device_route_tape"][
-                    "skip_sublayer_rows"
-                ] = action_rows - run_rows
+            flexidepth_state["full_graph_routes"]["device_route_tape"][
+                "project_rows"
+            ] = action_rows - run_rows
         readiness_counters = getattr(
             self.model, "_fd_full_graph_inline_kv_readiness_counters", None
         )

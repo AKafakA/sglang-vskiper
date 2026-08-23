@@ -1,18 +1,16 @@
 """Pluggable skipper policies — the generality axis (v1.5).
 
-One interface, three policies, so "does vPipe depend on FlexiDepth?" is answered
-by evidence rather than assertion:
+One interface, multiple policies, so "does vPipe depend on FlexiDepth?" is
+answered by evidence rather than assertion:
 
 * ``FlexiDepthFullGraphAdapter``  — the trained router (the payload).
 * ``DeterministicMockFullGraphAdapter`` — RandomSkip: independent per-token
   skips whose expected skipped-depth equals a preset K, hashed on
   request_id (x) token_epoch (x) seed so it is reproducible under replay and
   capture. Measured 0.25005 against an expected 0.25 over 4.4M layer-rows.
-* AdaSkip — sublayer attention/MLP actions, in ``skipper_adaskip.py``.
 
-AdaSkip lives in its own module because it is the largest adapter by far and
-because its action-semantics declaration is still ⛔ owner-gated for PROMOTION;
-keeping it separable means the gate is visible in the file layout.
+(The AdaSkip sublayer adapter was dropped 2026-08-23 by owner ruling — its
+name and knobs are refused at validation; see the removed-feature register.)
 
 Policies emit ``LogicalAction``; unsupported actions fail closed rather than
 being lowered into the binary RUN/PROJECT executor.

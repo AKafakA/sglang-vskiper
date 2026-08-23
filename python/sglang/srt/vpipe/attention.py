@@ -20,28 +20,17 @@ from sglang.srt.vpipe.env import (
     FD_MASKED_DECODE_ATTN_ENV,
 )
 from sglang.srt.vpipe.common import (
-    _fixed_capacity_mapped_linear,
     full_graph_compact_q_proj_enabled,
-)
-from sglang.srt.vpipe.common import (
-    full_graph_compact_routed_qkv_enabled,
 )
 from sglang.srt.vpipe.config import (
     full_graph_compact_config,
     full_graph_compact_o_proj_config,
-)
-from sglang.srt.vpipe.env import (
-    FD_CONTIGUOUS_ROUTED_QKV_ENV,
-    FD_ROUTED_QKV_CAPACITIES_ENV,
-    FD_ROUTED_QKV_CAPACITY_MULTIPLE_ENV,
-    FD_ROUTED_QKV_MIN_ROWS_ENV,
 )
 from sglang.srt.vpipe.mlp_compact import (
     _compact_capacity,
 )
 from sglang.srt.vpipe.common import (
     full_graph_compact_o_proj_min_rows,
-    full_graph_contiguous_routed_qkv_config,
 )
 
 
@@ -82,19 +71,12 @@ def fd_attention_o_proj_full_graph(
     enabled, layer_fractions = full_graph_compact_o_proj_config()
     layer_id = int(getattr(attention.attn, "layer_id", -1))
     run_mask = getattr(forward_batch, "fd_full_graph_attention_run_mask", None)
-    static_run = getattr(
-        forward_batch, "fd_full_graph_attention_static_run", None
-    )
     if (
         run_mask is not None
         and getattr(attention.o_proj, "bias", None) is not None
     ):
         raise RuntimeError(
             "FlexiDepth masked decode attention requires a bias-free o_proj"
-        )
-    if static_run is False:
-        return attention_output.new_zeros(
-            (attention_output.shape[0], int(attention.o_proj.weight.shape[0]))
         )
     if not enabled or layer_id not in layer_fractions or run_mask is None:
         output, _ = attention.o_proj(attention_output)
@@ -160,13 +142,6 @@ def fd_attention_qkv_full_graph(
     """Project own-weight QKV for the exact foreground RUN cohort."""
 
     enabled = full_graph_compact_q_proj_enabled()
-    compact_routed_qkv = full_graph_compact_routed_qkv_enabled()
-    (
-        contiguous_routed_qkv,
-        routed_qkv_min_rows,
-        routed_qkv_multiple,
-        routed_qkv_capacities,
-    ) = full_graph_contiguous_routed_qkv_config()
     compact_o_enabled, layer_fractions = full_graph_compact_o_proj_config()
     layer_id = int(getattr(attention.attn, "layer_id", -1))
     run_mask = getattr(forward_batch, "fd_full_graph_attention_run_mask", None)
@@ -174,70 +149,6 @@ def fd_attention_qkv_full_graph(
     rows = int(hidden_states.shape[0])
     expected_width = attention.q_size + 2 * attention.kv_size
     qkv_weight = attention.qkv_proj.weight
-    static_run = getattr(
-        forward_batch, "fd_full_graph_attention_static_run", None
-    )
-    if static_run is False:
-        if getattr(attention.qkv_proj, "bias", None) is not None:
-            raise RuntimeError("AdaSkip K/V-only projection requires no QKV bias")
-        if qkv_weight.ndim != 2 or int(qkv_weight.shape[0]) != expected_width:
-            raise RuntimeError("AdaSkip K/V-only projection has incompatible weights")
-        q = hidden_states.new_zeros((rows, attention.q_size))
-        kv = F.linear(hidden_states, qkv_weight[attention.q_size : expected_width])
-        k, v = kv.split([attention.kv_size, attention.kv_size], dim=-1)
-        return q, k, v
-    if compact_routed_qkv:
-        row_map = getattr(
-            forward_batch, "fd_full_graph_qkv_run_row_map", None
-        )
-        count = getattr(
-            forward_batch, "fd_full_graph_qkv_run_row_count", None
-        )
-        if (
-            hidden_states.ndim != 2
-            or run_mask is None
-            or run_mask.shape != (rows,)
-            or row_map is None
-            or row_map.shape != (rows,)
-            or count is None
-            or count.numel() != 1
-        ):
-            raise RuntimeError(
-                "compact routed QKV requires aligned RUN row metadata"
-            )
-        if getattr(attention.qkv_proj, "bias", None) is not None:
-            raise RuntimeError("compact routed QKV requires a bias-free layer")
-        if qkv_weight.ndim != 2 or int(qkv_weight.shape[0]) != expected_width:
-            raise RuntimeError("compact routed QKV has incompatible weights")
-
-        qkv = hidden_states.new_empty((rows, expected_width))
-        capacity_fractions = routed_qkv_capacities.get(layer_id)
-        if contiguous_routed_qkv and rows >= routed_qkv_min_rows:
-            if capacity_fractions is None:
-                raise RuntimeError(
-                    "contiguous routed QKV is missing the active layer"
-                )
-            run_capacity = _compact_capacity(
-                rows, capacity_fractions[0], routed_qkv_multiple
-            )
-            _fixed_capacity_mapped_linear(
-                hidden_states,
-                qkv_weight,
-                row_map,
-                count,
-                qkv,
-                capacity=run_capacity,
-            )
-        else:
-            from sglang.srt.vpipe.cohort import (
-                mapped_linear,
-            )
-
-            mapped_linear(hidden_states, qkv_weight, row_map, count, qkv)
-        return qkv.split(
-            [attention.q_size, attention.kv_size, attention.kv_size], dim=-1
-        )
-
     min_rows = full_graph_compact_o_proj_min_rows()
     fraction = layer_fractions.get(layer_id)
     capacity = (

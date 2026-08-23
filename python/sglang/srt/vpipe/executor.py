@@ -67,10 +67,7 @@ from sglang.srt.vpipe.routing import (
     fd_prepare_layer_route_full_graph,
 )
 from sglang.srt.vpipe.env import (
-    SUBLAYER_EXECUTION,
-)
-from sglang.srt.vpipe.common import (
-    full_graph_compact_routed_qkv_enabled,
+    RUN_PROJECT_EXECUTION,
 )
 from sglang.srt.vpipe.config import (
     full_graph_compact_config,
@@ -82,143 +79,8 @@ from sglang.srt.vpipe.config import (
     full_graph_masked_decode_attention_enabled,
     full_graph_prefill_grouped_mlp_enabled,
 )
-from sglang.srt.vpipe.mlp_compact import (
-    _one_expert_mlp,
-)
 
 
-def _execute_sublayer_route_full_graph(
-    layer: Any,
-    positions: torch.Tensor,
-    forward_batch: Any,
-    prepared: FullGraphPreparedLayerRoute,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Execute independent AdaSkip attention/MLP actions with complete K/V."""
-
-    action_batch = prepared.action_batch
-    if action_batch is None or action_batch.execution_kind != SUBLAYER_EXECUTION:
-        raise RuntimeError("sublayer execution requires a sublayer action batch")
-    attention_run_mask = prepared.attention_run_mask
-    mlp_run_mask = prepared.mlp_run_mask
-    attention_scale = prepared.attention_skip_scale
-    mlp_scale = prepared.mlp_skip_scale
-    shape = (prepared.hidden_states.shape[0], 1)
-    for name, value in (
-        ("attention actions", attention_run_mask),
-        ("MLP actions", mlp_run_mask),
-        ("attention compensation", attention_scale),
-        ("MLP compensation", mlp_scale),
-    ):
-        if value is None or value.shape != shape:
-            raise RuntimeError(f"AdaSkip {name} do not match routed rows")
-
-    valid_rows = forward_batch.fd_full_graph_valid_rows
-    if valid_rows is None or valid_rows.shape != (shape[0],):
-        raise RuntimeError("AdaSkip graph-valid rows are missing")
-    attention_active = attention_run_mask.squeeze(-1) & valid_rows
-    forward_batch.fd_full_graph_attention_run_mask = attention_active
-    forward_batch.fd_full_graph_attention_static_run = (
-        action_batch.static_attention_run
-    )
-    forward_batch.fd_full_graph_kv_write_mask = None
-    try:
-        attention = layer.self_attn(
-            positions=positions,
-            hidden_states=prepared.hidden_states,
-            forward_batch=forward_batch,
-        )
-    finally:
-        forward_batch.fd_full_graph_attention_run_mask = None
-        forward_batch.fd_full_graph_attention_static_run = None
-        forward_batch.fd_full_graph_kv_write_mask = None
-
-    device_tape = getattr(
-        forward_batch, "fd_full_graph_device_route_tape", None
-    )
-    if device_tape is not None:
-        device_tape.record_inline_kv_ready(
-            int(layer.layer_id),
-            index=prepared.inline_kv_index,
-        )
-    if action_batch.static_attention_run is True:
-        attention_delta = attention
-    elif action_batch.static_attention_run is False:
-        attention_delta = prepared.residual * (attention_scale - 1.0)
-    else:
-        attention_delta = torch.where(
-            attention_run_mask,
-            attention,
-            prepared.residual * (attention_scale - 1.0),
-        )
-    hidden_states, residual = layer.post_attention_layernorm(
-        attention_delta,
-        prepared.residual,
-    )
-
-    if action_batch.static_mlp_run is True:
-        output = layer.mlp(hidden_states)
-    elif action_batch.static_mlp_run is False:
-        output = residual * (mlp_scale - 1.0)
-    else:
-        mlp_active = mlp_run_mask & valid_rows.view(-1, 1)
-        if action_batch.dense_reference_mlp:
-            run_output = layer.mlp(hidden_states)
-        else:
-            run_output = _one_expert_mlp(
-                hidden_states,
-                layer.mlp.gate_up_proj.weight.unsqueeze(0),
-                layer.mlp.down_proj.weight.unsqueeze(0),
-                torch.ones_like(mlp_scale),
-                mlp_active,
-            )
-        output = torch.where(
-            mlp_run_mask,
-            run_output,
-            residual * (mlp_scale - 1.0),
-        )
-
-    skipper_adapter = getattr(
-        forward_batch, "fd_full_graph_skipper_adapter", None
-    )
-    if skipper_adapter is not None and skipper_adapter.observes_mlp:
-        skipper_adapter.observe_mlp(
-            layer_id=prepared.layer_id,
-            pre_mlp_hidden=residual,
-            post_mlp_hidden=residual + output,
-            batch_state=getattr(
-                forward_batch, "fd_full_graph_skipper_state", None
-            ),
-        )
-
-    route_masks = getattr(forward_batch, "fd_full_graph_route_masks", None)
-    if route_masks is not None:
-        route_masks.extend(
-            (attention_run_mask.squeeze(-1), mlp_run_mask.squeeze(-1))
-        )
-    parity_context = prepared.parity_context
-    if parity_context is not None:
-        from sglang.srt.vpipe.cohort import (
-            fd_parity_trace_advance,
-        )
-        from sglang.srt.vpipe.routing import (
-            fd_parity_trace_tensor,
-        )
-
-        parity_row, parity_epoch = parity_context
-        fd_parity_trace_tensor(
-            "output_hidden",
-            output[parity_row : parity_row + 1],
-            layer_id=prepared.layer_id,
-            token_epoch=parity_epoch,
-        )
-        fd_parity_trace_tensor(
-            "output_residual",
-            residual[parity_row : parity_row + 1],
-            layer_id=prepared.layer_id,
-            token_epoch=parity_epoch,
-        )
-        fd_parity_trace_advance(prepared.layer_id, forward_batch)
-    return output, residual
 def fd_execute_prepared_layer_route_full_graph(
     layer: Any,
     positions: torch.Tensor,
@@ -234,25 +96,14 @@ def fd_execute_prepared_layer_route_full_graph(
 
     if (
         prepared.action_batch is not None
-        and prepared.action_batch.execution_kind == SUBLAYER_EXECUTION
+        and prepared.action_batch.execution_kind != RUN_PROJECT_EXECUTION
     ):
-        if proj is not None:
-            raise RuntimeError("sublayer execution must not load a projector")
-        if any(
-            value
-            for value in (
-                force_dense_all_run,
-                force_filtered_all_run,
-                force_production_attention,
-            )
-            if value is not None
-        ):
-            raise ValueError("sublayer execution does not support forced bodies")
-        return _execute_sublayer_route_full_graph(
-            layer,
-            positions,
-            forward_batch,
-            prepared,
+        # Fail closed: a non-binary action batch must never be silently
+        # lowered into the RUN/PROJECT body (the sublayer executor was
+        # removed 2026-08-23 -- see the removed-feature register).
+        raise RuntimeError(
+            "this executor supports only binary RUN/PROJECT action batches; "
+            f"got execution kind {prepared.action_batch.execution_kind!r}"
         )
 
     layer_id = prepared.layer_id
@@ -299,16 +150,6 @@ def fd_execute_prepared_layer_route_full_graph(
         forward_batch.fd_full_graph_attention_row_count = None
         forward_batch.fd_full_graph_attention_row_map_layer = None
         forward_batch.fd_full_graph_attention_worker_rows = None
-        if full_graph_compact_routed_qkv_enabled():
-            if prepared.run_row_map is None or prepared.route_counts is None:
-                raise RuntimeError(
-                    "compact routed QKV requires prepared RUN row metadata"
-                )
-            forward_batch.fd_full_graph_qkv_run_row_map = prepared.run_row_map
-            forward_batch.fd_full_graph_qkv_run_row_count = prepared.route_counts[
-                0:1
-            ]
-
         if full_graph_mapped_decode_attention_enabled():
             compact_enabled, _, _, multiple = full_graph_compact_config()
             compact_o_enabled, layer_fractions = (
@@ -357,8 +198,6 @@ def fd_execute_prepared_layer_route_full_graph(
             forward_batch.fd_full_graph_attention_row_count = None
             forward_batch.fd_full_graph_attention_row_map_layer = None
             forward_batch.fd_full_graph_attention_worker_rows = None
-            forward_batch.fd_full_graph_qkv_run_row_map = None
-            forward_batch.fd_full_graph_qkv_run_row_count = None
     if device_tape is not None and not full_graph_defer_project_kv_enabled():
         device_tape.record_inline_kv_ready(
             int(layer.layer_id),
