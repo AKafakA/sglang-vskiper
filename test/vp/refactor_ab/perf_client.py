@@ -24,7 +24,12 @@ import random
 import statistics
 import threading
 import time
+import sys
+import pathlib
 import urllib.request
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+import vp_stream  # noqa: E402
 
 
 def pct(xs, p):
@@ -48,93 +53,13 @@ def one(url, prompt, max_new):
     }).encode()
     req = urllib.request.Request(
         url + "/generate", data=body, headers={"Content-Type": "application/json"})
-    t0 = time.perf_counter()
-    ttft = None
-    ntok = 0
-    last = None
-    malformed = 0
-    text_events = 0
-    incremental_ids = 0
-    cumulative_ids = 0
-    last_err = ""
+    # SSE decoding, token accounting and completion validation live in
+    # vp_stream, shared with the rest of the harness. They used to live here
+    # alone, which meant four rounds of hardening never reached the other eight
+    # streamed-response readers -- including the official evaluation chain.
     with urllib.request.urlopen(req, timeout=600) as r:
-        for raw in r:
-            line = raw.decode(errors="ignore").strip()
-            if not line.startswith("data:"):
-                continue
-            payload = line[5:].strip()
-            if payload in ("", "[DONE]"):
-                continue
-            try:
-                obj = json.loads(payload)
-                m = obj.get("meta_info") or {}
-                if "completion_tokens" in m:
-                    ntok = m["completion_tokens"]
-                # A TOKEN-BEARING event is one that actually carries generated
-                # output. Counting any well-formed JSON let a metadata-only
-                # stream -- {"meta_info":{"completion_tokens":128}} then close --
-                # self-report a full count with no text at all, passing the
-                # token-mass gate while producing nothing.
-                ids = obj.get("output_ids") or obj.get("token_ids")
-                if ids:
-                    # SGLang may stream these CUMULATIVELY or INCREMENTALLY, and
-                    # NO per-event heuristic can tell them apart: with
-                    # ignore_eos=True a repeated token is legitimate, so the
-                    # incremental stream [17],[17],[18] is indistinguishable
-                    # from a cumulative prefix repeat. A prefix rule rejected
-                    # such valid streams. Track BOTH readings and let the final
-                    # reported count disambiguate.
-                    incremental_ids += len(ids)
-                    cumulative_ids = max(cumulative_ids, len(ids))
-                if ids or obj.get("text"):
-                    text_events += 1
-                    if ttft is None:
-                        ttft = time.perf_counter() - t0
-                last = obj
-            except Exception as exc:
-                # Do NOT swallow this. A malformed SSE payload used to be
-                # ignored, so a request that decoded no valid token event still
-                # returned normally and was counted in `ok`.
-                malformed += 1
-                last_err = f"malformed SSE payload: {str(exc)[:60]}"
-    e2e = time.perf_counter() - t0
-    if ntok == 0 and last is not None:
-        ntok = (last.get("meta_info") or {}).get("completion_tokens", 0)
-
-    # sampling_params sets ignore_eos=True with a fixed max_new_tokens, so a
-    # SUCCESSFUL request produces exactly that many tokens. Anything else is a
-    # failed request, not a fast one. Without this, two arms both returning
-    # empty responses give positive request counts, zero errors, identical zero
-    # token totals and adequate achieved rate -- and the comparator reports
-    # latency deltas for no inference work at all.
-    if malformed:
-        raise RuntimeError(f"{malformed} malformed SSE payload(s); {last_err}")
-    if text_events == 0:
-        raise RuntimeError(
-            "no token-bearing response event: the stream carried metadata only, "
-            "so the self-reported completion count describes no generated output"
-        )
-    # Reconcile the SELF-REPORTED count against ids we actually observed. One
-    # event carrying output_ids=[17] alongside completion_tokens=128 clears the
-    # token-bearing check while proving a single token, so meta_info alone is
-    # not evidence. Accept if EITHER reading accounts for the full generation --
-    # that is exactly the ambiguity the server's streaming mode leaves open, and
-    # both readings agreeing on "too few" is unambiguous evidence of a short
-    # stream.
-    if (incremental_ids or cumulative_ids) and \
-       max_new not in (incremental_ids, cumulative_ids):
-        raise RuntimeError(
-            f"streamed token ids account for {cumulative_ids} (cumulative) or "
-            f"{incremental_ids} (incremental), neither of which is the "
-            f"{max_new} requested; meta_info reports {ntok}"
-        )
-    if ntok != max_new:
-        raise RuntimeError(
-            f"incomplete generation: {ntok} tokens, expected exactly {max_new} "
-            f"(ignore_eos=True). An empty or truncated response is a failure."
-        )
-    tpot = (e2e - (ttft or 0.0)) / max(1, ntok - 1)
-    return ttft or e2e, tpot, e2e, ntok
+        acc = vp_stream.collect(r, expected_tokens=max_new)
+    return acc.ttft or acc.e2e, acc.tpot, acc.e2e, acc.reported_tokens
 
 
 ap = argparse.ArgumentParser()
