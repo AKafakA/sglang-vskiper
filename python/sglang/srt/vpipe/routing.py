@@ -481,10 +481,6 @@ class FullGraphPreparedLayerRoute:
     parity_context: Optional[tuple[int, int]]
     inline_kv_index: Optional[int]
     action_batch: Optional[FullGraphActionBatch] = None
-    attention_run_mask: Optional[torch.Tensor] = None
-    mlp_run_mask: Optional[torch.Tensor] = None
-    attention_skip_scale: Optional[torch.Tensor] = None
-    mlp_skip_scale: Optional[torch.Tensor] = None
 def fd_prepare_layer_route_full_graph(
     layer: Any,
     hidden_states: torch.Tensor,
@@ -562,8 +558,6 @@ def fd_prepare_layer_route_full_graph(
         )
     else:
         run_mask = action_batch.write_run_storage()
-    attention_run_mask = run_mask
-    mlp_run_mask = run_mask
     inline_kv_index = (
         device_tape.reserve_inline_kv_layer(layer_id)
         if device_tape is not None
@@ -592,10 +586,6 @@ def fd_prepare_layer_route_full_graph(
         parity_context=parity_context,
         inline_kv_index=inline_kv_index,
         action_batch=action_batch,
-        attention_run_mask=attention_run_mask,
-        mlp_run_mask=mlp_run_mask,
-        attention_skip_scale=action_batch.attention_skip_scale,
-        mlp_skip_scale=action_batch.mlp_skip_scale,
     )
 def fd_parity_trace_attention(
     *,
