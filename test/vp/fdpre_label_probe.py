@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import argparse
 import json
+
+import vp_stream
 import math
 import sys
 import time
@@ -47,18 +49,17 @@ def http_stream_generate(url: str, payload: dict, timeout: float = 900.0):
     ttft = None
     final = None
     saw_done = False
+    # Parsing is shared with the rest of the harness via vp_stream; the
+    # COMPLETION POLICY below stays local, because this probe requires the
+    # [DONE] terminator and vp_stream.collect deliberately does not.
     with urlrequest.urlopen(req, timeout=timeout) as response:
-        for raw_line in response:
-            line = raw_line.decode("utf-8", errors="replace").strip()
-            if not line.startswith("data:"):
-                continue
-            body = line[len("data:"):].strip()
-            if body == "[DONE]":
+        for kind, obj in vp_stream.decode_lines(response):
+            if kind == "done":
                 saw_done = True
                 break
             if ttft is None:
                 ttft = time.monotonic() - t0
-            final = json.loads(body)
+            final = obj
     e2e = time.monotonic() - t0
     if final is None:
         raise RuntimeError("stream ended without any data chunk")
