@@ -23,15 +23,14 @@ from sglang.srt.vpipe.common import (
     regime_switch_config,
 )
 from sglang.srt.vpipe.env import (
-    FD_COMMIT_OVERLAP_ENV,
     FD_CONDITIONAL_BRANCH_COUNTERS_ENV,
     FD_CONDITIONAL_GRAPH_ENV,
     FD_CONDITIONAL_MAX_ROWS_ENV,
     FD_CONDITIONAL_PRODUCTION_ALL_RUN_ENV,
     FD_DEFER_PROJECT_KV_DIAGNOSTIC_STAGE_ENV,
     FD_EXECUTION_FULL_GRAPH,
-    FD_REPAIR_GROUP_SIZE_ENV,
     FULL_GRAPH_CAPTURE_SYNTHETIC_RID_BASE,
+    _VALUE_TYPED_CONFLICT_ENVS,
     _BINARY_COHORT_CONFIG_DIGEST,
     _BINARY_COHORT_LAYERS,
     _BINARY_COHORT_STATS,
@@ -47,12 +46,8 @@ from sglang.srt.vpipe.common import (
 from sglang.srt.vpipe.skipper import (
     route_digest_uses_logical_request_ids,
 )
-from sglang.srt.vpipe.env import (
-    SUBLAYER_EXECUTION,
-)
 from sglang.srt.vpipe.common import (
     full_graph_compact_o_proj_min_rows,
-    full_graph_contiguous_routed_qkv_config,
 )
 from sglang.srt.vpipe.common import (
     full_graph_compact_phases,
@@ -60,7 +55,6 @@ from sglang.srt.vpipe.common import (
 )
 from sglang.srt.vpipe.common import (
     flexidepth_execution_mode,
-    full_graph_compact_routed_qkv_enabled,
 )
 from sglang.srt.vpipe.common import (
     flexidepth_active_phases,
@@ -367,31 +361,6 @@ def full_graph_defer_project_kv_diagnostic_stage(
             f"{choices}; got {stage!r}"
         )
     return stage
-def full_graph_commit_overlap_enabled(
-    environ: Optional[Mapping[str, str]] = None,
-) -> bool:
-    """Return whether the deferred K/V commit overlaps the logits suffix."""
-
-    values = os.environ if environ is None else environ
-    value = str(values.get(FD_COMMIT_OVERLAP_ENV, "0")).strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off", ""}:
-        return False
-    raise ValueError(f"{FD_COMMIT_OVERLAP_ENV} must be a boolean value")
-def full_graph_repair_group_size(
-    environ: Optional[Mapping[str, str]] = None,
-) -> int:
-    """Return the number of routed layers coalesced in one repair graph."""
-
-    values = os.environ if environ is None else environ
-    try:
-        group_size = int(values.get(FD_REPAIR_GROUP_SIZE_ENV, "1"))
-    except (TypeError, ValueError) as error:
-        raise ValueError(f"{FD_REPAIR_GROUP_SIZE_ENV} must be an integer") from error
-    if group_size <= 0:
-        raise ValueError(f"{FD_REPAIR_GROUP_SIZE_ENV} must be positive")
-    return group_size
 def full_graph_capture_synthetic_request_ids(
     max_bs: int, device: Any = None
 ) -> torch.Tensor:
@@ -438,8 +407,13 @@ def _conflicting_env_enabled(name: str, value: Optional[str]) -> bool:
     if value is None:
         return False
     normalized = str(value).strip().lower()
-    if name == "SGLANG_VP_V2_CONFIG":
-        return bool(normalized)
+    if not normalized:
+        return False
+    if name in _VALUE_TYPED_CONFLICT_ENVS:
+        # A value-typed knob (a path, a list, an integer) counts as set for
+        # any non-off value; an explicit off value is allowed (round-3
+        # lesson: never refuse an explicit disable).
+        return normalized not in {"0", "false", "no", "off"}
     return normalized in {"1", "true", "yes", "on"}
 def full_graph_conditional_branch_counters_enabled(
     environ: Optional[Mapping[str, str]] = None,
@@ -541,7 +515,6 @@ def model_runner_runtime_attestation(
     external_moe_config = bool(os.environ.get("SGLANG_MOE_CONFIG_DIR", "").strip())
     skipper_adapter = resolve_full_graph_skipper()
     skipper_attestation = skipper_adapter.attestation()
-    sublayer_execution = skipper_adapter.execution_kind == SUBLAYER_EXECUTION
     skipper_attestation["routed_layer_count"] = loaded_layer_count
     if "skipped_depth_ratio" in skipper_attestation:
         skipper_attestation["project_layer_count"] = min(
@@ -608,24 +581,11 @@ def model_runner_runtime_attestation(
     scheduler_convergence_enabled = full_graph_scheduler_convergence_enabled()
     eager_semantic_debug = full_graph_eager_semantic_debug_enabled()
     prefill_grouped_mlp = full_graph_prefill_grouped_mlp_enabled()
-    adaskip_dense_reference_mlp = bool(
-        (skipper_attestation.get("dense_reference_mlp") or {}).get(
-            "enabled", False
-        )
-    )
     conditional_graph_enabled = full_graph_conditional_graph_enabled()
     conditional_production_all_run = (
         full_graph_conditional_production_all_run_enabled()
     )
     deferred_project_kv = full_graph_defer_project_kv_enabled()
-    compact_routed_qkv = full_graph_compact_routed_qkv_enabled()
-    (
-        contiguous_routed_qkv,
-        routed_qkv_min_rows,
-        routed_qkv_multiple,
-        routed_qkv_capacities,
-    ) = full_graph_contiguous_routed_qkv_config()
-    repair_group_size = full_graph_repair_group_size()
     deferred_project_kv_stage = (
         full_graph_defer_project_kv_diagnostic_stage()
     )
@@ -644,13 +604,7 @@ def model_runner_runtime_attestation(
         }
     )
     scheduler_kv_completion = (
-        "graph_side_project_compute_overlapped_commit_fenced_before_evidence"
-        if (
-            deferred_project_kv
-            and deferred_project_kv_semantic
-            and full_graph_commit_overlap_enabled()
-        )
-        else "graph_side_project_compute_joined_cache_commit_before_logits"
+        "graph_side_project_compute_joined_cache_commit_before_logits"
         if deferred_project_kv and deferred_project_kv_semantic
         else "diagnostic_incomplete_project_kv"
         if deferred_project_kv
@@ -660,28 +614,11 @@ def model_runner_runtime_attestation(
     )
     layer_policies = full_graph_layer_policies()
     active_phases = sorted(flexidepth_active_phases())
-    prefill_decision_granularity = (
-        "fixed_model_sublayer"
-        if sublayer_execution
-        else skipper_attestation["decision_granularity"]
-    )
-    prefill_decision = (
-        "offline_topk_concat_attention_then_mlp_similarity"
-        if sublayer_execution
-        else skipper_attestation["decision"]
-    )
+    prefill_decision_granularity = skipper_attestation["decision_granularity"]
+    prefill_decision = skipper_attestation["decision"]
     return {
         "enabled": flexidepth_execution_mode() == FD_EXECUTION_FULL_GRAPH,
         "eager_semantic_debug": eager_semantic_debug,
-        "adaskip_dense_reference_mlp": {
-            "enabled": adaskip_dense_reference_mlp,
-            "scope": (
-                "online_dynamic_mlp_all_rows_dense_then_same_action_select"
-                if adaskip_dense_reference_mlp
-                else "disabled"
-            ),
-            "performance_claim_allowed": False,
-        },
         "whole_step_cuda_graph_required": not eager_semantic_debug,
         "conditional_graph": conditional_graph_state,
         "conditional_production_all_run": {
@@ -718,8 +655,6 @@ def model_runner_runtime_attestation(
         "prefill_execution": (
             "grouped_variable_cohort"
             if "prefill" in active_phases and prefill_grouped_mlp
-            else "fixed_sublayer_topology"
-            if "prefill" in active_phases and sublayer_execution
             else "masked_fixed_topology"
             if "prefill" in active_phases
             else "vanilla"
@@ -736,7 +671,6 @@ def model_runner_runtime_attestation(
                 if "prefill" in active_phases
                 else "disabled"
             ),
-            "uniform_layer_profile": sublayer_execution,
             "kv_completion": (
                 "own_layer_projection_all_tokens"
                 if "prefill" in active_phases
@@ -786,22 +720,12 @@ def model_runner_runtime_attestation(
         "device_route_tape": {
             "enabled": device_route_tape_enabled,
             "storage": (
-                "graph_static_layer_by_row_independent_attention_mlp_bool"
-                if device_route_tape_enabled and sublayer_execution
-                else "graph_static_layer_by_row_bool"
+                "graph_static_layer_by_row_bool"
                 if device_route_tape_enabled
                 else "capture_time_tensor_references"
             ),
-            "action_codes": (
-                {"skip_sublayer": 0, "run_sublayer": 1}
-                if sublayer_execution
-                else {"project_only": 0, "run": 1}
-            ),
-            "storage_action_codes": (
-                {"skip_sublayer": 0, "run_sublayer": 1}
-                if sublayer_execution
-                else {"project_only": 0, "run": 1}
-            ),
+            "action_codes": {"project_only": 0, "run": 1},
+            "storage_action_codes": {"project_only": 0, "run": 1},
             "logical_action_codes": skipper_attestation[
                 "logical_action_codes"
             ],
@@ -815,12 +739,7 @@ def model_runner_runtime_attestation(
                 else "hidden_state_row"
             ),
             "row_identity": (
-                "stable_request_hash_token_epoch_layer_component"
-                if (
-                    logical_route_digest
-                    and sublayer_execution
-                )
-                else "stable_request_hash_token_epoch_layer_action"
+                "stable_request_hash_token_epoch_layer_action"
                 if logical_route_digest
                 else "request_slot_token_epoch_cache_position"
                 if device_route_digest_enabled
@@ -828,12 +747,7 @@ def model_runner_runtime_attestation(
             ),
             "digest_enabled": device_route_digest_enabled,
             "digest_algorithm": (
-                "batching_invariant_dual_sublayer_int64_weighted_fingerprint"
-                if (
-                    logical_route_digest
-                    and sublayer_execution
-                )
-                else "batching_invariant_logical_action_int64_weighted_"
+                "batching_invariant_logical_action_int64_weighted_"
                 "fingerprint"
                 if logical_route_digest
                 else "ordered_dual_int64_weighted_fingerprint"
@@ -843,13 +757,7 @@ def model_runner_runtime_attestation(
             "hot_path_host_readback": False,
             "hot_path_route_host_syncs": 0,
             "kv_completion": (
-                "foreground_run_plus_graph_side_project_compute_overlapped_commit"
-                if (
-                    deferred_project_kv
-                    and deferred_project_kv_semantic
-                    and full_graph_commit_overlap_enabled()
-                )
-                else "foreground_run_plus_graph_side_project_compute_joined_cache_commit"
+                "foreground_run_plus_graph_side_project_compute_joined_cache_commit"
                 if deferred_project_kv and deferred_project_kv_semantic
                 else "diagnostic_incomplete_project_kv"
                 if deferred_project_kv
@@ -894,36 +802,15 @@ def model_runner_runtime_attestation(
             "graph_key_depends_on_route_mask": False,
             "deferred_repair": deferred_project_kv,
             "repair_topology": (
-                "route_group_fork_compact_side_compute_overlapped_commit_suffix_evidence"
-                if deferred_project_kv
-                and deferred_project_kv_semantic
-                and compact_routed_qkv
-                and full_graph_commit_overlap_enabled()
-                else "route_prefix_fork_side_compute_overlapped_commit_suffix_evidence"
-                if deferred_project_kv
-                and deferred_project_kv_semantic
-                and full_graph_commit_overlap_enabled()
-                else "route_group_fork_compact_side_compute_join_cache_commit_suffix"
-                if deferred_project_kv
-                and deferred_project_kv_semantic
-                and compact_routed_qkv
-                else "route_prefix_fork_side_compute_join_cache_commit_suffix"
+                "route_prefix_fork_side_compute_join_cache_commit_suffix"
                 if deferred_project_kv and deferred_project_kv_semantic
                 else "route_prefix_fork_diagnostic_side_compute_suffix_join"
                 if deferred_project_kv
                 else "disabled"
             ),
-            "repair_group_size": repair_group_size,
         },
         "conditional_kernel": (
-            "online_20_token_dense_mlp_semantic_reference"
-            if sublayer_execution and adaskip_dense_reference_mlp
-            else "online_20_token_independent_sublayer_exact"
-            if sublayer_execution
-            and skipper_attestation.get("online_decode_extra_mlp", False)
-            else "fixed_independent_sublayer_exact"
-            if sublayer_execution
-            else "forced_all_run_dense_exact"
+            "forced_all_run_dense_exact"
             if forced_all_run_fastpath
             else "layer_policy_virtual_cohort_swiglu"
             if compact_enabled and layer_policies and virtual_cohort
@@ -1062,57 +949,6 @@ def model_runner_runtime_attestation(
             "shared_output_row_map": compact_q_proj,
             "jump_row_q_projection": (
                 "suppressed" if compact_q_proj else "full"
-            ),
-        },
-        "routed_qkv_projection": {
-            "enabled": compact_routed_qkv,
-            "contiguous_cublas_enabled": contiguous_routed_qkv,
-            "row_mapping": (
-                "single_route_prefix_complementary_device_maps"
-                if compact_routed_qkv
-                else "disabled"
-            ),
-            "foreground": (
-                "fixed_capacity_run_qkv_cublas_with_mapped_overflow"
-                if contiguous_routed_qkv
-                else "mapped_run_qkv"
-                if compact_routed_qkv
-                else "full_batch_qkv"
-            ),
-            "repair": (
-                "fixed_capacity_project_kv_cublas_with_mapped_overflow"
-                if contiguous_routed_qkv
-                else "mapped_project_kv_only"
-                if compact_routed_qkv
-                else "full_batch_qkv"
-                if deferred_project_kv
-                else "disabled"
-            ),
-            "repair_group_size": repair_group_size,
-            "min_rows": routed_qkv_min_rows,
-            "capacity_multiple": routed_qkv_multiple,
-            "layer_capacities": {
-                str(layer_id): {
-                    "run_fraction": run_fraction,
-                    "project_fraction": project_fraction,
-                }
-                for layer_id, (
-                    run_fraction,
-                    project_fraction,
-                ) in sorted(routed_qkv_capacities.items())
-            },
-            "common_lane": (
-                "fixed_capacity_contiguous_cublas"
-                if contiguous_routed_qkv
-                else None
-            ),
-            "overflow_lane": "mapped_exact" if contiguous_routed_qkv else None,
-            "inactive_projection_rows": (
-                "fixed_capacity_padding_only"
-                if contiguous_routed_qkv
-                else "not_computed"
-                if compact_routed_qkv
-                else "computed"
             ),
         },
         "per_layer_route_counters_enabled": layer_counters_enabled,

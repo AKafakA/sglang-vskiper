@@ -19,9 +19,6 @@ from sglang.srt.vpipe.batch import (
     finalize_full_graph_batch,
     prepare_full_graph_batch,
 )
-from sglang.srt.vpipe.common import (
-    full_graph_compact_routed_qkv_enabled,
-)
 from sglang.srt.vpipe.config import (
     full_graph_defer_project_kv_enabled,
 )
@@ -32,21 +29,9 @@ from sglang.srt.vpipe.routing import (
     fd_prepare_layer_route_full_graph,
 )
 from sglang.srt.vpipe.attestation import (
-    full_graph_commit_overlap_enabled,
     full_graph_conditional_branch_counters_enabled,
     full_graph_conditional_production_all_run_enabled,
     full_graph_defer_project_kv_diagnostic_stage,
-    full_graph_repair_group_size,
-)
-from sglang.srt.vpipe.common import (
-    _fixed_capacity_mapped_linear,
-    full_graph_contiguous_routed_qkv_config,
-)
-from sglang.srt.vpipe.env import (
-    FD_BATCHED_COMMIT_ENV,
-)
-from sglang.srt.vpipe.mlp_compact import (
-    _compact_capacity,
 )
 from sglang.srt.vpipe.routing import (
     FullGraphPreparedLayerRoute,
@@ -71,8 +56,6 @@ class ConditionalGraphAttestation:
     pre_body_count: int = 0
     side_body_count: int = 0
     join_body_count: int = 0
-    join_overlap: bool = False
-    epilogue_body_count: int = 0
     host_route_readback: bool = False
 def fd_project_kv_repair_cache_locations(
     cache_locations: torch.Tensor,
@@ -115,8 +98,6 @@ class ConditionalCudaGraph:
         pre_body_count: int,
         side_body_count: int,
         join_body_count: int,
-        join_overlap: bool = False,
-        epilogue_body_count: int = 0,
         branch_count: int = 2,
     ) -> None:
         self._graph = graph
@@ -133,8 +114,6 @@ class ConditionalCudaGraph:
             pre_body_count=pre_body_count,
             side_body_count=side_body_count,
             join_body_count=join_body_count,
-            join_overlap=join_overlap,
-            epilogue_body_count=epilogue_body_count,
         )
 
     @staticmethod
@@ -181,30 +160,17 @@ class ConditionalCudaGraph:
         prefix: Optional[torch.cuda.CUDAGraph] = None,
         join: Optional[torch.cuda.CUDAGraph] = None,
         suffix: Optional[torch.cuda.CUDAGraph] = None,
-        overlap_join: bool = False,
-        epilogue: Optional[torch.cuda.CUDAGraph] = None,
     ) -> "ConditionalCudaGraph":
         """Compose ordered route/branch stages into one replayable graph.
 
-        With ``overlap_join`` the join body becomes a peer of the suffix
-        (both depend on the last stage plus every side node; neither gates
-        the other), and the optional ``epilogue`` body depends on both —
-        the placement for work that must observe the join's effects (e.g.
-        K/V readiness evidence) without serializing join before suffix.
-        Graph-launch completion still fences every leaf, so stream order
-        after replay observes all bodies.
+        The join body (when present) gates the suffix; graph-launch
+        completion fences every leaf, so stream order after replay
+        observes all bodies.
         """
 
         cls._require_runtime()
         if not stages:
             raise ValueError("conditional graph requires at least one stage")
-        if overlap_join and join is None:
-            raise ValueError("overlap_join requires a join body")
-        if epilogue is not None and not overlap_join:
-            raise ValueError(
-                "epilogue requires overlap_join; serialized joins already "
-                "order the suffix after the join"
-            )
         for index, stage in enumerate(stages):
             predicate = stage.predicate
             if predicate.device.type != "cuda":
@@ -331,9 +297,8 @@ class ConditionalCudaGraph:
                         cls._raw_graph(join),
                     )
                 )
-                if not overlap_join:
-                    dependency = join_node
-                    side_nodes.clear()
+                dependency = join_node
+                side_nodes.clear()
 
             suffix_node = None
             if suffix is not None:
@@ -347,20 +312,6 @@ class ConditionalCudaGraph:
                     )
                 )
 
-            if epilogue is not None:
-                epilogue_dependencies = [
-                    node
-                    for node in (join_node, suffix_node)
-                    if node is not None
-                ]
-                checkCudaErrors(
-                    cuda_rt.cudaGraphAddChildGraphNode(
-                        graph,
-                        epilogue_dependencies,
-                        len(epilogue_dependencies),
-                        cls._raw_graph(epilogue),
-                    )
-                )
             executable = checkCudaErrors(
                 cuda_rt.cudaGraphInstantiateWithFlags(graph, 0)
             )
@@ -380,7 +331,6 @@ class ConditionalCudaGraph:
                     ),
                     join,
                     suffix,
-                    epilogue,
                 )
                 if child is not None
             )
@@ -396,8 +346,6 @@ class ConditionalCudaGraph:
                     len(stage.side_bodies) for stage in stages
                 ),
                 join_body_count=int(join is not None),
-                join_overlap=bool(overlap_join and join is not None),
-                epilogue_body_count=int(epilogue is not None),
                 branch_count=2,
             )
         except Exception:
@@ -469,18 +417,6 @@ def capture_raw_graph(
         graph.capture_end()
     current.wait_stream(stream)
     return graph
-def full_graph_batched_commit_enabled(
-    environ: Optional[Mapping[str, str]] = None,
-) -> bool:
-    """Return whether the deferred K/V commit runs as one batched launch."""
-
-    values = os.environ if environ is None else environ
-    value = str(values.get(FD_BATCHED_COMMIT_ENV, "0")).strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off", ""}:
-        return False
-    raise ValueError(f"{FD_BATCHED_COMMIT_ENV} must be a boolean value")
 def fd_execute_project_kv_repair_full_graph(
     layer: Any,
     positions: torch.Tensor,
@@ -488,10 +424,8 @@ def fd_execute_project_kv_repair_full_graph(
     prepared: "FullGraphPreparedLayerRoute",
     *,
     repair_hidden_states: Optional[torch.Tensor] = None,
-    repair_kv_output: Optional[torch.Tensor] = None,
     repair_k_output: Optional[torch.Tensor] = None,
     repair_v_output: Optional[torch.Tensor] = None,
-    repair_q_scratch: Optional[torch.Tensor] = None,
 ) -> None:
     """Compute PROJECT-row own-layer K/V in graph-owned side work.
 
@@ -520,87 +454,10 @@ def fd_execute_project_kv_repair_full_graph(
             "deferred PROJECT K/V repair requires aligned valid rows"
         )
     if diagnostic_stage != "readiness_only":
-        if full_graph_compact_routed_qkv_enabled():
-            if diagnostic_stage != "full":
-                raise RuntimeError(
-                    "compact routed K/V repair requires full semantic mode"
-                )
-            if prepared.project_row_map is None or prepared.route_counts is None:
-                raise RuntimeError(
-                    "compact routed K/V repair requires PROJECT row metadata"
-                )
-            expected_shape = (
-                int(hidden_states.shape[0]),
-                2 * int(attention.kv_size),
-            )
-            if repair_kv_output is None or repair_kv_output.shape != expected_shape:
-                raise RuntimeError(
-                    "compact routed K/V repair requires a stable combined output"
-                )
-            radix_attention = attention.attn
-            expected_q_shape = (
-                int(hidden_states.shape[0]),
-                int(radix_attention.qk_head_dim),
-            )
-            if repair_q_scratch is None or repair_q_scratch.shape != expected_q_shape:
-                raise RuntimeError(
-                    "compact routed K/V repair requires stable rotary Q scratch"
-                )
-            qkv_weight = attention.qkv_proj.weight
-            expected_width = attention.q_size + 2 * attention.kv_size
-            if (
-                getattr(attention.qkv_proj, "bias", None) is not None
-                or qkv_weight.ndim != 2
-                or int(qkv_weight.shape[0]) != expected_width
-            ):
-                raise RuntimeError(
-                    "compact routed K/V repair requires compatible bias-free weights"
-                )
-            (
-                contiguous_routed_qkv,
-                routed_qkv_min_rows,
-                routed_qkv_multiple,
-                routed_qkv_capacities,
-            ) = full_graph_contiguous_routed_qkv_config()
-            layer_id = int(getattr(attention.attn, "layer_id", prepared.layer_id))
-            capacity_fractions = routed_qkv_capacities.get(layer_id)
-            if contiguous_routed_qkv and hidden_states.shape[0] >= routed_qkv_min_rows:
-                if capacity_fractions is None:
-                    raise RuntimeError(
-                        "contiguous routed K/V is missing the active layer"
-                    )
-                project_capacity = _compact_capacity(
-                    int(hidden_states.shape[0]),
-                    capacity_fractions[1],
-                    routed_qkv_multiple,
-                )
-                _fixed_capacity_mapped_linear(
-                    hidden_states,
-                    qkv_weight[attention.q_size : expected_width],
-                    prepared.project_row_map,
-                    prepared.route_counts[1:2],
-                    repair_kv_output,
-                    capacity=project_capacity,
-                )
-            else:
-                from sglang.srt.vpipe.cohort import mapped_linear
-
-                mapped_linear(
-                    hidden_states,
-                    qkv_weight[attention.q_size : expected_width],
-                    prepared.project_row_map,
-                    prepared.route_counts[1:2],
-                    repair_kv_output,
-                )
-            k, v = repair_kv_output.split(
-                [attention.kv_size, attention.kv_size], dim=-1
-            )
-            q = repair_q_scratch
-        else:
-            qkv, _ = attention.qkv_proj(hidden_states)
-            q, k, v = qkv.split(
-                [attention.q_size, attention.kv_size, attention.kv_size], dim=-1
-            )
+        qkv, _ = attention.qkv_proj(hidden_states)
+        q, k, v = qkv.split(
+            [attention.q_size, attention.kv_size, attention.kv_size], dim=-1
+        )
         if diagnostic_stage != "qkv_only":
             q, k = attention.rotary_emb(positions, q, k)
             del q
@@ -783,8 +640,6 @@ class LlamaConditionalGraphCapture:
     repair_input_buffers: int = 0
     repair_kv_output_buffers: int = 0
     repair_commit_graphs: int = 0
-    repair_commit_batched: bool = False
-    repair_group_size: int = 1
     repair_group_count: int = 0
     repair_graph_pools: tuple[Any, ...] = ()
     repair_capture_streams: tuple[torch.cuda.Stream, ...] = ()
@@ -900,10 +755,8 @@ def capture_llama_flexidepth_conditional_graph(
         defer_project_kv
         and full_graph_defer_project_kv_diagnostic_stage() == "full"
     )
-    compact_routed_qkv = full_graph_compact_routed_qkv_enabled()
-    repair_group_size = full_graph_repair_group_size() if defer_project_kv else 1
     repair_groups = (
-        _group_stage_indices(len(routed_layers), repair_group_size)
+        _group_stage_indices(len(routed_layers), 1)
         if defer_project_kv
         else ()
     )
@@ -932,24 +785,8 @@ def capture_llama_flexidepth_conditional_graph(
         if repair_semantic_kv
         else 0
     )
-    repair_kv_buffers = (
-        _layer_contiguous_views(
-            len(routed_layers), num_tokens, 2 * repair_kv_size, dtype, device
-        )
-        if repair_semantic_kv and compact_routed_qkv
-        else []
-    )
     repair_k_buffers = (
         [
-            buffer[:, :repair_kv_size].view(
-                num_tokens,
-                repair_radix_attention.tp_k_head_num,
-                repair_radix_attention.qk_head_dim,
-            )
-            for buffer in repair_kv_buffers
-        ]
-        if repair_semantic_kv and compact_routed_qkv
-        else [
             view.view(
                 num_tokens,
                 repair_radix_attention.tp_k_head_num,
@@ -969,15 +806,6 @@ def capture_llama_flexidepth_conditional_graph(
     )
     repair_v_buffers = (
         [
-            buffer[:, repair_kv_size:].view(
-                num_tokens,
-                repair_radix_attention.tp_v_head_num,
-                repair_radix_attention.v_head_dim,
-            )
-            for buffer in repair_kv_buffers
-        ]
-        if repair_semantic_kv and compact_routed_qkv
-        else [
             view.view(
                 num_tokens,
                 repair_radix_attention.tp_v_head_num,
@@ -995,20 +823,7 @@ def capture_llama_flexidepth_conditional_graph(
         if repair_semantic_kv
         else []
     )
-    repair_q_scratch = (
-        [
-            torch.zeros(
-                (num_tokens, repair_radix_attention.qk_head_dim),
-                dtype=dtype,
-                device=device,
-            )
-            for _ in repair_groups
-        ]
-        if repair_semantic_kv and compact_routed_qkv
-        else []
-    )
-    # Layer-contiguous [L, N] mask backing: the batched commit kernel indexes
-    # masks as one flat table; per-layer views keep the existing interface.
+    # Layer-contiguous [L, N] mask backing with per-layer views.
     repair_project_mask_backing = (
         torch.empty(
             (len(routed_layers), num_tokens), dtype=torch.bool, device=device
@@ -1257,11 +1072,6 @@ def capture_llama_flexidepth_conditional_graph(
                         repair_hidden_states=repair_input_buffers[
                             repair_stage_index
                         ],
-                        repair_kv_output=(
-                            repair_kv_buffers[repair_stage_index]
-                            if compact_routed_qkv
-                            else None
-                        ),
                         repair_k_output=(
                             repair_k_buffers[repair_stage_index]
                             if repair_semantic_kv
@@ -1270,11 +1080,6 @@ def capture_llama_flexidepth_conditional_graph(
                         repair_v_output=(
                             repair_v_buffers[repair_stage_index]
                             if repair_semantic_kv
-                            else None
-                        ),
-                        repair_q_scratch=(
-                            repair_q_scratch[group_index]
-                            if repair_q_scratch
                             else None
                         ),
                     )
@@ -1292,56 +1097,7 @@ def capture_llama_flexidepth_conditional_graph(
             )
 
         repair_commit = None
-        commit_overlap = full_graph_commit_overlap_enabled()
-        batched_commit = (
-            full_graph_batched_commit_enabled() if repair_semantic_kv else False
-        )
-        commit_graph_pool = None
-        if repair_semantic_kv and batched_commit:
-            # HBM proposal 2 (D-299+1): one cross-layer kernel launch per
-            # step over the layer-contiguous repair/mask backings replaces
-            # the per-layer masked pool writes. The plan builder fail-closes
-            # on any layout it cannot prove equivalent; the per-layer
-            # readiness recording (cheap copy_) is unchanged.
-            from sglang.srt.model_executor.forward_context import (
-                get_attn_backend,
-            )
-            from sglang.srt.vpipe.cohort import (
-                build_batched_commit_plan,
-                run_batched_commit,
-            )
-
-            batched_plan = build_batched_commit_plan(
-                routed_layers=routed_layers,
-                llama=llama,
-                kv_pool=get_attn_backend().token_to_kv_pool,
-                repair_k_buffers=repair_k_buffers,
-                repair_v_buffers=repair_v_buffers,
-                mask_backing=repair_project_mask_backing,
-                cache_locations=forward_batch.out_cache_loc,
-                num_tokens=num_tokens,
-            )
-
-            def repair_commit_fn() -> None:
-                run_batched_commit(batched_plan)
-                device_tape = getattr(
-                    forward_batch, "fd_full_graph_device_route_tape", None
-                )
-                if device_tape is None:
-                    raise RuntimeError(
-                        "batched K/V commit requires device-tape readiness"
-                    )
-                for stage_index, layer_id in enumerate(routed_layers):
-                    prepared = prepared_routes[stage_index]
-                    if prepared.inline_kv_index is None:
-                        raise RuntimeError(
-                            "batched K/V commit requires device-tape readiness"
-                        )
-                    device_tape.record_inline_kv_ready(
-                        int(layer_id), index=prepared.inline_kv_index
-                    )
-
-        elif repair_semantic_kv:
+        if repair_semantic_kv:
 
             def repair_commit_fn() -> None:
                 for stage_index, layer_id in enumerate(routed_layers):
@@ -1354,26 +1110,13 @@ def capture_llama_flexidepth_conditional_graph(
                         repair_project_masks[stage_index],
                     )
 
-        if repair_semantic_kv:
-
-            # Overlap replays the commit concurrently with the suffix, and
-            # graphs sharing one memory pool must never run concurrently
-            # (allocator reuse would alias the commit's temporaries into the
-            # suffix) — same rule the repair side bodies already follow.
-            if commit_overlap:
-                commit_graph_pool = torch.cuda.graph_pool_handle()
             repair_commit = capture_raw_graph(
                 repair_commit_fn,
                 stream=stream,
-                pool=commit_graph_pool if commit_overlap else pool,
+                pool=pool,
                 post_warmup_hook=post_warmup_hook,
             )
             child_graphs.append(repair_commit)
-
-        if commit_overlap and repair_commit is None:
-            raise RuntimeError(
-                "FD commit overlap requires the deferred semantic K/V commit"
-            )
 
         output_holder: list[Any] = []
 
@@ -1406,64 +1149,13 @@ def capture_llama_flexidepth_conditional_graph(
                 )
             ]
 
-        def suffix_compute_fn() -> None:
-            # Overlap split: the K/V commit runs beside this body, so route
-            # evidence (which asserts inline-K/V readiness the commit records)
-            # moves to the post-join epilogue below.
-            hidden_states = hidden_buffers[current_buffer]
-            residual = residual_buffers[current_buffer]
-            for layer_id in range(next_layer, llama.end_layer):
-                hidden_states, residual = llama.layers[layer_id](
-                    positions,
-                    hidden_states,
-                    forward_batch,
-                    residual,
-                )
-            hidden_states, _ = llama.norm(hidden_states, residual)
-            output_holder[:] = [
-                model.logits_processor(
-                    input_ids,
-                    hidden_states,
-                    model.lm_head,
-                    forward_batch,
-                )
-            ]
-
-        def route_evidence_fn() -> None:
-            finalize_full_graph_batch(
-                forward_batch,
-                llama._fd_full_graph_route_counters,
-                llama._fd_full_graph_layer_route_counters,
-                llama._fd_full_graph_route_digest_counters,
-                llama._fd_full_graph_inline_kv_readiness_counters,
-                llama._fd_full_graph_phase_route_counters,
-                llama._fd_full_graph_low_row_counters,
-            )
-
-        route_evidence = None
-        if commit_overlap:
-            suffix = capture_raw_graph(
-                suffix_compute_fn,
-                stream=stream,
-                pool=pool,
-                post_warmup_hook=post_warmup_hook,
-            )
-            child_graphs.append(suffix)
-            route_evidence = capture_raw_graph(
-                route_evidence_fn,
-                stream=stream,
-                pool=pool,
-                post_warmup_hook=post_warmup_hook,
-            )
-            child_graphs.append(route_evidence)
-        else:
-            suffix = capture_raw_graph(
-                suffix_fn,
-                stream=stream,
-                pool=pool,
-                post_warmup_hook=post_warmup_hook,
-            )
-            child_graphs.append(suffix)
+        suffix = capture_raw_graph(
+            suffix_fn,
+            stream=stream,
+            pool=pool,
+            post_warmup_hook=post_warmup_hook,
+        )
+        child_graphs.append(suffix)
         composed = ConditionalCudaGraph.compose_stages(
             stages=tuple(stages),
             helper=helper,
@@ -1472,8 +1164,6 @@ def capture_llama_flexidepth_conditional_graph(
             prefix=prefix,
             join=repair_commit,
             suffix=suffix,
-            overlap_join=commit_overlap,
-            epilogue=route_evidence,
         )
         if body_execution_counts is not None:
             with torch.cuda.stream(stream):
@@ -1488,33 +1178,18 @@ def capture_llama_flexidepth_conditional_graph(
             run_body=run_body_name,
             repair_input_buffers=len(repair_input_buffers),
             repair_kv_output_buffers=(
-                len(repair_kv_buffers)
-                if compact_routed_qkv
-                else len(repair_k_buffers) + len(repair_v_buffers)
+                len(repair_k_buffers) + len(repair_v_buffers)
             ),
             repair_commit_graphs=int(repair_commit is not None),
-            repair_commit_batched=bool(
-                batched_commit and repair_commit is not None
-            ),
-            repair_group_size=repair_group_size,
             repair_group_count=len(repair_groups),
-            repair_graph_pools=(
-                (*repair_graph_pools, commit_graph_pool)
-                if commit_graph_pool is not None
-                else repair_graph_pools
-            ),
+            repair_graph_pools=repair_graph_pools,
             repair_capture_streams=repair_capture_streams,
             retained_repair_state=(
                 *repair_input_buffers,
-                *repair_kv_buffers,
                 *repair_k_buffers,
                 *repair_v_buffers,
-                *repair_q_scratch,
                 *repair_project_masks,
                 *prepared_routes,
-                # The batched plan's pointer/stride tables are recorded
-                # kernel arguments — retain them for the graph's lifetime.
-                *((batched_plan,) if batched_commit else ()),
             ),
         )
     except Exception:

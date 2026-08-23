@@ -33,9 +33,6 @@ from sglang.srt.vpipe.common import (
 from sglang.srt.vpipe.skipper import (
     route_digest_uses_logical_request_ids,
 )
-from sglang.srt.vpipe.env import (
-    SUBLAYER_EXECUTION,
-)
 from sglang.srt.vpipe.config import (
     full_graph_compact_config,
     full_graph_device_route_digest_enabled,
@@ -324,16 +321,6 @@ def prepare_full_graph_batch(
                 device=hidden_states.device,
             ),
             logical_request_ids=logical_request_ids,
-            mlp_actions=(
-                torch.empty(
-                    (len(route_layer_order), row_count),
-                    dtype=torch.bool,
-                    device=hidden_states.device,
-                )
-                if forward_batch.fd_full_graph_skipper_adapter.execution_kind
-                == SUBLAYER_EXECUTION
-                else None
-            ),
             compact_evidence_specs=compact_evidence_specs,
             inline_kv_ready=(
                 torch.empty(
@@ -384,12 +371,7 @@ def finalize_full_graph_batch(
     )
     if device_tape is not None:
         device_tape.require_complete()
-        attention_routes = device_tape.actions
-        routes = (
-            torch.cat((attention_routes, device_tape.mlp_actions), dim=0)
-            if device_tape.mlp_actions is not None
-            else attention_routes
-        )
+        routes = device_tape.actions
     else:
         route_masks = getattr(forward_batch, "fd_full_graph_route_masks", None)
         if not route_masks:
@@ -529,35 +511,17 @@ def finalize_full_graph_batch(
                     torch.stack(compact_stats).sum(dim=0)
                 )
     if layer_route_counters is not None:
-        sublayer_tape = (
-            device_tape is not None and device_tape.mlp_actions is not None
-        )
-        expected_layers = (
-            device_tape.actions.shape[0] if sublayer_tape else routes.shape[0]
-        )
+        expected_layers = routes.shape[0]
         if layer_route_counters.shape != (expected_layers, 3):
             raise RuntimeError(
                 "full-graph per-layer counter shape does not match the route tape"
             )
-        if sublayer_tape:
-            valid_per_layer = (
-                valid_rows.sum(dtype=torch.int64) * 2
-            ).expand(expected_layers)
-            run_per_layer = (
-                (device_tape.actions & valid_rows.unsqueeze(0)).sum(
-                    dim=1, dtype=torch.int64
-                )
-                + (device_tape.mlp_actions & valid_rows.unsqueeze(0)).sum(
-                    dim=1, dtype=torch.int64
-                )
-            )
-        else:
-            valid_per_layer = valid_rows.sum(dtype=torch.int64).expand(
-                expected_layers
-            )
-            run_per_layer = (routes & valid_rows.unsqueeze(0)).sum(
-                dim=1, dtype=torch.int64
-            )
+        valid_per_layer = valid_rows.sum(dtype=torch.int64).expand(
+            expected_layers
+        )
+        run_per_layer = (routes & valid_rows.unsqueeze(0)).sum(
+            dim=1, dtype=torch.int64
+        )
         layer_route_counters.add_(
             torch.stack(
                 (

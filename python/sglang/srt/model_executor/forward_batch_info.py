@@ -430,13 +430,8 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
     rids: Optional[List[str]] = None
     # Device route mask bound around one full-graph FlexiDepth attention call.
     fd_full_graph_attention_run_mask: Optional[torch.Tensor] = None
-    # Host-static component action for fixed-profile sublayer adapters.
-    fd_full_graph_attention_static_run: Optional[bool] = None
     # Optional RUN-row mask for foreground K/V writes while PROJECT K/V is repaired.
     fd_full_graph_kv_write_mask: Optional[torch.Tensor] = None
-    # Complementary mapped-projection metadata owned by the current routed layer.
-    fd_full_graph_qkv_run_row_map: Optional[torch.Tensor] = None
-    fd_full_graph_qkv_run_row_count: Optional[torch.Tensor] = None
     # Graph-static [routed layer, row] action tape and row identity metadata.
     fd_full_graph_device_route_tape: object = None
     # Production full-graph skipper identity and once-per-batch device state.

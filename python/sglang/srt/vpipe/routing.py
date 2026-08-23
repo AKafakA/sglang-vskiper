@@ -29,9 +29,6 @@ from __future__ import annotations
 import triton.language as tl
 from typing import Any, Mapping, Optional
 from sglang.srt.vpipe.common import (
-    full_graph_compact_routed_qkv_enabled,
-)
-from sglang.srt.vpipe.common import (
     _fdvp_router_graph_enabled,
     _fdvp_timing_enabled,
     fdvp_fused_project_input_enabled,
@@ -59,9 +56,6 @@ from sglang.srt.vpipe.env import (
     FD_FORCE_ROUTE_ENV,
     _FD_PARITY_TRACE_ENABLED,
     _VALID_FORCED_ROUTES,
-)
-from sglang.srt.vpipe.env import (
-    SUBLAYER_EXECUTION,
 )
 from sglang.srt.vpipe.types import (
     FullGraphActionBatch,
@@ -486,9 +480,6 @@ class FullGraphPreparedLayerRoute:
     run_mask: torch.Tensor
     parity_context: Optional[tuple[int, int]]
     inline_kv_index: Optional[int]
-    run_row_map: Optional[torch.Tensor] = None
-    project_row_map: Optional[torch.Tensor] = None
-    route_counts: Optional[torch.Tensor] = None
     action_batch: Optional[FullGraphActionBatch] = None
     attention_run_mask: Optional[torch.Tensor] = None
     mlp_run_mask: Optional[torch.Tensor] = None
@@ -563,51 +554,21 @@ def fd_prepare_layer_route_full_graph(
     device_tape = getattr(
         forward_batch, "fd_full_graph_device_route_tape", None
     )
-    if action_batch.execution_kind == SUBLAYER_EXECUTION:
-        route_weights = action_batch.branch_weights
-        if device_tape is not None:
-            attention_run_mask, mlp_run_mask = (
-                device_tape.sublayer_action_masks(
-                    int(layer.layer_id),
-                    action_batch,
-                )
-            )
-        else:
-            attention_run_mask, mlp_run_mask = (
-                action_batch.write_sublayer_storage()
-            )
-        run_mask = attention_run_mask & mlp_run_mask
+    route_weights = action_batch.route_weights
+    if device_tape is not None:
+        run_mask = device_tape.action_mask(
+            int(layer.layer_id),
+            action_batch,
+        )
     else:
-        route_weights = action_batch.route_weights
-        if device_tape is not None:
-            run_mask = device_tape.action_mask(
-                int(layer.layer_id),
-                action_batch,
-            )
-        else:
-            run_mask = action_batch.write_run_storage()
-        attention_run_mask = run_mask
-        mlp_run_mask = run_mask
+        run_mask = action_batch.write_run_storage()
+    attention_run_mask = run_mask
+    mlp_run_mask = run_mask
     inline_kv_index = (
         device_tape.reserve_inline_kv_layer(layer_id)
         if device_tape is not None
         else None
     )
-    run_row_map = None
-    project_row_map = None
-    route_counts = None
-    if full_graph_compact_routed_qkv_enabled():
-        valid_rows = forward_batch.fd_full_graph_valid_rows
-        run_rows = attention_run_mask.squeeze(-1)
-        if valid_rows is None or valid_rows.shape != run_rows.shape:
-            raise RuntimeError(
-                "compact routed QKV requires aligned graph-valid rows"
-            )
-
-        run_row_map, project_row_map, route_counts = build_route_maps(
-            run_rows & valid_rows,
-            (~run_rows) & valid_rows,
-        )
     if parity_context is not None:
 
         fd_parity_trace_tensor(
@@ -630,9 +591,6 @@ def fd_prepare_layer_route_full_graph(
         run_mask=run_mask,
         parity_context=parity_context,
         inline_kv_index=inline_kv_index,
-        run_row_map=run_row_map,
-        project_row_map=project_row_map,
-        route_counts=route_counts,
         action_batch=action_batch,
         attention_run_mask=attention_run_mask,
         mlp_run_mask=mlp_run_mask,

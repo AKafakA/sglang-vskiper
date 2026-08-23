@@ -3,8 +3,8 @@
 Which skipper a process runs is decided from the environment before any adapter
 is constructed, so the selection itself never drags policy modules into the
 import graph. Also owns the two identity predicates: whether the selected policy
-needs stable logical request identities (RandomSkip and AdaSkip hash on them)
-and whether route digests do.
+needs stable logical request identities (RandomSkip hashes on them) and
+whether route digests do.
 
 Unknown boolean values RAISE rather than defaulting -- a typo in a deployment
 env must fail closed, not silently select the other branch.
@@ -29,7 +29,6 @@ from sglang.srt.vpipe.env import (
     FD_COMPACT_MIN_ROWS_ENV,
     FD_COMPACT_O_PROJ_ENV,
     FD_COMPACT_O_PROJ_LAYERS_ENV,
-    FD_COMPACT_ROUTED_QKV_ENV,
     FD_DEFER_PROJECT_KV_ENV,
     FD_DEVICE_ROUTE_DIGEST_ENV,
     FD_DEVICE_ROUTE_TAPE_ENV,
@@ -53,7 +52,6 @@ from sglang.srt.vpipe.env import (
     _VALID_EXECUTION_MODES,
     FD_ACTIVE_PHASES_ENV,
     _VALID_ACTIVE_PHASES,
-    ADASKIP_FULL_GRAPH_SKIPPER,
     DETERMINISTIC_MOCK_FULL_GRAPH_SKIPPER,
     FLEXIDEPTH_FULL_GRAPH_SKIPPER,
     DEVICE_ROUTE_DIGEST_ENV,
@@ -77,10 +75,7 @@ def full_graph_policy_identity_required(
 
     return (
         configured_full_graph_skipper_name(environ)
-        in {
-            DETERMINISTIC_MOCK_FULL_GRAPH_SKIPPER,
-            ADASKIP_FULL_GRAPH_SKIPPER,
-        }
+        == DETERMINISTIC_MOCK_FULL_GRAPH_SKIPPER
     )
 def full_graph_request_identity_required(
     environ: Optional[Mapping[str, str]] = None,

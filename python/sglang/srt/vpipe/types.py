@@ -1,14 +1,15 @@
 """The skipper contract — logical actions and the adapter base classes.
 
-Kept in its own module so both `skipper.py` (FlexiDepth, RandomSkip) and
-`skipper_adaskip.py` (AdaSkip) can depend on it without a cycle.
+Kept in its own module so `skipper.py` (FlexiDepth, RandomSkip) can depend on
+it without a cycle, and so a future non-binary adapter has one seam to extend.
 
 ``LogicalAction`` is a skipper's decision for one token at one layer. The
 production executor supports exactly the binary pair ``RUN`` / ``PROJECT_ONLY``;
 every other action is declared so an adapter emitting one FAILS CLOSED rather
-than being silently lowered into the binary executor. That matters for AdaSkip,
-whose independent attention/MLP actions must never be flattened -- doing so
-would change the skipper's semantics while still reporting its name.
+than being silently lowered into the binary executor. (The AdaSkip sublayer
+adapter and its ``sublayer`` execution kind were dropped 2026-08-23 by owner
+ruling — see the removed-feature register; the fail-closed rejection of any
+non-binary execution kind is what remains of that seam.)
 """
 
 from __future__ import annotations
@@ -20,7 +21,6 @@ from typing import Any, Mapping, Optional
 import torch
 from sglang.srt.vpipe.env import (
     RUN_PROJECT_EXECUTION,
-    SUBLAYER_EXECUTION,
 )
 
 
@@ -60,31 +60,20 @@ class FullGraphActionBatch:
     forced_action: Optional[LogicalAction] = None
     payload_semantics: str = ""
     execution_kind: str = RUN_PROJECT_EXECUTION
-    attention_run_mask: Any = None
-    mlp_run_mask: Any = None
-    attention_skip_scale: Any = None
-    mlp_skip_scale: Any = None
-    static_attention_run: Optional[bool] = None
-    static_mlp_run: Optional[bool] = None
-    dense_reference_mlp: bool = False
 
     def __post_init__(self) -> None:
         if not self.adapter_name:
             raise ValueError("full-graph action batch requires an adapter name")
-        if not isinstance(self.dense_reference_mlp, bool):
-            raise ValueError("dense_reference_mlp must be boolean")
-        if self.dense_reference_mlp and self.execution_kind != SUBLAYER_EXECUTION:
-            raise ValueError("dense MLP reference requires sublayer execution")
         shape = getattr(self.branch_weights, "shape", None)
         if shape is None or len(shape) != 2 or int(shape[1]) != 1:
             raise ValueError("full-graph branch weights must have shape [rows, 1]")
         if self.execution_kind == RUN_PROJECT_EXECUTION:
             self._validate_run_project(shape)
-        elif self.execution_kind == SUBLAYER_EXECUTION:
-            self._validate_sublayer(shape)
         else:
             raise ValueError(
-                f"unknown full-graph execution kind: {self.execution_kind!r}"
+                "this executor supports only the binary RUN/PROJECT execution "
+                f"kind; got {self.execution_kind!r} (non-binary kinds fail "
+                "closed rather than being silently lowered)"
             )
         if not self.payload_semantics:
             raise ValueError("full-graph action batch requires payload semantics")
@@ -97,16 +86,6 @@ class FullGraphActionBatch:
                 "RUN/PROJECT full-graph execution supports exactly RUN and "
                 "PROJECT_ONLY"
             )
-        sublayer_values = (
-            self.attention_run_mask,
-            self.mlp_run_mask,
-            self.attention_skip_scale,
-            self.mlp_skip_scale,
-            self.static_attention_run,
-            self.static_mlp_run,
-        )
-        if any(value is not None for value in sublayer_values):
-            raise ValueError("RUN/PROJECT actions cannot carry sublayer payloads")
         if self.explicit_run_mask is not None:
             if getattr(self.explicit_run_mask, "shape", None) != shape:
                 raise ValueError(
@@ -135,43 +114,14 @@ class FullGraphActionBatch:
                 f"{self.forced_action.name}"
             )
 
-    def _validate_sublayer(self, shape: Any) -> None:
-        if self.supported_actions != frozenset(
-            (
-                LogicalAction.RUN,
-                LogicalAction.SKIP_ATTN,
-                LogicalAction.SKIP_MLP,
-            )
-        ):
-            raise ValueError(
-                "sublayer full-graph execution supports RUN, SKIP_ATTN, and "
-                "SKIP_MLP"
-            )
-        if self.threshold is not None or self.explicit_run_mask is not None:
-            raise ValueError("sublayer actions require explicit component masks")
-        if self.forced_action is not None:
-            raise ValueError("forced whole-layer routes cannot lower sublayer actions")
-        for name, value in (
-            ("attention run mask", self.attention_run_mask),
-            ("MLP run mask", self.mlp_run_mask),
-            ("attention skip scale", self.attention_skip_scale),
-            ("MLP skip scale", self.mlp_skip_scale),
-        ):
-            if getattr(value, "shape", None) != shape:
-                raise ValueError(f"full-graph {name} must match routed rows")
-        for name, value in (
-            ("static_attention_run", self.static_attention_run),
-            ("static_mlp_run", self.static_mlp_run),
-        ):
-            if value is not None and not isinstance(value, bool):
-                raise ValueError(f"{name} must be boolean when provided")
-
     @property
     def route_weights(self) -> Any:
         """Compatibility name used by the existing FlexiDepth executor."""
 
         if self.execution_kind != RUN_PROJECT_EXECUTION:
-            raise RuntimeError("sublayer actions do not have RUN/PROJECT weights")
+            raise RuntimeError(
+                "non-binary actions do not have RUN/PROJECT weights"
+            )
         return self.branch_weights
 
     def write_run_storage(self, out: Any = None) -> Any:
@@ -180,7 +130,9 @@ class FullGraphActionBatch:
         import torch
 
         if self.execution_kind != RUN_PROJECT_EXECUTION:
-            raise RuntimeError("sublayer actions require two component tapes")
+            raise RuntimeError(
+                "non-binary actions cannot be lowered to the boolean tape"
+            )
 
         if out is not None:
             if getattr(out, "shape", None) != self.branch_weights.shape:
@@ -221,35 +173,6 @@ class FullGraphActionBatch:
         torch.gt(self.branch_weights, self.threshold, out=out)
         return out
 
-    def write_sublayer_storage(
-        self,
-        *,
-        attention_out: Any = None,
-        mlp_out: Any = None,
-    ) -> tuple[Any, Any]:
-        """Write independent attention and MLP RUN masks without allocation."""
-
-        import torch
-
-        if self.execution_kind != SUBLAYER_EXECUTION:
-            raise RuntimeError("RUN/PROJECT actions use the legacy boolean tape")
-        outputs = []
-        for name, source, target in (
-            ("attention", self.attention_run_mask, attention_out),
-            ("MLP", self.mlp_run_mask, mlp_out),
-        ):
-            if source.dtype != torch.bool:
-                raise RuntimeError(f"{name} full-graph actions must be boolean")
-            if target is None:
-                outputs.append(source)
-                continue
-            if target.shape != source.shape or target.dtype != torch.bool:
-                raise RuntimeError(f"{name} action tape is incompatible")
-            if target.device != source.device:
-                raise RuntimeError(f"{name} action tape must share a device")
-            target.copy_(source)
-            outputs.append(target)
-        return outputs[0], outputs[1]
 class FullGraphSkipperAdapter(ABC):
     """Policy decision interface consumed by the production graph executor."""
 
@@ -258,7 +181,6 @@ class FullGraphSkipperAdapter(ABC):
     requires_stable_request_ids: bool = False
     route_digest_requires_stable_request_ids: bool = False
     requires_request_slots: bool = False
-    observes_mlp: bool = False
     requires_flexidepth_weights: bool = True
     execution_kind: str = RUN_PROJECT_EXECUTION
 
@@ -319,18 +241,6 @@ class FullGraphSkipperAdapter(ABC):
             batch_request_slots,
         )
         return None
-
-    def observe_mlp(
-        self,
-        *,
-        layer_id: int,
-        pre_mlp_hidden: Any,
-        post_mlp_hidden: Any,
-        batch_state: Any,
-    ) -> None:
-        """Record optional policy observations without host readback."""
-
-        del layer_id, pre_mlp_hidden, post_mlp_hidden, batch_state
 
     def finalize_batch(self, *, batch_state: Any) -> None:
         """Commit optional graph-resident policy state once per forward."""

@@ -403,8 +403,8 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
         #   D-251 review F1: gating on the regime dispatch missed V-dec
         #     (full-graph FlexiDepth, no regime switch).
         #   Codex review:    gating on fd_skip_decode_deployed() missed WEIGHTLESS
-        #     full-graph skippers — AdaSkip sets requires_flexidepth_weights=False
-        #     (full_graph_skipper.py:686) and needs no SGLANG_FD_WEIGHTS.
+        #     full-graph skippers — an adapter with
+        #     requires_flexidepth_weights=False needs no SGLANG_FD_WEIGHTS.
         # A stale scalar is silent corruption, not a crash: decode capture reuses
         # this buffer across buckets in DESCENDING order, so the smallest bucket's
         # value (typically 1) survives; a later multi-row replay then marks every
