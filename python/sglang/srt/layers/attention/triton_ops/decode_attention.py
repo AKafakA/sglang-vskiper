@@ -22,6 +22,7 @@ It supports page size = 1.
 
 import logging
 
+import torch
 import triton
 import triton.language as tl
 
@@ -103,6 +104,7 @@ def _fwd_kernel_stage1(
     Att_Out,
     Att_Lse,
     num_kv_splits,
+    active_mask_ptr,
     stride_qbs,
     stride_qh,
     stride_buf_kbs,
@@ -129,6 +131,7 @@ def _fwd_kernel_stage1(
     Lv: tl.constexpr,
     xai_temperature_len: tl.constexpr,
     PAGE_SIZE: tl.constexpr,
+    HAS_ACTIVE_MASK: tl.constexpr,
 ):
     cur_batch = tl.program_id(0)
     cur_head = tl.program_id(1)
@@ -144,6 +147,10 @@ def _fwd_kernel_stage1(
     cur_batch_kv_start_idx = tl.load(kv_indptr + cur_batch)
     cur_batch_seq_len = tl.load(kv_indptr + cur_batch + 1) - cur_batch_kv_start_idx
     kv_splits = tl.load(num_kv_splits + cur_batch)
+    if HAS_ACTIVE_MASK:
+        row_active = tl.load(active_mask_ptr + cur_batch).to(tl.int1)
+    else:
+        row_active = True
 
     if xai_temperature_len > 0:
         offs_qidx = cur_batch_seq_len - 1
@@ -163,7 +170,7 @@ def _fwd_kernel_stage1(
     e_sum = 0.0
     acc = tl.zeros([BLOCK_DV], dtype=tl.float32)
 
-    if split_kv_end > split_kv_start:
+    if row_active & (split_kv_end > split_kv_start):
         q = tl.load(Q + off_q, mask=mask_d, other=0.0)
         for start_n in range(split_kv_start, split_kv_end, BLOCK_N):
             offs_n = start_n + tl.arange(0, BLOCK_N)
@@ -273,6 +280,7 @@ def _decode_att_m_fwd(
     logit_cap,
     xai_temperature_len=-1,
     page_size: int = 1,
+    active_mask=None,
 ):
     BLOCK = 64
     # [TODO] work around SGPR limit on MI3xx
@@ -291,6 +299,7 @@ def _decode_att_m_fwd(
 
     grid = (batch, head_num, MAX_KV_SPLITS)
     kv_group_num = q.shape[1] // kv_head_num
+    active_mask_ptr = q if active_mask is None else active_mask
 
     if kv_group_num == 1:
         num_warps = 4
@@ -319,6 +328,7 @@ def _decode_att_m_fwd(
         att_out,
         att_lse,
         num_kv_splits,
+        active_mask_ptr,
         q.stride(0),
         q.stride(1),
         k_slot_stride,
@@ -344,6 +354,7 @@ def _decode_att_m_fwd(
         Lk=Lk,
         Lv=Lv,
         PAGE_SIZE=page_size,
+        HAS_ACTIVE_MASK=active_mask is not None,
     )
 
 
@@ -358,6 +369,7 @@ def _fwd_grouped_kernel_stage1(
     Att_Out,
     Att_Lse,
     num_kv_splits,
+    active_mask_ptr,
     stride_qbs,
     stride_qh,
     stride_buf_kbs,
@@ -387,6 +399,7 @@ def _fwd_grouped_kernel_stage1(
     HAS_MLA: tl.constexpr = False,
     USE_PDL: tl.constexpr = False,
     PAGE_SIZE: tl.constexpr = 1,
+    HAS_ACTIVE_MASK: tl.constexpr = False,
 ):
     cur_batch = tl.program_id(0)
     cur_head_id = tl.program_id(1)
@@ -409,6 +422,10 @@ def _fwd_grouped_kernel_stage1(
     cur_batch_kv_start_idx = tl.load(kv_indptr + cur_batch)
     cur_batch_seq_len = tl.load(kv_indptr + cur_batch + 1) - cur_batch_kv_start_idx
     kv_splits = tl.load(num_kv_splits + cur_batch)
+    if HAS_ACTIVE_MASK:
+        row_active = tl.load(active_mask_ptr + cur_batch).to(tl.int1)
+    else:
+        row_active = True
 
     if xai_temperature_len > 0:
         offs_qidx = cur_batch_seq_len - 1
@@ -442,7 +459,7 @@ def _fwd_grouped_kernel_stage1(
     if not HAS_MLA:
         base_offs_v = cur_kv_head * stride_buf_vh + offs_dv[None, :]
 
-    if split_kv_end > split_kv_start:
+    if row_active & (split_kv_end > split_kv_start):
         q = tl.load(Q + offs_q, mask=(mask_h[:, None]) & (mask_d[None, :]), other=0.0)
         q_k = q.to(K_Buffer.dtype.element_ty)
         if BLOCK_DPE > 0:
@@ -554,6 +571,252 @@ def _fwd_grouped_kernel_stage1(
         tl.extra.cuda.gdc_launch_dependents()
 
 
+@triton.jit
+def _fwd_grouped_mapped_kernel_stage1(
+    Q,
+    K_Buffer,
+    V_Buffer,
+    sm_scale_withk,
+    kv_indptr,
+    kv_indices,
+    Att_Out,
+    Att_Lse,
+    num_kv_splits,
+    active_row_map_ptr,
+    active_row_count_ptr,
+    stride_qbs,
+    stride_qh,
+    stride_buf_kbs,
+    stride_buf_kh,
+    stride_buf_vbs,
+    stride_buf_vh,
+    stride_buf_kpage,
+    stride_buf_ktok,
+    stride_buf_vpage,
+    stride_buf_vtok,
+    stride_mid_ob,
+    stride_mid_oh,
+    stride_mid_os,
+    kv_group_num: tl.constexpr,
+    q_head_num: tl.constexpr,
+    BLOCK_DMODEL: tl.constexpr,
+    BLOCK_DPE: tl.constexpr,
+    BLOCK_DV: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_H: tl.constexpr,
+    MIN_BLOCK_KV: tl.constexpr,
+    ACTIVE_ROW_WORKERS: tl.constexpr,
+    logit_cap: tl.constexpr,
+    xai_temperature_len: tl.constexpr,
+    Lk: tl.constexpr,
+    Lv: tl.constexpr,
+    HAS_MLA: tl.constexpr = False,
+    USE_PDL: tl.constexpr = False,
+    PAGE_SIZE: tl.constexpr = 1,
+):
+    row_worker = tl.program_id(0)
+    cur_head_id = tl.program_id(1)
+    cur_kv_head = cur_head_id // tl.cdiv(kv_group_num, BLOCK_H)
+    split_kv_id = tl.program_id(2)
+    active_row_count = tl.load(active_row_count_ptr)
+
+    if BLOCK_H < kv_group_num:
+        VALID_BLOCK_H: tl.constexpr = BLOCK_H
+    else:
+        VALID_BLOCK_H: tl.constexpr = kv_group_num
+    cur_head = cur_head_id * VALID_BLOCK_H + tl.arange(0, BLOCK_H)
+    mask_h = cur_head < (cur_head_id + 1) * VALID_BLOCK_H
+    mask_h = mask_h & (cur_head < q_head_num)
+
+    offs_d = tl.arange(0, BLOCK_DMODEL)
+    offs_dv = tl.arange(0, BLOCK_DV)
+    mask_d = offs_d < Lk
+    mask_dv = offs_dv < Lv
+    base_offs_k = cur_kv_head * stride_buf_kh + offs_d[:, None]
+    if BLOCK_DPE > 0:
+        offs_dpe = BLOCK_DMODEL + tl.arange(0, BLOCK_DPE)
+        mask_dpe = offs_dpe < Lk
+        base_offs_kpe = cur_kv_head * stride_buf_kh + offs_dpe[:, None]
+    if not HAS_MLA:
+        base_offs_v = cur_kv_head * stride_buf_vh + offs_dv[None, :]
+
+    for row_slot in tl.range(
+        row_worker, active_row_count, ACTIVE_ROW_WORKERS
+    ):
+        cur_batch = tl.load(active_row_map_ptr + row_slot)
+        cur_batch_kv_start_idx = tl.load(kv_indptr + cur_batch)
+        cur_batch_seq_len = (
+            tl.load(kv_indptr + cur_batch + 1) - cur_batch_kv_start_idx
+        )
+        kv_splits = tl.load(num_kv_splits + cur_batch)
+
+        if xai_temperature_len > 0:
+            offs_qidx = cur_batch_seq_len - 1
+            xai_temperature_scale = 1.0 / tl.log2(
+                float(xai_temperature_len)
+            )
+            _qtemp = (
+                tl.log2(offs_qidx.to(tl.float32)) * xai_temperature_scale
+            )
+            xai_temperature_reg = tl.where(
+                offs_qidx > xai_temperature_len, _qtemp, 1.0
+            )
+
+        offs_q = (
+            cur_batch * stride_qbs
+            + cur_head[:, None] * stride_qh
+            + offs_d[None, :]
+        )
+        if BLOCK_DPE > 0:
+            off_qpe = (
+                cur_batch * stride_qbs
+                + cur_head[:, None] * stride_qh
+                + offs_dpe[None, :]
+            )
+
+        kv_len_per_split = (
+            tl.cdiv(
+                tl.cdiv(cur_batch_seq_len, kv_splits), MIN_BLOCK_KV
+            )
+            * MIN_BLOCK_KV
+        )
+        split_kv_start = kv_len_per_split * split_kv_id
+        split_kv_end = tl.minimum(
+            split_kv_start + kv_len_per_split, cur_batch_seq_len
+        )
+
+        e_max = tl.zeros([BLOCK_H], dtype=tl.float32) - float("inf")
+        e_sum = tl.zeros([BLOCK_H], dtype=tl.float32)
+        acc = tl.zeros([BLOCK_H, BLOCK_DV], dtype=tl.float32)
+
+        if split_kv_end > split_kv_start:
+            q = tl.load(
+                Q + offs_q,
+                mask=(mask_h[:, None]) & (mask_d[None, :]),
+                other=0.0,
+            )
+            q_k = q.to(K_Buffer.dtype.element_ty)
+            if BLOCK_DPE > 0:
+                qpe = tl.load(
+                    Q + off_qpe,
+                    mask=(mask_h[:, None]) & (mask_dpe[None, :]),
+                    other=0.0,
+                )
+            for start_n in tl.range(
+                split_kv_start, split_kv_end, BLOCK_N
+            ):
+                offs_n = start_n + tl.arange(0, BLOCK_N)
+                kv_loc = tl.load(
+                    kv_indices + cur_batch_kv_start_idx + offs_n,
+                    mask=offs_n < split_kv_end,
+                    other=0,
+                )
+                if PAGE_SIZE == 1:
+                    offs_buf_k = (
+                        kv_loc[None, :] * stride_buf_kbs + base_offs_k
+                    )
+                else:
+                    page_id = kv_loc // PAGE_SIZE
+                    tok_in_p = kv_loc % PAGE_SIZE
+                    offs_buf_k = (
+                        page_id[None, :] * stride_buf_kpage
+                        + tok_in_p[None, :] * stride_buf_ktok
+                        + base_offs_k
+                    )
+                k = tl.load(
+                    K_Buffer + offs_buf_k,
+                    mask=(offs_n[None, :] < split_kv_end)
+                    & (mask_d[:, None]),
+                    other=0.0,
+                )
+                qk = tl.dot(q_k, k)
+                if BLOCK_DPE > 0:
+                    if PAGE_SIZE == 1:
+                        offs_buf_kpe = (
+                            kv_loc[None, :] * stride_buf_kbs
+                            + base_offs_kpe
+                        )
+                    else:
+                        offs_buf_kpe = (
+                            page_id[None, :] * stride_buf_kpage
+                            + tok_in_p[None, :] * stride_buf_ktok
+                            + base_offs_kpe
+                        )
+                    kpe = tl.load(
+                        K_Buffer + offs_buf_kpe,
+                        mask=(offs_n[None, :] < split_kv_end)
+                        & (mask_dpe[:, None]),
+                        other=0.0,
+                    )
+                    qk += tl.dot(qpe, kpe.to(qpe.dtype))
+                qk *= sm_scale_withk
+
+                if logit_cap > 0:
+                    qk = logit_cap * tanh(qk / logit_cap)
+                if xai_temperature_len > 0:
+                    qk *= xai_temperature_reg[:, None]
+
+                qk = tl.where(
+                    mask_h[:, None]
+                    & (offs_n[None, :] < split_kv_end),
+                    qk,
+                    float("-inf"),
+                )
+                if HAS_MLA:
+                    v = tl.trans(k)
+                else:
+                    if PAGE_SIZE == 1:
+                        offs_buf_v = (
+                            kv_loc[:, None] * stride_buf_vbs + base_offs_v
+                        )
+                    else:
+                        offs_buf_v = (
+                            page_id[:, None] * stride_buf_vpage
+                            + tok_in_p[:, None] * stride_buf_vtok
+                            + base_offs_v
+                        )
+                    v = tl.load(
+                        V_Buffer + offs_buf_v,
+                        mask=(offs_n[:, None] < split_kv_end)
+                        & (mask_dv[None, :]),
+                        other=0.0,
+                    )
+
+                n_e_max = tl.maximum(tl.max(qk, 1), e_max)
+                re_scale = tl.exp(e_max - n_e_max)
+                p = tl.exp(qk - n_e_max[:, None])
+                acc *= re_scale[:, None]
+                acc += tl.dot(p.to(v.dtype), v)
+                e_sum = e_sum * re_scale + tl.sum(p, 1)
+                e_max = n_e_max
+
+            offs_mid_o = (
+                cur_batch * stride_mid_ob
+                + cur_head[:, None] * stride_mid_oh
+                + split_kv_id * stride_mid_os
+                + offs_dv[None, :]
+            )
+            tl.store(
+                Att_Out + offs_mid_o,
+                acc / e_sum[:, None],
+                mask=(mask_h[:, None]) & (mask_dv[None, :]),
+            )
+
+            offs_mid_o_1 = (
+                cur_batch * stride_mid_ob
+                + cur_head * stride_mid_oh
+                + split_kv_id * stride_mid_os
+            ) // Lv
+            tl.store(
+                Att_Lse + offs_mid_o_1,
+                e_max + tl.log(e_sum),
+                mask=mask_h,
+            )
+
+    if USE_PDL:
+        tl.extra.cuda.gdc_launch_dependents()
+
+
 def _decode_grouped_att_m_fwd(
     q,
     k_buffer,
@@ -570,6 +833,10 @@ def _decode_grouped_att_m_fwd(
     has_mla=False,
     use_pdl=False,
     page_size: int = 1,
+    active_mask=None,
+    active_row_map=None,
+    active_row_count=None,
+    active_row_workers=None,
 ):
     BLOCK = 32
     Lk = k_buffer.shape[-1]
@@ -595,11 +862,14 @@ def _decode_grouped_att_m_fwd(
     kv_head_num = k_buffer.shape[-2]
     batch, head_num = q.shape[0], q.shape[1]
     kv_group_num = q.shape[1] // kv_head_num
+    active_mask_ptr = q if active_mask is None else active_mask
 
     BLOCK_H = 16
     MAX_KV_SPLITS = max_kv_splits
+    mapped_rows = active_row_map is not None
+    launch_rows = active_row_workers if mapped_rows else batch
     grid = (
-        batch,
+        launch_rows,
         triton.cdiv(head_num, min(BLOCK_H, kv_group_num)),
         MAX_KV_SPLITS,
     )
@@ -619,7 +889,17 @@ def _decode_grouped_att_m_fwd(
         v_buffer, page_size
     )
 
-    _fwd_grouped_kernel_stage1[grid](
+    kernel = (
+        _fwd_grouped_mapped_kernel_stage1
+        if mapped_rows
+        else _fwd_grouped_kernel_stage1
+    )
+    row_metadata = (
+        (active_row_map, active_row_count)
+        if mapped_rows
+        else (active_mask_ptr,)
+    )
+    kernel[grid](
         q,
         k_buffer,
         v_buffer,
@@ -629,6 +909,7 @@ def _decode_grouped_att_m_fwd(
         att_out,
         att_lse,
         num_kv_splits,
+        *row_metadata,
         q.stride(0),
         q.stride(1),
         k_slot_stride,
@@ -659,6 +940,11 @@ def _decode_grouped_att_m_fwd(
         HAS_MLA=has_mla,
         USE_PDL=use_pdl,
         PAGE_SIZE=page_size,
+        **(
+            {"ACTIVE_ROW_WORKERS": active_row_workers}
+            if mapped_rows
+            else {"HAS_ACTIVE_MASK": active_mask is not None}
+        ),
         **extra_kargs,
     )
 
@@ -671,6 +957,7 @@ def _fwd_kernel_stage2(
     v_scale,
     kv_indptr,
     num_kv_splits,
+    active_mask_ptr,
     sink_ptr,
     stride_mid_ob,
     stride_mid_oh,
@@ -682,6 +969,7 @@ def _fwd_kernel_stage2(
     BLOCK_DV: tl.constexpr,
     Lv: tl.constexpr,
     HAS_SINK: tl.constexpr,
+    HAS_ACTIVE_MASK: tl.constexpr,
     USE_PDL: tl.constexpr = False,
 ):
     cur_batch = tl.program_id(0)
@@ -693,6 +981,11 @@ def _fwd_kernel_stage2(
     cur_batch_seq_len = tl.load(kv_indptr + cur_batch + 1) - tl.load(
         kv_indptr + cur_batch
     )
+    if HAS_ACTIVE_MASK:
+        row_active = tl.load(active_mask_ptr + cur_batch).to(tl.int1)
+        cur_batch_seq_len = tl.where(row_active, cur_batch_seq_len, 0)
+    else:
+        row_active = True
     kv_splits = tl.load(num_kv_splits + cur_batch)
 
     offs_d = tl.arange(0, BLOCK_DV)
@@ -729,13 +1022,116 @@ def _fwd_kernel_stage2(
 
     if HAS_SINK:
         cur_sink = tl.load(sink_ptr + cur_head)
-        e_sum += tl.exp(cur_sink - e_max)
+        sink_logit = tl.where(row_active, cur_sink - e_max, -float("inf"))
+        e_sum += tl.exp(sink_logit)
+
+    safe_e_sum = tl.where(row_active, e_sum, 1.0)
+    result = tl.where(row_active, acc / safe_e_sum * v_scale, 0.0)
 
     tl.store(
         O + cur_batch * stride_obs + cur_head * stride_oh + offs_d,
-        acc / e_sum * v_scale,
+        result,
         mask=mask_d,
     )
+
+
+@triton.jit
+def _fwd_mapped_kernel_stage2(
+    Mid_O,
+    Mid_O_1,
+    O,
+    v_scale,
+    kv_indptr,
+    num_kv_splits,
+    active_row_map_ptr,
+    active_row_count_ptr,
+    sink_ptr,
+    stride_mid_ob,
+    stride_mid_oh,
+    stride_mid_os,
+    stride_obs,
+    stride_oh,
+    MAX_KV_SPLITS: tl.constexpr,
+    MIN_BLOCK_KV: tl.constexpr,
+    ACTIVE_ROW_WORKERS: tl.constexpr,
+    BLOCK_DV: tl.constexpr,
+    Lv: tl.constexpr,
+    HAS_SINK: tl.constexpr,
+    USE_PDL: tl.constexpr = False,
+):
+    row_worker = tl.program_id(0)
+    cur_head = tl.program_id(1)
+    active_row_count = tl.load(active_row_count_ptr)
+
+    if USE_PDL:
+        tl.extra.cuda.gdc_wait()
+
+    offs_d = tl.arange(0, BLOCK_DV)
+    mask_d = offs_d < Lv
+
+    for row_slot in tl.range(
+        row_worker, active_row_count, ACTIVE_ROW_WORKERS
+    ):
+        cur_batch = tl.load(active_row_map_ptr + row_slot)
+        cur_batch_seq_len = tl.load(
+            kv_indptr + cur_batch + 1
+        ) - tl.load(kv_indptr + cur_batch)
+        kv_splits = tl.load(num_kv_splits + cur_batch)
+
+        e_sum = 0.0
+        e_max = -float("inf")
+        acc = tl.zeros([BLOCK_DV], dtype=tl.float32)
+
+        offs_v = (
+            cur_batch * stride_mid_ob + cur_head * stride_mid_oh + offs_d
+        )
+        offs_logic = (
+            cur_batch * stride_mid_ob + cur_head * stride_mid_oh
+        ) // Lv
+        kv_len_per_split = (
+            tl.cdiv(
+                tl.cdiv(cur_batch_seq_len, kv_splits), MIN_BLOCK_KV
+            )
+            * MIN_BLOCK_KV
+        )
+
+        for split_kv_id in tl.range(
+            0, MAX_KV_SPLITS, num_stages=2
+        ):
+            split_kv_start = kv_len_per_split * split_kv_id
+            split_kv_end = tl.minimum(
+                split_kv_start + kv_len_per_split, cur_batch_seq_len
+            )
+
+            if split_kv_end > split_kv_start:
+                tv = tl.load(
+                    Mid_O + offs_v + split_kv_id * stride_mid_os,
+                    mask=mask_d,
+                    other=0.0,
+                )
+                tlogic = tl.load(
+                    Mid_O_1
+                    + offs_logic
+                    + split_kv_id * stride_mid_os // Lv
+                )
+                n_e_max = tl.maximum(tlogic, e_max)
+                old_scale = tl.exp(e_max - n_e_max)
+                acc *= old_scale
+                exp_logic = tl.exp(tlogic - n_e_max)
+                acc += exp_logic * tv
+                e_sum = e_sum * old_scale + exp_logic
+                e_max = n_e_max
+
+        if HAS_SINK:
+            cur_sink = tl.load(sink_ptr + cur_head)
+            e_sum += tl.exp(cur_sink - e_max)
+
+        result = acc / e_sum * v_scale
+        tl.store(
+            O + cur_batch * stride_obs + cur_head * stride_oh + offs_d,
+            result,
+            mask=mask_d,
+        )
 
 
 def _decode_softmax_reducev_fwd(
@@ -750,6 +1146,10 @@ def _decode_softmax_reducev_fwd(
     max_kv_splits,
     sinks=None,
     use_pdl=False,
+    active_mask=None,
+    active_row_map=None,
+    active_row_count=None,
+    active_row_workers=None,
 ):
     batch, head_num = q.shape[0], q.shape[1]
     Lv = v_buffer.shape[-1]
@@ -757,6 +1157,7 @@ def _decode_softmax_reducev_fwd(
 
     MAX_KV_SPLITS = max_kv_splits
     HAS_SINK = sinks is not None
+    active_mask_ptr = q if active_mask is None else active_mask
 
     extra_kargs = {}
     if _is_hip:
@@ -764,14 +1165,23 @@ def _decode_softmax_reducev_fwd(
         # https://github.com/triton-lang/triton/blob/main/third_party/amd/backend/compiler.py
         extra_kargs = {"waves_per_eu": 4, "matrix_instr_nonkdim": 16, "kpack": 2}
 
-    grid = (batch, head_num)
-    _fwd_kernel_stage2[grid](
+    mapped_rows = active_row_map is not None
+    launch_rows = active_row_workers if mapped_rows else batch
+    grid = (launch_rows, head_num)
+    kernel = _fwd_mapped_kernel_stage2 if mapped_rows else _fwd_kernel_stage2
+    row_metadata = (
+        (active_row_map, active_row_count)
+        if mapped_rows
+        else (active_mask_ptr,)
+    )
+    kernel[grid](
         logits,
         lse,
         o,
         v_scale,
         kv_indptr,
         num_kv_splits,
+        *row_metadata,
         sinks,
         logits.stride(0),
         logits.stride(1),
@@ -784,6 +1194,11 @@ def _decode_softmax_reducev_fwd(
         Lv=Lv,
         HAS_SINK=HAS_SINK,
         USE_PDL=use_pdl,
+        **(
+            {"ACTIVE_ROW_WORKERS": active_row_workers}
+            if mapped_rows
+            else {"HAS_ACTIVE_MASK": active_mask is not None}
+        ),
         num_warps=4,
         num_stages=2,
         **({"launch_pdl": True} if use_pdl else {}),
@@ -808,6 +1223,7 @@ def decode_attention_fwd_normal(
     sinks=None,
     xai_temperature_len=-1,
     page_size: int = 1,
+    active_mask=None,
 ):
     _decode_att_m_fwd(
         q,
@@ -823,6 +1239,7 @@ def decode_attention_fwd_normal(
         logit_cap,
         xai_temperature_len,
         page_size=page_size,
+        active_mask=active_mask,
     )
     _decode_softmax_reducev_fwd(
         attn_logits,
@@ -835,6 +1252,7 @@ def decode_attention_fwd_normal(
         num_kv_splits,
         max_kv_splits,
         sinks,
+        active_mask=active_mask,
     )
 
 
@@ -857,6 +1275,10 @@ def decode_attention_fwd_grouped(
     has_mla=False,
     use_pdl=False,
     page_size: int = 1,
+    active_mask=None,
+    active_row_map=None,
+    active_row_count=None,
+    active_row_workers=None,
 ):
     _decode_grouped_att_m_fwd(
         q,
@@ -874,6 +1296,10 @@ def decode_attention_fwd_grouped(
         has_mla=has_mla,
         use_pdl=use_pdl,
         page_size=page_size,
+        active_mask=active_mask,
+        active_row_map=active_row_map,
+        active_row_count=active_row_count,
+        active_row_workers=active_row_workers,
     )
     _decode_softmax_reducev_fwd(
         attn_logits,
@@ -887,6 +1313,10 @@ def decode_attention_fwd_grouped(
         max_kv_splits,
         sinks,
         use_pdl=use_pdl,
+        active_mask=active_mask,
+        active_row_map=active_row_map,
+        active_row_count=active_row_count,
+        active_row_workers=active_row_workers,
     )
 
 
@@ -910,16 +1340,54 @@ def decode_attention_fwd(
     has_mla=False,
     use_pdl=False,
     page_size: int = 1,
+    active_mask=None,
+    active_row_map=None,
+    active_row_count=None,
+    active_row_workers=None,
 ):
     assert max_kv_splits == attn_logits.shape[2]
     assert q.shape[0] <= kv_indptr.shape[0] - 1
     assert q.shape[0] <= attn_logits.shape[0]
+    if active_mask is not None:
+        assert active_mask.is_cuda
+        assert active_mask.dtype == torch.bool
+        assert active_mask.ndim == 1 and active_mask.numel() == q.shape[0]
+    mapped_values = (active_row_map, active_row_count, active_row_workers)
+    if any(value is not None for value in mapped_values) and not all(
+        value is not None for value in mapped_values
+    ):
+        raise ValueError(
+            "mapped decode attention row metadata must be all present or all absent"
+        )
+    if active_row_map is not None:
+        if active_mask is None:
+            raise ValueError("mapped decode attention requires an active mask")
+        if not active_row_map.is_cuda or active_row_map.dtype != torch.int32:
+            raise ValueError("mapped decode attention row map must be CUDA int32")
+        if active_row_map.ndim != 1 or active_row_map.numel() != q.shape[0]:
+            raise ValueError(
+                "mapped decode attention row map must match the decode batch"
+            )
+        if not active_row_count.is_cuda or active_row_count.dtype != torch.int32:
+            raise ValueError("mapped decode attention row count must be CUDA int32")
+        if active_row_count.numel() != 1:
+            raise ValueError("mapped decode attention row count must be scalar")
+        if not isinstance(active_row_workers, int) or not (
+            1 <= active_row_workers <= q.shape[0]
+        ):
+            raise ValueError(
+                "mapped decode attention worker rows must be within the batch"
+            )
 
     # head_num lives at dim 1 (3-D) or dim 2 (4-D shared view).
     kv_head_num = v_buffer.shape[-2]
     kv_group_num = q.shape[1] // kv_head_num
 
     if kv_group_num == 1:
+        if active_row_map is not None:
+            raise ValueError(
+                "mapped decode attention currently supports only GQA/MQA/MLA"
+            )
         # MHA
         decode_attention_fwd_normal(
             q,
@@ -938,6 +1406,7 @@ def decode_attention_fwd(
             sinks=sinks,
             xai_temperature_len=xai_temperature_len,
             page_size=page_size,
+            active_mask=active_mask,
         )
     else:
         # GQA/MQA/MLA
@@ -960,4 +1429,8 @@ def decode_attention_fwd(
             has_mla=has_mla,
             use_pdl=use_pdl,
             page_size=page_size,
+            active_mask=active_mask,
+            active_row_map=active_row_map,
+            active_row_count=active_row_count,
+            active_row_workers=active_row_workers,
         )

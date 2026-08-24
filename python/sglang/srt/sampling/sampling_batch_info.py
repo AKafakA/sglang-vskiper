@@ -247,6 +247,8 @@ class SamplingBatchInfo:
         self.vocab_mask = first_grammar.move_vocab_mask(self.vocab_mask, self.device)
 
     def update_penalties(self):
+        if self.penalizer_orchestrator is None:
+            return
         if self.penalizer_orchestrator.is_required:
             self.acc_additive_penalties = torch.zeros(
                 (len(self.temperatures), self.vocab_size),
@@ -417,8 +419,11 @@ class SamplingBatchInfo:
 
     def copy_for_forward(self):
         # Accumulate the penalty into a pre-allocated buffer to get rid of the dependency of `penalizer_orchestrator` later
-        self.update_penalties()
+        if self.penalizer_orchestrator is not None:
+            self.update_penalties()
         return dataclasses.replace(self, penalizer_orchestrator=None)
+
+
 
 
 def merge_bias_tensor(

@@ -544,10 +544,15 @@ class TpModelWorker(BaseTpWorker):
                 return batch_result
 
             if not forward_batch.is_prefill_only:
-                # For normal requests, sample the next token ids.
-                batch_result.next_token_ids = self.model_runner.sample(
-                    logits_output, forward_batch
-                )
+                if logits_output is None:
+                    # Virtual Pipelining intermediate block: no logits, no token this
+                    # forward. Leave next_token_ids=None -> has_sampled_token_ids False.
+                    pass
+                else:
+                    # For normal requests, sample the next token ids.
+                    batch_result.next_token_ids = self.model_runner.sample(
+                        logits_output, forward_batch
+                    )
             else:
                 # For prefill-only requests, create dummy token IDs on CPU
                 # The size should match the batch size (number of sequences), not total tokens

@@ -1178,6 +1178,15 @@ class TritonAttnBackend(AttentionBackend):
         # DCP writes to the local physical shard (loc = out_cache_loc //
         # dcp_size) through the masked path so each rank only stores the tokens
         # it owns. Non-DCP keeps the original write loc and plain set_kv_buffer.
+        vp_kv_write_mask = getattr(
+            forward_batch, "fd_full_graph_kv_write_mask", None
+        )
+        if vp_kv_write_mask is not None:
+            if vp_kv_write_mask.shape != (k.shape[0],):
+                raise RuntimeError(
+                    "FlexiDepth K/V write mask must match decode rows"
+                )
+            vp_kv_write_mask = vp_kv_write_mask.to(torch.bool)
         if self.dcp_size > 1:
             loc = forward_batch.out_cache_loc // self.dcp_size
             if (
@@ -1187,10 +1196,16 @@ class TritonAttnBackend(AttentionBackend):
                 dcp_kv_mask = forward_batch.positions % self.dcp_size == self.dcp_rank
             else:
                 dcp_kv_mask = forward_batch.dcp_kv_mask
+            if vp_kv_write_mask is not None:
+                dcp_kv_mask = dcp_kv_mask & vp_kv_write_mask
             kwargs = {"dcp_kv_mask": dcp_kv_mask}
         else:
             loc = loc_info
-            kwargs = {}
+            kwargs = (
+                {"dcp_kv_mask": vp_kv_write_mask}
+                if vp_kv_write_mask is not None
+                else {}
+            )
         if k_scale is None and v_scale is None:
             self.token_to_kv_pool.set_kv_buffer(layer, loc, k, v, **kwargs)
         else:
@@ -1710,6 +1725,45 @@ class TritonAttnBackend(AttentionBackend):
             and layer.v_head_dim == self.swa_v_head_dim
         ):
             attn_logits = self.forward_metadata.swa_attn_logits
+        active_mask = getattr(
+            forward_batch, "fd_full_graph_attention_run_mask", None
+        )
+        if active_mask is not None and active_mask.shape != (q.shape[0],):
+            raise RuntimeError(
+                "FlexiDepth attention mask must match the decode batch rows"
+            )
+        active_row_map = getattr(
+            forward_batch, "fd_full_graph_attention_row_map", None
+        )
+        active_row_count = getattr(
+            forward_batch, "fd_full_graph_attention_row_count", None
+        )
+        active_row_workers = getattr(
+            forward_batch, "fd_full_graph_attention_worker_rows", None
+        )
+        mapped_values = (
+            active_row_map,
+            active_row_count,
+            active_row_workers,
+        )
+        if any(value is not None for value in mapped_values) and not all(
+            value is not None for value in mapped_values
+        ):
+            raise RuntimeError(
+                "FlexiDepth mapped attention metadata must be all present or all absent"
+            )
+        if active_row_map is not None:
+            row_map_layer = getattr(
+                forward_batch, "fd_full_graph_attention_row_map_layer", None
+            )
+            if row_map_layer != layer.layer_id:
+                raise RuntimeError(
+                    "FlexiDepth mapped attention row map belongs to another layer"
+                )
+            if self.dcp_size > 1:
+                raise RuntimeError(
+                    "FlexiDepth mapped attention does not support DCP"
+                )
 
         if self.dcp_size > 1:
             group = get_dcp_group()
@@ -1741,6 +1795,10 @@ class TritonAttnBackend(AttentionBackend):
                 logit_cap=logits_soft_cap,
                 sinks=sinks,
                 xai_temperature_len=layer.xai_temperature_len,
+                active_mask=active_mask,
+                active_row_map=active_row_map,
+                active_row_count=active_row_count,
+                active_row_workers=active_row_workers,
             )
             local_lse = torch.logsumexp(
                 self.forward_metadata.attn_lse[
@@ -1771,6 +1829,10 @@ class TritonAttnBackend(AttentionBackend):
             has_mla=self.use_mla,
             use_pdl=self.use_pdl,
             page_size=self.page_size,
+            active_mask=active_mask,
+            active_row_map=active_row_map,
+            active_row_count=active_row_count,
+            active_row_workers=active_row_workers,
         )
         return o
 
