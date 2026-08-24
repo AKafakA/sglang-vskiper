@@ -35,8 +35,12 @@ from sglang.srt.model_executor.forward_batch_info import (
     compute_local_num_token_non_padded,
 )
 from sglang.srt.model_executor.input_buffers import ForwardInputBuffers
+from sglang.srt.vpipe.config import (
+    full_graph_request_identity_required,
+)
 
 _has_foreach_copy = hasattr(torch, "_foreach_copy_")
+_VP_REQUEST_IDENTITY_REQUIRED = full_graph_request_identity_required()
 
 
 def _grouped_foreach_copy_(dsts: List[torch.Tensor], srcs: List[torch.Tensor]) -> None:
@@ -107,6 +111,7 @@ class DecodeInputBuffers(ForwardInputBuffers):
         hc_hidden_size: Optional[int] = None,
         pp_proxy_topk_size: Optional[int] = None,
     ) -> DecodeInputBuffers:
+        kv_canary_ids = envs.SGLANG_KV_CANARY_ENABLE_TOKEN_ORACLE.get()
         with torch.device(device):
             input_ids = torch.zeros((max_num_token,), dtype=torch.int64)
             input_embeds = torch.zeros((max_num_token, hidden_size), dtype=dtype)
@@ -174,11 +179,13 @@ class DecodeInputBuffers(ForwardInputBuffers):
                 else None
             )
 
-            if envs.SGLANG_KV_CANARY_ENABLE_TOKEN_ORACLE.get():
+            if kv_canary_ids or _VP_REQUEST_IDENTITY_REQUIRED:
                 rids_int = torch.zeros((max_bs,), dtype=torch.int64)
-                bootstrap_room_ids_int = torch.full((max_bs,), -1, dtype=torch.int64)
             else:
                 rids_int = None
+            if kv_canary_ids:
+                bootstrap_room_ids_int = torch.full((max_bs,), -1, dtype=torch.int64)
+            else:
                 bootstrap_room_ids_int = None
 
         seq_lens_cpu = torch.full(
@@ -279,9 +286,16 @@ class DecodeInputBuffers(ForwardInputBuffers):
             dsts.append(self.mrope_positions[:, :raw_num_token])
             srcs.append(forward_batch.mrope_positions)
 
-        if self.rids_int is not None and forward_batch.rids_int is not None:
-            dsts.append(self.rids_int[:raw_bs])
-            srcs.append(forward_batch.rids_int)
+        if self.rids_int is not None:
+            if forward_batch.rids_int is None:
+                if _VP_REQUEST_IDENTITY_REQUIRED:
+                    raise RuntimeError(
+                        "full-graph policy or route evidence requires "
+                        "stable request IDs"
+                    )
+            else:
+                dsts.append(self.rids_int[:raw_bs])
+                srcs.append(forward_batch.rids_int)
         if (
             self.bootstrap_room_ids_int is not None
             and forward_batch.bootstrap_room_ids_int is not None

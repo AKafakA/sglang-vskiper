@@ -46,6 +46,11 @@ from sglang.srt.utils import (
     require_mlp_tp_gather,
 )
 from sglang.srt.utils.async_probe import maybe_detect_nan, maybe_detect_oob
+from sglang.srt.vpipe.config import (
+    full_graph_request_identity_required,
+)
+
+_VP_REQUEST_IDENTITY_REQUIRED = full_graph_request_identity_required()
 
 if TYPE_CHECKING:
     from sglang.srt.speculative.eagle_worker_v2 import EagleDraftWorker
@@ -171,6 +176,7 @@ class EAGLEDraftCudaGraphRunner(DecodeCudaGraphRunner):
             rids_int = (
                 torch.zeros((self.max_bs,), dtype=torch.int64)
                 if envs.SGLANG_KV_CANARY_ENABLE_TOKEN_ORACLE.get()
+                or _VP_REQUEST_IDENTITY_REQUIRED
                 else None
             )
             bootstrap_room_ids_int = (
@@ -540,6 +546,10 @@ class EAGLEDraftCudaGraphRunner(DecodeCudaGraphRunner):
             forward_batch.spec_info.topk_index,
             forward_batch.req_pool_indices,
         ]
+        if _VP_REQUEST_IDENTITY_REQUIRED and forward_batch.rids_int is None:
+            raise RuntimeError(
+                "full-graph policy or route evidence requires stable request IDs"
+            )
         if buffers.rids_int is not None and forward_batch.rids_int is not None:
             copy_dsts.append(buffers.rids_int[:raw_bs])
             copy_srcs.append(forward_batch.rids_int)

@@ -234,6 +234,16 @@ from sglang.srt.utils.patch_torch import (
 )
 from sglang.srt.utils.torch_memory_saver_adapter import TorchMemorySaverAdapter
 from sglang.srt.utils.weight_checker import WeightChecker
+from sglang.srt.vpipe.coverage import (
+    account_covered_dispatch,
+    coverage_dense_enabled,
+    fd_skip_decode_deployed,
+    reset_coverage_stamps,
+    stamp_coverage_dense,
+)
+from sglang.srt.vpipe.common import (
+    regime_switch_config,
+)
 from sglang.srt.weight_sync.tensor_bucket import (
     FlattenedTensorBucket,
     FlattenedTensorMetadata,
@@ -337,7 +347,7 @@ class RankZeroFilter(logging.Filter):
 
 @dataclass
 class ModelRunnerOutput:
-    logits_output: Union[LogitsProcessorOutput, PPProxyTensors]
+    logits_output: Optional[Union[LogitsProcessorOutput, PPProxyTensors]]
     can_run_graph: bool
     expert_distribution_metrics: Optional[ExpertDistributionMetrics] = None
     routed_experts_output: Optional[TopkCaptureOutput] = None
@@ -371,6 +381,19 @@ class ModelRunner(ModelRunnerKVCacheMixin):
     ):
         # Parse args
         self.mem_fraction_static = mem_fraction_static
+        # Removed-execution-mode flags are refused for EVERY model, not just the
+        # one vPipe hooks. The full validator runs from LlamaForCausalLM only,
+        # so without this a non-Llama server accepted SGLANG_VP_SCHED=1
+        # unchallenged while the scheduler still published a vp_runtime
+        # attestation block for it.
+        # Imported locally, as every other vpipe import in this class is:
+        # vpipe.validation reaches vpipe.routing, which imports back into
+        # model_executor.runner_backend_utils, so a module-level import here
+        # risks a cycle.
+        from sglang.srt.vpipe.validation import assert_no_removed_execution_flags
+
+        assert_no_removed_execution_flags()
+
         # Set on target by `_resolve_memory_pool_config`; passed in for draft
         # workers so they reuse target's resolved sizes (replaces legacy
         # `server_args._draft_pool_config` mutation hack).
@@ -394,6 +417,7 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         self.model_config = model_config
         self.dist_port = nccl_port
         self.server_args = server_args
+        self.init_vp_activation(server_args)
         self.is_draft_worker = is_draft_worker
         self.is_generation = model_config.is_generation
         self.device_timer = None
@@ -549,8 +573,30 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         # Initialize MooncakeTransferEngine
         self.init_shared_mooncake_transfer_engine()
 
-        # Init forward stream for overlap schedule
-        self.forward_stream = torch.get_device_module(self.device).Stream()
+        # Async VP repair work stays on a default-priority side stream. An
+        # opt-in higher-priority foreground stream lets CUDA schedule newly
+        # ready decode kernels ahead of queued repair kernels without changing
+        # dependency or K/V semantics.
+        vp_foreground_priority = int(
+            os.environ.get("SGLANG_VP_FOREGROUND_STREAM_PRIORITY", "0") or "0"
+        )
+        forward_stream_kwargs = {}
+        if vp_foreground_priority != 0:
+            if self.device != "cuda":
+                logger.warning(
+                    "Ignoring SGLANG_VP_FOREGROUND_STREAM_PRIORITY=%s on %s",
+                    vp_foreground_priority,
+                    self.device,
+                )
+            else:
+                forward_stream_kwargs["priority"] = vp_foreground_priority
+                logger.info(
+                    "Using VP foreground CUDA stream priority %s",
+                    vp_foreground_priority,
+                )
+        self.forward_stream = torch.get_device_module(self.device).Stream(
+            **forward_stream_kwargs
+        )
 
         # WAR fast-path: a decode-graph forward publishes a fresh event here after
         # load_batch; the scheduler's WAR barrier waits on it (then clears it)
@@ -926,6 +972,48 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         because they capture their own decode-style graphs separately.
         """
 
+        if (
+            os.environ.get("SGLANG_FD_EXECUTION_MODE", "").strip().lower()
+            == "full_graph"
+        ):
+            from sglang.srt.vpipe.config import (
+                full_graph_eager_semantic_debug_enabled,
+            )
+            from sglang.srt.vpipe.common import (
+                resolve_full_graph_skipper,
+            )
+            eager_semantic_debug = full_graph_eager_semantic_debug_enabled()
+            any_eager_semantic = eager_semantic_debug
+            capture_bs, _ = get_batch_sizes_to_capture(
+                self, self.decode_num_tokens_per_bs()
+            )
+            resolve_full_graph_skipper().validate_runtime_capacities(
+                request_pool_slots=int(
+                    self.req_to_token_pool.req_to_token.shape[0]
+                ),
+                decode_graph_rows=max(capture_bs),
+            )
+            decode_backend = self.server_args.cuda_graph_config.decode.backend
+            if eager_semantic_debug and decode_backend != Backend.DISABLED:
+                raise ValueError(
+                    "SGLANG_FD_FULL_GRAPH_EAGER_SEMANTIC_DEBUG=1 requires "
+                    "cuda_graph_config.decode.backend='disabled'"
+                )
+            if not any_eager_semantic and decode_backend != Backend.FULL:
+                raise ValueError(
+                    "SGLANG_FD_EXECUTION_MODE=full_graph requires "
+                    "cuda_graph_config.decode.backend='full'"
+                )
+            if not any_eager_semantic and not capture_decode_cuda_graph:
+                raise ValueError(
+                    "SGLANG_FD_EXECUTION_MODE=full_graph requires decode graph capture"
+                )
+            if self.spec_algorithm.is_speculative():
+                raise ValueError(
+                    "SGLANG_FD_EXECUTION_MODE=full_graph does not yet support "
+                    "speculative decoding"
+                )
+
         self.graph_shared_output = GraphSharedOutput.create_for_model_runner(self)
 
         # The eager (no-cuda-graph) phase runner, built AFTER the attention
@@ -955,6 +1043,10 @@ class ModelRunner(ModelRunnerKVCacheMixin):
                 self.init_decode_cuda_graph()
         else:
             self.decode_cuda_graph_runner = self.eager_runner
+
+        reset_vp_counters = getattr(self.model, "vp_reset_runtime_counters", None)
+        if callable(reset_vp_counters):
+            reset_vp_counters()
 
         # Register forward hooks AFTER cuda-graph capture so their tensor ops are
         # not traced into any captured graph — capture stays hook-free and hooks
@@ -2513,6 +2605,58 @@ class ModelRunner(ModelRunnerKVCacheMixin):
             self.decode_attention_backend_str
         )
 
+        # Fail-closed FlexiDepth backend assertion (owner ruling, 2026-08-18;
+        # D-186/D-197/D-248 lineage): only the triton attention kernels read
+        # the FlexiDepth run mask. With FD weights active, any other resolved
+        # backend would silently ignore routing (masked attention becomes a
+        # real contribution) — refuse to boot instead. This asserts; it never
+        # selects or overrides a backend.
+        # Gate on the FULL-GRAPH path, not merely on FD weights being present.
+        # The invariant is that only the triton kernels read the FlexiDepth run
+        # mask -- and the run mask is set exclusively by vpipe/executor.py, i.e.
+        # the full_graph dispatch. vpipe/eager.py never sets it: direct_eager
+        # runs self_attn for every row and masks the returned OUTPUT itself, so
+        # it is backend-agnostic. Keying on SGLANG_FD_WEIGHTS alone refused a
+        # supported direct_eager launch on any non-triton backend.
+        from sglang.srt.vpipe.common import flexidepth_execution_mode
+        from sglang.srt.vpipe.env import FD_EXECUTION_FULL_GRAPH
+
+        if (
+            os.environ.get("SGLANG_FD_WEIGHTS", "").strip()
+            and flexidepth_execution_mode() == FD_EXECUTION_FULL_GRAPH
+        ):
+            resolved_backends = {
+                "prefill": self.prefill_attention_backend_str,
+                "decode": self.decode_attention_backend_str,
+            }
+            non_triton = {
+                phase: name
+                for phase, name in resolved_backends.items()
+                if name != "triton"
+            }
+            if non_triton:
+                raise ValueError(
+                    "FlexiDepth full-graph execution is active but the "
+                    f"resolved attention backends are {resolved_backends}; "
+                    "only triton reads the FlexiDepth run mask. Pin "
+                    "--attention-backend triton (and per-phase flags) — "
+                    "refusing to boot rather than silently dropping routing."
+                )
+            # Fail-closed MIXED-chunk assertion (W4/F5): a MIXED batch
+            # (decode rows folded into a chunked-prefill pass) reaches
+            # flexidepth_forward_phase as is_extend()==True and is phased
+            # "prefill", so its decode rows would be routed under prefill
+            # semantics (or silently run dense when prefill is inactive).
+            # Either way the route contract breaks — refuse to boot.
+            if self.server_args.enable_mixed_chunk:
+                raise ValueError(
+                    "FlexiDepth is active (SGLANG_FD_WEIGHTS set) but "
+                    "--enable-mixed-chunk is on; MIXED batches phase their "
+                    "decode rows as prefill under FlexiDepth routing. "
+                    "Disable mixed chunking — refusing to boot rather than "
+                    "mis-phasing decode rows."
+                )
+
     def _get_attention_backend(self, init_new_workspace: bool = False):
         """Init attention kernel backend."""
         draft_attn_backend = self.server_args.speculative_draft_attention_backend
@@ -2532,6 +2676,46 @@ class ModelRunner(ModelRunnerKVCacheMixin):
             self.prefill_attention_backend_str,
             self.decode_attention_backend_str,
         ) = self.server_args.get_attention_backends()
+
+        # D-248/D-249 (owner 2026-08-14): the VP layer-routed attention override is
+        # REMOVED. It built a hybrid backend from the STOCK --prefill/--decode-
+        # attention-backend flags, reusing them as role selectors, which (a) gave the
+        # treated arm flashinfer on decode layers 0-15 while the baseline ran triton on
+        # all 32 — an unattributed cross-arm delta in vPipe's favour — and (b) was
+        # invisible to Gate E, because both arms' resolved ServerArgs strings were
+        # byte-identical while the constructed backends differed.
+        # Backend selection is now STOCK sglang: one backend, chosen by the official
+        # CLI, applied uniformly to every layer of every arm. VP must never again
+        # reinterpret a stock flag; if per-layer dispatch returns for Stage-2 prefill
+        # routing it must be driven by dedicated VP config keys (D-246).
+
+        # U9 / U1 guard — now the ONLY backend constraint (D-250: the layer-routed
+        # override that used to precede it is gone). A config with MASKED=1 reaching
+        # no raise anywhere would boot on the flashinfer default and run with the mask
+        # INERT — flashinfer has
+        # no fd_full_graph reader. Because 653c21ec7f elided the Python-side multiply,
+        # jump rows then keep a non-zero attention output that is folded into the
+        # residual on every routed layer lacking a compact-o_proj backstop. That config
+        # shipped, completed a full screen, and the attestation reported the jump-row
+        # reads as "suppressed" the whole time. Fail closed instead.
+        from sglang.srt.vpipe.config import (
+            full_graph_masked_decode_attention_enabled,
+        )
+        from sglang.srt.vpipe.env import (
+            _MASKED_DECODE_REQUIRED_BACKEND,
+        )
+
+        if (
+            full_graph_masked_decode_attention_enabled()
+            and self.decode_attention_backend_str != _MASKED_DECODE_REQUIRED_BACKEND
+        ):
+            raise ValueError(
+                "FlexiDepth masked decode attention requires "
+                f"--decode-attention-backend={_MASKED_DECODE_REQUIRED_BACKEND} "
+                f"(resolved: {self.decode_attention_backend_str}). Only that kernel "
+                "reads the run mask; on any other backend the mask is silently inert "
+                "and jump-row attention output is not zeroed."
+            )
 
         if self.decode_attention_backend_str != self.prefill_attention_backend_str:
             from sglang.srt.layers.attention.hybrid_attn_backend import (
@@ -2998,6 +3182,8 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         forward_batch.split_index = next_split_index
         return ret
 
+
+
     def forward(
         self,
         forward_batch: ForwardBatch,
@@ -3140,6 +3326,26 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         forward_batch.mamba_cow_src_indices = None
         forward_batch.mamba_cow_dst_indices = None
 
+    def init_vp_activation(self, server_args: ServerArgs) -> None:
+        """Resolve the boot-time VP/FD activation answer once.
+
+        Every per-forward VP gate on the hot path (async-KV drain, full-graph
+        dispatch recording, token-boundary KV launch) reads the result instead
+        of ``os.environ``: stock no-VP serving must not pay per-forward env
+        reads for machinery it never runs, because that CPU delta sits on the
+        BASELINE path the paper's numbers are measured against (D-251).
+
+        An ``init_*`` helper rather than inline logic, per the large-class-init
+        style rule — a fork overriding VP activation swaps this one method.
+        """
+
+        from sglang.srt.vpipe.attestation import (
+            vp_runtime_enabled,
+        )
+
+        self._vp_runtime_enabled = vp_runtime_enabled()
+
+
     def _forward_raw(
         self,
         forward_batch: ForwardBatch,
@@ -3162,82 +3368,136 @@ class ModelRunner(ModelRunnerKVCacheMixin):
                 and self.decode_cuda_graph_runner
                 and self.decode_cuda_graph_runner.can_run_graph(forward_batch)
             )
+            if self._vp_runtime_enabled and (
+                os.environ.get("SGLANG_FD_EXECUTION_MODE", "").strip().lower()
+                == "full_graph"
+            ):
+                from sglang.srt.vpipe.attestation import (
+                    record_model_runner_dispatch,
+                )
 
+                record_model_runner_dispatch(self, forward_batch, can_run_graph)
+
+            # (c3) C-A coverage stamp at the dispatch seam: consume the
+            # ALREADY-computed can_run_graph local (the runner's own predicate;
+            # never a re-derived bs <= max_bs) and decide the decode BODY for
+            # this exact executing batch. An uncovered pass — rows above the
+            # realized ladder, an eligibility veto, or no runner at all — is
+            # stamped dense fail-closed (R-E): flexidepth_phase_enabled then
+            # returns False for the pass and the KV-complete base-Llama dense
+            # fall-through runs with production attention (same pairing as the
+            # W1 low band). Production (no FD hooks) never enters this block —
+            # zero stamps, zero counters, byte-identical (E-C3). The seam
+            # observe keeps the W1 band + its attestation live through eager
+            # episodes; level-triggered and idempotent in rows (F22).
+            coverage_stamped = False
             if (
                 forward_batch.forward_mode.is_decode()
-                and self.hisparse_coordinator is not None
+                and fd_skip_decode_deployed()
+                and coverage_dense_enabled()
             ):
-                forward_batch.hisparse_coordinator = self.hisparse_coordinator
-                self.hisparse_coordinator.wait_for_pending_backup()
-                self.hisparse_coordinator.num_real_reqs.fill_(forward_batch.batch_size)
-
-            # Replay cuda graph if applicable
-            if can_run_graph:
-                ret = self.decode_cuda_graph_runner.execute(
-                    forward_batch,
-                    pp_proxy_tensors=pp_proxy_tensors,
-                )
-                return ModelRunnerOutput(logits_output=ret, can_run_graph=can_run_graph)
-
-            # DP / MLP-sync padding + attn-tp normalization. Only the decode
-            # cuda-graph path above pre-pads its static buffers and returns
-            # early; split prefill, the prefill cuda graph, and the eager
-            # forward all run the live batch and need this first — it sets
-            # global_dp_buffer_len / padded token counts that graph eligibility
-            # and the collectives depend on.
-            self._prepare_eager_forward_batch(forward_batch)
-
-            # Deferred mamba COW/clear on the forward stream, before the extend
-            # dispatch below reads the pool.
-            self._maybe_execute_deferred_mamba_cow_and_clear(forward_batch)
-
-            if forward_batch.forward_mode.is_split_prefill():
-                # Layer-split mode; stays on ModelRunner, not the eager runner.
-                ret = self.forward_split_prefill(
-                    forward_batch,
-                    reinit_attn_backend=reinit_attn_backend,
-                    forward_count=split_forward_count,
-                )
-            elif (
-                forward_batch.forward_mode.is_extend(include_draft_extend_v2=True)
-                and not isinstance(self.prefill_cuda_graph_runner, EagerRunner)
-                and self.prefill_cuda_graph_runner is not None
-                and self.prefill_cuda_graph_runner.can_run_graph(forward_batch)
-                and get_cp_strategy() is None
-            ):
-                category = (
-                    "target_verify"
-                    if forward_batch.forward_mode.is_target_verify()
-                    else "extend"
-                )
-                # Prefill cuda graph (piecewise).
-                kwargs = self._extend_forward_kwargs(forward_batch, pp_proxy_tensors)
-                # TODO: device_timer.wrap is too broad here — it also includes
-                # load_batch time. Move timing into the prefill cuda graph runner
-                # to capture only the model.forward part.
-                ctx = (
-                    self.device_timer.wrap(metadata={"category": category})
-                    if self.device_timer
-                    else contextlib.nullcontext()
-                )
-                with ctx:
-                    ret = self.prefill_cuda_graph_runner.execute(
-                        forward_batch, **kwargs
+                runner = self.decode_cuda_graph_runner
+                band_body = (
+                    runner._vp_regime_dispatch.observe(
+                        int(forward_batch.batch_size)
                     )
-                can_run_graph = True
-            else:
-                # Eager: decode / extend / idle dispatched inside the runner.
-                ret = self.eager_runner.execute(
-                    forward_batch, pp_proxy_tensors=pp_proxy_tensors
+                    if runner is not None
+                    else None
                 )
+                coverage_stamped = stamp_coverage_dense(
+                    forward_batch,
+                    runner=runner,
+                    can_run_graph=can_run_graph,
+                    w1_active=regime_switch_config() is not None,
+                )
+                if not coverage_stamped:
+                    account_covered_dispatch(forward_batch, band_body)
+            try:
+                if (
+                    forward_batch.forward_mode.is_decode()
+                    and self.hisparse_coordinator is not None
+                ):
+                    forward_batch.hisparse_coordinator = self.hisparse_coordinator
+                    self.hisparse_coordinator.wait_for_pending_backup()
+                    self.hisparse_coordinator.num_real_reqs.fill_(forward_batch.batch_size)
 
-            if (
-                forward_batch.global_num_tokens_cpu is not None
-                and self.pp_group.is_last_rank
-            ):
-                forward_batch.post_forward_mlp_sync_batch(ret)
+                # Replay cuda graph if applicable
+                if can_run_graph:
+                    ret = self.decode_cuda_graph_runner.execute(
+                        forward_batch,
+                        pp_proxy_tensors=pp_proxy_tensors,
+                    )
+                    return ModelRunnerOutput(logits_output=ret, can_run_graph=can_run_graph)
 
-            return ModelRunnerOutput(logits_output=ret, can_run_graph=can_run_graph)
+                # DP / MLP-sync padding + attn-tp normalization. Only the decode
+                # cuda-graph path above pre-pads its static buffers and returns
+                # early; split prefill, the prefill cuda graph, and the eager
+                # forward all run the live batch and need this first — it sets
+                # global_dp_buffer_len / padded token counts that graph eligibility
+                # and the collectives depend on.
+                self._prepare_eager_forward_batch(forward_batch)
+
+                # Deferred mamba COW/clear on the forward stream, before the extend
+                # dispatch below reads the pool.
+                self._maybe_execute_deferred_mamba_cow_and_clear(forward_batch)
+
+                if forward_batch.forward_mode.is_split_prefill():
+                    # Layer-split mode; stays on ModelRunner, not the eager runner.
+                    ret = self.forward_split_prefill(
+                        forward_batch,
+                        reinit_attn_backend=reinit_attn_backend,
+                        forward_count=split_forward_count,
+                    )
+                elif (
+                    forward_batch.forward_mode.is_extend(include_draft_extend_v2=True)
+                    and not isinstance(self.prefill_cuda_graph_runner, EagerRunner)
+                    and self.prefill_cuda_graph_runner is not None
+                    and self.prefill_cuda_graph_runner.can_run_graph(forward_batch)
+                    and get_cp_strategy() is None
+                ):
+                    category = (
+                        "target_verify"
+                        if forward_batch.forward_mode.is_target_verify()
+                        else "extend"
+                    )
+                    # Prefill cuda graph (piecewise).
+                    kwargs = self._extend_forward_kwargs(forward_batch, pp_proxy_tensors)
+                    # TODO: device_timer.wrap is too broad here — it also includes
+                    # load_batch time. Move timing into the prefill cuda graph runner
+                    # to capture only the model.forward part.
+                    ctx = (
+                        self.device_timer.wrap(metadata={"category": category})
+                        if self.device_timer
+                        else contextlib.nullcontext()
+                    )
+                    with ctx:
+                        ret = self.prefill_cuda_graph_runner.execute(
+                            forward_batch, **kwargs
+                        )
+                    can_run_graph = True
+                else:
+                    # Eager: decode / extend / idle dispatched inside the runner.
+                    ret = self.eager_runner.execute(
+                        forward_batch, pp_proxy_tensors=pp_proxy_tensors
+                    )
+
+                if (
+                    forward_batch.global_num_tokens_cpu is not None
+                    and self.pp_group.is_last_rank
+                ):
+                    forward_batch.post_forward_mlp_sync_batch(ret)
+
+                return ModelRunnerOutput(
+                    logits_output=ret,
+                    can_run_graph=can_run_graph,
+                )
+            finally:
+                # (c3) both stamps + the attention pairing reset after the pass
+                # (discipline mirrors the layer-scoped force_production reset in
+                # flexidepth_full_graph.fd_execute_prepared_layer_route_full_graph).
+                if coverage_stamped:
+                    reset_coverage_stamps(forward_batch)
+
 
     def _preprocess_logits(
         self, logits_output: LogitsProcessorOutput, sampling_info: SamplingBatchInfo
@@ -3282,7 +3542,9 @@ class ModelRunner(ModelRunnerKVCacheMixin):
             # For prefill, we only use the position of the last token.
             (
                 forward_batch.positions
-                if forward_batch.forward_mode.is_decode()
+                if (
+                    forward_batch.forward_mode.is_decode()
+                )
                 else forward_batch.seq_lens - 1
             ),
         )

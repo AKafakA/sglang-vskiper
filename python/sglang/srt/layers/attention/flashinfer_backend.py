@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from sglang.srt.runtime_context import get_parallel
-
 """
 Support different attention backends.
 Now there are two backends: FlashInfer and Triton.
 FlashInfer is faster and Triton is easier to customize.
 Each backend supports two operators: extend (i.e. prefill with cached prefix) and decode.
 """
+
+from sglang.srt.vpipe.attestation import (
+    vp_runtime_enabled,
+)
+from sglang.srt.runtime_context import get_parallel
 
 import logging
 import os
@@ -650,17 +653,34 @@ class FlashInferAttnBackend(AttentionBackend):
             self._prepare_cuda_graph_metadata(bs, num_tokens, forward_mode, spec_info)
 
         if forward_mode.is_decode_or_idle():
+            decode_wrappers = self.decode_cuda_graph_metadata[bs]
             self.indices_updater_decode.update(
                 req_pool_indices[:bs],
                 seq_lens[:bs],
                 seq_lens_cpu[:bs] if seq_lens_cpu is not None else None,
                 seq_lens_sum,
-                decode_wrappers=self.decode_cuda_graph_metadata[bs],
+                decode_wrappers=decode_wrappers,
                 encoder_lens=encoder_lens[:bs] if encoder_lens is not None else None,
                 spec_info=spec_info,
                 fixed_split_size=None,
                 disable_split_kv=self.disable_cuda_graph_kv_split,
             )
+            # Full CUDA graphs capture attention and do not consult the Python
+            # metadata object during replay. VP BREAKABLE graphs may execute an
+            # eager layer between captured segments, so they need the
+            # just-refreshed decode wrappers active even if a preceding prefill
+            # left forward_metadata pointing at PrefillMetadata.
+            # D-251 (Codex [high] / audit F4): upstream leaves forward_metadata
+            # alone on this path — the reassignment is a VP addition serving
+            # only VP breakable graphs, so it is gated on the boot-cached VP
+            # predicate. Stock FlashInfer replay semantics are restored
+            # verbatim for no-VP serving, which is exactly the configuration of
+            # the true-production baseline row (D-249) this backend will serve.
+            if vp_runtime_enabled() and (
+                not isinstance(self.forward_metadata, DecodeMetadata)
+                or self.forward_metadata.decode_wrappers is not decode_wrappers
+            ):
+                self.forward_metadata = DecodeMetadata(decode_wrappers)
         elif forward_mode.is_target_verify():
             self.indices_updater_prefill.update(
                 req_pool_indices[:bs],
@@ -1364,46 +1384,59 @@ class FlashInferIndicesUpdaterDecode:
             and wrapper.begin_forward.func == fast_decode_plan
         )
 
-        if wrapper_uses_fast_decode_plan:
-            # When begin_forward is replaced with fast_decode_plan, pass global_override_indptr_cpu
-            wrapper.begin_forward(
-                kv_indptr,
-                kv_indices,
-                self.kv_last_page_len[:bs],
-                self.num_qo_heads,
-                self.num_kv_heads,
-                self.head_dim,
-                1,
-                data_type=self.data_type,
-                q_data_type=self.q_data_type,
-                non_blocking=True,
-                fixed_split_size=fixed_split_size,
-                disable_split_kv=(
-                    disable_split_kv if disable_split_kv is not None else False
-                ),
-                global_override_indptr_cpu=global_override_indptr_cpu,
-            )
-        else:
-            # When using original begin_forward, don't pass global_override_indptr_cpu
-            wrapper.begin_forward(
-                kv_indptr,
-                kv_indices,
-                self.kv_last_page_len[:bs],
-                self.num_qo_heads,
-                self.num_kv_heads,
-                self.head_dim,
-                1,
-                data_type=self.data_type,
-                q_data_type=self.q_data_type,
-                non_blocking=True,
-                fixed_split_size=fixed_split_size,
-                disable_split_kv=(
-                    disable_split_kv if disable_split_kv is not None else False
-                ),
-            )
-
-        if locally_override:
-            global_override_indptr_cpu = None
+        try:
+            if wrapper_uses_fast_decode_plan:
+                # When begin_forward is replaced with fast_decode_plan, pass global_override_indptr_cpu
+                wrapper.begin_forward(
+                    kv_indptr,
+                    kv_indices,
+                    self.kv_last_page_len[:bs],
+                    self.num_qo_heads,
+                    self.num_kv_heads,
+                    self.head_dim,
+                    1,
+                    data_type=self.data_type,
+                    q_data_type=self.q_data_type,
+                    non_blocking=True,
+                    fixed_split_size=fixed_split_size,
+                    disable_split_kv=(
+                        disable_split_kv if disable_split_kv is not None else False
+                    ),
+                    global_override_indptr_cpu=global_override_indptr_cpu,
+                )
+            else:
+                # When using original begin_forward, don't pass global_override_indptr_cpu
+                wrapper.begin_forward(
+                    kv_indptr,
+                    kv_indices,
+                    self.kv_last_page_len[:bs],
+                    self.num_qo_heads,
+                    self.num_kv_heads,
+                    self.head_dim,
+                    1,
+                    data_type=self.data_type,
+                    q_data_type=self.q_data_type,
+                    non_blocking=True,
+                    fixed_split_size=fixed_split_size,
+                    disable_split_kv=(
+                        disable_split_kv if disable_split_kv is not None else False
+                    ),
+                )
+        finally:
+            # The reset must survive a plan failure. The (c3) bounded descent
+            # makes capture-time plan exceptions SURVIVABLE (workspace overflow
+            # at oversized self-sized buckets is caught, the bucket trimmed,
+            # and the boot continues), so a leaked module-global CPU indptr —
+            # length failed_bs+1, created above and never cleared once every
+            # later call sees it non-None — permanently poisons every
+            # subsequent fast_decode_plan replay-path plan. Measured
+            # 2026-08-04 (post-27b674bc32 smoke): the boot descent's first
+            # failure at bucket 4096 leaked a 4097-length override; the first
+            # real decode batch (bs=8, captured bucket) then crashed in
+            # flashinfer get_seq_lens with "tensor a (4096) vs tensor b (8)",
+            # killing the scheduler and every in-flight stream.
+            if locally_override:
+                global_override_indptr_cpu = None
 
 
 class FlashInferIndicesUpdaterPrefill:
@@ -1925,15 +1958,19 @@ class FlashInferMultiStepDraftBackend:
         indptr_cpu_whole = self.kv_indptr[:, : bs + 1].cpu()
         global global_override_indptr_cpu
 
-        for i in range(self.speculative_num_steps - 1):
-            forward_batch.spec_info.kv_indptr = self.kv_indptr[i, : bs + 1]
-            forward_batch.spec_info.kv_indices = kv_indices_buffer[i][
-                : draft_kv_indices_used_len(seq_lens_sum, self.topk, bs, i + 1)
-            ]
-            global_override_indptr_cpu = indptr_cpu_whole[i]
-            call_fn(i, forward_batch)
-
-        global_override_indptr_cpu = None
+        # Same leak class as call_begin_forward: the reset must survive an
+        # exception inside call_fn, or the module-global override poisons
+        # every later fast_decode_plan.
+        try:
+            for i in range(self.speculative_num_steps - 1):
+                forward_batch.spec_info.kv_indptr = self.kv_indptr[i, : bs + 1]
+                forward_batch.spec_info.kv_indices = kv_indices_buffer[i][
+                    : draft_kv_indices_used_len(seq_lens_sum, self.topk, bs, i + 1)
+                ]
+                global_override_indptr_cpu = indptr_cpu_whole[i]
+                call_fn(i, forward_batch)
+        finally:
+            global_override_indptr_cpu = None
 
     def init_forward_metadata(self, forward_batch: ForwardBatch):
         kv_indices_width = draft_kv_indices_buffer_width(

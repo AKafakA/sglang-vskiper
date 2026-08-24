@@ -53,11 +53,15 @@ from sglang.srt.utils import (
     require_gathered_buffer,
     require_mlp_tp_gather,
 )
+from sglang.srt.vpipe.config import (
+    full_graph_request_identity_required,
+)
 
 if TYPE_CHECKING:
     from sglang.srt.model_executor.model_runner import ModelRunner
 
 logger = logging.getLogger(__name__)
+_VP_REQUEST_IDENTITY_REQUIRED = full_graph_request_identity_required()
 
 
 def _allocate_decode_buffers(
@@ -82,6 +86,8 @@ def _allocate_decode_buffers(
     pp_proxy_topk_size: Optional[int] = None,
 ) -> SimpleNamespace:
     """Allocate the FB-shared decode buffers."""
+
+    kv_canary_ids = envs.SGLANG_KV_CANARY_ENABLE_TOKEN_ORACLE.get()
     with torch.device(device):
         input_ids = torch.zeros((max_num_token,), dtype=torch.int64)
         input_embeds = torch.zeros((max_num_token, hidden_size), dtype=dtype)
@@ -152,11 +158,13 @@ def _allocate_decode_buffers(
             else None
         )
 
-        if envs.SGLANG_KV_CANARY_ENABLE_TOKEN_ORACLE.get():
+        if kv_canary_ids or _VP_REQUEST_IDENTITY_REQUIRED:
             rids_int = torch.zeros((max_bs,), dtype=torch.int64)
-            bootstrap_room_ids_int = torch.full((max_bs,), -1, dtype=torch.int64)
         else:
             rids_int = None
+        if kv_canary_ids:
+            bootstrap_room_ids_int = torch.full((max_bs,), -1, dtype=torch.int64)
+        else:
             bootstrap_room_ids_int = None
 
     seq_lens_cpu = torch.full(

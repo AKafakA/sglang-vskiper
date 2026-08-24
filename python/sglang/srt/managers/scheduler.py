@@ -3755,6 +3755,11 @@ class Scheduler(
 
     def get_internal_state(self, recv_req: GetInternalStateReq):
         ret = dict(vars(get_global_server_args()))  # vars returns a ref to obj.__dict__
+        from sglang.srt.vpipe.attestation import (
+            scheduler_runtime_attestation,
+        )
+
+        ret["vp_runtime"] = scheduler_runtime_attestation(self)
         ret["last_gen_throughput"] = self.metrics_reporter.last_gen_throughput
         ret["memory_usage"] = {
             "weight": round(self.tp_worker.model_runner.weight_load_mem_usage, 2),

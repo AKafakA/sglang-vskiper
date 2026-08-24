@@ -68,6 +68,9 @@ from sglang.srt.disaggregation.decode_schedule_batch_mixin import (
 from sglang.srt.disaggregation.utils import FAKE_BOOTSTRAP_HOST, DisaggregationMode
 from sglang.srt.distributed.parallel_state import get_tensor_model_parallel_rank
 from sglang.srt.dllm.mixin.req import ReqDllmMixin
+from sglang.srt.vpipe.attestation import (
+    ReqVPMixin,
+)
 from sglang.srt.environ import envs
 from sglang.srt.hardware_backend.npu.dsv4.dsv4_common_hooks import (
     maybe_evict_dsv4_state,
@@ -663,7 +666,7 @@ class ReqLogprob:
     output_token_ids_logprobs_idx: Optional[list] = None
 
 
-class Req(ReqDllmMixin):
+class Req(ReqDllmMixin, ReqVPMixin):
     """The input and output status of a request."""
 
     def __init__(
@@ -1017,6 +1020,10 @@ class Req(ReqDllmMixin):
 
         # For diffusion LLM
         self.init_diffusion_llm(dllm_config)
+
+        # For Virtual Pipelining (block-position state; inert until the VP scheduler
+        # enables it — vanilla Req is byte-unchanged, guarded by the agreement battery)
+        self.init_vp(enabled=False)
 
         # For hisparse
         self.hisparse_staging = False

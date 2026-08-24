@@ -31,7 +31,7 @@ import hashlib
 import warnings
 from dataclasses import dataclass
 from enum import IntEnum, auto
-from functools import total_ordering
+from functools import lru_cache, total_ordering
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
 import torch
@@ -58,6 +58,9 @@ from sglang.srt.utils import (
     support_triton,
 )
 from sglang.srt.utils.common import ceil_align, is_pin_memory_available
+from sglang.srt.vpipe.config import (
+    full_graph_request_identity_required,
+)
 
 if TYPE_CHECKING:
     from sglang.srt.layers.dcp.metadata import DecodeContextParallelMetadata
@@ -73,6 +76,7 @@ if TYPE_CHECKING:
 _skip_attn_backend_init_warned = False
 
 _is_npu = is_npu()
+_VP_REQUEST_IDENTITY_REQUIRED = full_graph_request_identity_required()
 
 
 class ForwardMode(IntEnum):
@@ -424,6 +428,41 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
     lora_ids: Optional[List[str]] = None
     # For dumper: request IDs for cross-step sequence tracking
     rids: Optional[List[str]] = None
+    # Device route mask bound around one full-graph FlexiDepth attention call.
+    fd_full_graph_attention_run_mask: Optional[torch.Tensor] = None
+    # Optional RUN-row mask for foreground K/V writes while PROJECT K/V is repaired.
+    fd_full_graph_kv_write_mask: Optional[torch.Tensor] = None
+    # Graph-static [routed layer, row] action tape and row identity metadata.
+    fd_full_graph_device_route_tape: object = None
+    # Production full-graph skipper identity and once-per-batch device state.
+    fd_full_graph_skipper_adapter: object = None
+    fd_full_graph_skipper_state: object = None
+    # Legacy capture-time tensor references used when the device tape is off.
+    fd_full_graph_route_masks: object = None
+    fd_full_graph_compact_stats: object = None
+    fd_full_graph_valid_rows: Optional[torch.Tensor] = None
+    fd_full_graph_compact_phase_enabled: bool = False
+    # [W1] Regime switch, decode leg (I6b): the decode cuda-graph backend stamps
+    # this True on the dummies ForwardBatch it captures for a "prod_allrun" low
+    # band bucket, so flexidepth_phase_enabled returns False for that decode pass
+    # and the base-Llama dense fall-through runs (bypassing all FlexiDepth hooks).
+    # Always present (default False) so the gate read needs no defensive getattr;
+    # only consulted for decode passes while the regime switch decode leg is on.
+    vp_fd_decode_dense: bool = False
+    # (c3): decode pass outside captured graph coverage -> forced dense. Stamped
+    # at the model-runner dispatch seam from the decode runner's own
+    # can_run_graph predicate; separate from vp_fd_decode_dense (which stays
+    # capture-dummy-only) so attestation attributes band-dense vs coverage-dense
+    # distinctly (R-F). Reset via try/finally after the pass.
+    vp_fd_decode_coverage_dense: bool = False
+    # (c3): site-B dedup marker — the dense-body positive witness increments
+    # exactly once per stamped pass (first routed layer), F2/F18.
+    vp_fd_coverage_counted: bool = False
+    # Pin all layers' attention to the production decode backend for this pass
+    # (and suppress the routed-backend plan, F4). Previously a dynamically-set
+    # attribute (full-graph layer execution + W1 capture dummies); declared with
+    # the same effective default so new readers need no defensive getattr.
+    fd_full_graph_force_production_attention: bool = False
 
     # === Resolved from SB one-shot overrides (consumed + reset by init_new) ===
     capture_hidden_mode: CaptureHiddenMode = None
@@ -516,8 +555,9 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
     # For ngram embedding
     ngram_embedding_info: Optional[NgramEmbeddingInfo] = None
 
-    # For dumper: int-hashed request / bootstrap-room IDs (derived from rids)
+    # Stable int-hashed request IDs shared by KV canary and opt-in VP policies.
     rids_int: Optional[torch.Tensor] = None
+    # KV-canary bootstrap-room IDs.
     bootstrap_room_ids_int: Optional[torch.Tensor] = None
 
     # kv-canary token-id validator snapshot
@@ -719,6 +759,12 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
             encoder_lens_cpu=batch.encoder_lens_cpu,
             lora_ids=[req.lora_id for req in batch.reqs],
             rids=[req.rid for req in batch.reqs],
+            # D-251 (Codex [high] / audit F2): VP per-request metadata is built
+            # ONLY when VP/FD is active. Unconditional, these five O(batch)
+            # scans ran on every forward of every arm — including the no-skip
+            # baseline, where nothing consumes them (every consumer lives under
+            # vp/ and getattr-defaults to None). Stock path keeps the dataclass
+            # defaults verbatim.
             # Compound (carry their own device tensors)
             sampling_info=batch.sampling_info,
             spec_info=batch.spec_info,
@@ -728,18 +774,20 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
 
         device = model_runner.device
 
-        if envs.SGLANG_KV_CANARY_ENABLE_TOKEN_ORACLE.get():
+        kv_canary_ids = envs.SGLANG_KV_CANARY_ENABLE_TOKEN_ORACLE.get()
+        if kv_canary_ids or _VP_REQUEST_IDENTITY_REQUIRED:
             hashed = _hash_rids_to_tensor(
                 rids=[req.rid for req in batch.reqs],
                 device=device,
             )
+            ret.rids_int = hashed
+        if kv_canary_ids:
             bootstrap_room_ids = _bootstrap_rooms_to_tensor(
                 bootstrap_rooms=[req.bootstrap_room for req in batch.reqs],
                 device=device,
             )
             batch.sampling_info.rids_int = hashed
             batch.sampling_info.bootstrap_room_ids_int = bootstrap_room_ids
-            ret.rids_int = hashed
             ret.bootstrap_room_ids_int = bootstrap_room_ids
 
         if envs.SGLANG_KV_CANARY_ENABLE_VERIFY_TOKEN_ASSERT.get():
@@ -808,7 +856,10 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
             ret.positions = ret.spec_info.positions
 
         # Init position information
-        if ret.forward_mode.is_decode() or ret.forward_mode.is_target_verify():
+        if (
+            ret.forward_mode.is_decode()
+            or ret.forward_mode.is_target_verify()
+        ):
             if ret.positions is None:
                 ret.positions = clamp_position(batch.seq_lens)
         else:
@@ -1573,6 +1624,11 @@ def _bootstrap_rooms_to_tensor(
     return torch.tensor(values, dtype=torch.int64, device=device)
 
 
+@lru_cache(maxsize=65_536)
 def _stable_hash_str_to_i64(rid: str) -> int:
     digest = hashlib.blake2b(rid.encode("utf-8"), digest_size=8).digest()
     return int.from_bytes(digest, "little", signed=True)
+
+
+
+
