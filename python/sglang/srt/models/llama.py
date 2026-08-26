@@ -540,6 +540,10 @@ class LlamaModel(nn.Module):
 
 
 class LlamaForCausalLM(nn.Module):
+    # Class attribute: inherited by registered subclasses (the Eagle
+    # draft models bypass this __init__), so the attestation never
+    # depends on which initializer ran.
+    vp_model_family = "llama"
     # BitandBytes specific attributes
     default_bitsandbytes_target_modules = [
         ".gate_proj.",
@@ -571,7 +575,6 @@ class LlamaForCausalLM(nn.Module):
         self.pp_group = get_pp_group()
         self.config = config
         self.quant_config = quant_config
-        self.vp_model_family = "llama"
         self.model = self._init_model(config, quant_config, add_prefix("model", prefix))
         vp_seam.validate_vp_causal_lm(self, quant_config)
         # Llama 3.2 1B Instruct set tie_word_embeddings to True
