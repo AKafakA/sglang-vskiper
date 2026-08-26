@@ -33,7 +33,16 @@ set -a
 # shellcheck disable=SC1090
 source "$ENVFILE"
 set +a
-export SGLANG_FD_WEIGHTS="${VP_GATE_FD_WEIGHTS:-$W/flexidepth_router_weights.pt}"
+if [ "${VP_GATE_NO_FD_WEIGHTS:-0}" = "1" ]; then
+  # Weightless-skipper arms (AdaSkip: requires_flexidepth_weights=False —
+  # validation REFUSES loaded FD weights for them).
+  unset SGLANG_FD_WEIGHTS
+else
+  export SGLANG_FD_WEIGHTS="${VP_GATE_FD_WEIGHTS:-$W/flexidepth_router_weights.pt}"
+fi
+if [ -n "${SGLANG_VP_ADASKIP_PROFILE:-}" ]; then
+  export SGLANG_VP_ADASKIP_PROFILE="${VP_GATE_ADASKIP_PROFILE:-$TREE/test/vp/fixtures/adaskip_fixed_profile.json}"
+fi
 if [ -n "${SGLANG_FD_FULL_GRAPH_CONDITIONAL_GRAPH_HELPER:-}" ]; then
   export SGLANG_FD_FULL_GRAPH_CONDITIONAL_GRAPH_HELPER="${VP_GATE_SM_HELPER:-$W/helper-sm75/libvpipe_cuda_conditional_graph.so}"
 fi
