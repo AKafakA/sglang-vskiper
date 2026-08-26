@@ -38,6 +38,7 @@ from sglang.srt.server_args import get_global_server_args
 from sglang.srt.utils import add_prefix, get_bool_env_var, is_cuda, is_hip, is_npu
 from sglang.srt.vpipe import seam as vp_seam
 from sglang.srt.vpipe.attention import fd_attention_qkv_full_graph
+from sglang.srt.vpipe.env import FD_EXECUTION_FULL_GRAPH
 
 Qwen3Config = None
 
@@ -178,8 +179,7 @@ class Qwen3Attention(nn.Module):
         # QKV projection; q/k-norm and RoPE below stay the model's own path.
         if (
             forward_batch is not None
-            and getattr(forward_batch, "fd_full_graph_attention_run_mask", None)
-            is not None
+            and forward_batch.fd_full_graph_attention_run_mask is not None
         ):
             q, k, v = fd_attention_qkv_full_graph(self, hidden_states, forward_batch)
         else:
@@ -411,6 +411,21 @@ class Qwen3DecoderLayer(nn.Module):
             routed_hi=35,
             qk_head_norms=(self.self_attn.q_norm, self.self_attn.k_norm),
         )
+        # Direct-eager on qwen3 is attention-TP=1 only: the eager body applies
+        # post_attention_layernorm to the TP-local partial, bypassing the
+        # LayerCommunicator's attention-TP all-reduce (o_proj here has
+        # reduce_results=False). Full-graph already enforces TP=1 in
+        # validation; this closes the eager gap at startup.
+        if (
+            self.fd_router is not None
+            and self.fd_execution_mode != FD_EXECUTION_FULL_GRAPH
+            and get_parallel().attn_tp_size > 1
+        ):
+            raise RuntimeError(
+                "qwen3 direct-eager FlexiDepth requires attention-TP=1: the "
+                "eager body bypasses the LayerCommunicator's attention-TP "
+                "reduction"
+            )
 
     def forward(
         self,
@@ -548,6 +563,8 @@ class Qwen3Model(Qwen2Model):
 
 
 class Qwen3ForCausalLM(nn.Module):
+    # Class attribute (see LlamaForCausalLM): subclass-safe family tag.
+    vp_model_family = "qwen3"
     # BitandBytes specific attributes
     default_bitsandbytes_target_modules = [
         ".gate_proj.",
@@ -577,7 +594,6 @@ class Qwen3ForCausalLM(nn.Module):
         self.pp_group = get_pp_group()
         self.config = config
         self.quant_config = quant_config
-        self.vp_model_family = "qwen3"
         self.model = Qwen3Model(
             config, quant_config=quant_config, prefix=add_prefix("model", prefix)
         )
