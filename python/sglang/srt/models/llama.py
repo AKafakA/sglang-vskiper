@@ -20,7 +20,6 @@
 
 import logging
 import os
-from functools import lru_cache
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 import torch
@@ -56,71 +55,9 @@ from sglang.srt.model_loader.weight_utils import (
 )
 from sglang.srt.runtime_context import get_flags, get_parallel
 from sglang.srt.utils import add_prefix, is_cuda, is_npu, is_xpu, make_layers
-from sglang.srt.vpipe.env import SERVED_MODEL_REVISION_ENV
-from sglang.srt.vpipe.coverage import (
-    record_dense_body_pass,
-)
 from sglang.srt.vpipe.attention import (
     fd_attention_o_proj_full_graph,
     fd_attention_qkv_full_graph,
-)
-from sglang.srt.vpipe.attestation import (
-    binary_cohort_attestation,
-    full_graph_compact_evidence_specs,
-)
-from sglang.srt.vpipe.batch import (
-    finalize_full_graph_batch,
-    full_graph_routed_enabled,
-    prepare_full_graph_batch,
-)
-from sglang.srt.vpipe.common import (
-    full_graph_low_row_policy,
-)
-from sglang.srt.vpipe.common import (
-    flexidepth_execution_mode,
-    flexidepth_forward_phase,
-    flexidepth_phase_enabled,
-)
-from sglang.srt.vpipe.common import (
-    flexidepth_active_phases,
-)
-from sglang.srt.vpipe.config import (
-    full_graph_device_route_digest_enabled,
-    full_graph_device_route_tape_enabled,
-    full_graph_fused_evidence_enabled,
-    full_graph_layer_counters_enabled,
-    full_graph_route_accounting_enabled,
-    full_graph_scheduler_convergence_enabled,
-)
-from sglang.srt.vpipe.env import (
-    FD_EXECUTION_FULL_GRAPH,
-)
-from sglang.srt.vpipe.executor import (
-    fd_layer_forward_full_graph,
-)
-from sglang.srt.vpipe.routing import (
-    full_graph_forced_route,
-)
-from sglang.srt.vpipe.validation import (
-    validate_full_graph_model_configuration,
-)
-from sglang.srt.vpipe.common import (
-    resolve_full_graph_skipper,
-)
-from sglang.srt.vpipe.skipper import (
-    route_digest_uses_logical_request_ids,
-)
-from sglang.srt.vpipe.env import (
-    RUN_PROJECT_EXECUTION,
-)
-from sglang.srt.vpipe.common import (
-    regime_switch_config,
-)
-from sglang.srt.vpipe.regime import (
-    PREFILL_BODY_DENSE,
-    PREFILL_BODY_FD,
-    prefill_regime_decision,
-    regime_switch_zero_counters,
 )
 from sglang.utils import get_exception_traceback
 
