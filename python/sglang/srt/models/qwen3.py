@@ -1,6 +1,6 @@
 # Adapted from qwen2.py
 import logging
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 import torch
 from torch import nn
@@ -36,6 +36,8 @@ from sglang.srt.models.utils import apply_qk_norm
 from sglang.srt.runtime_context import get_flags, get_parallel
 from sglang.srt.server_args import get_global_server_args
 from sglang.srt.utils import add_prefix, get_bool_env_var, is_cuda, is_hip, is_npu
+from sglang.srt.vpipe import seam as vp_seam
+from sglang.srt.vpipe.attention import fd_attention_qkv_full_graph
 
 Qwen3Config = None
 
@@ -170,9 +172,19 @@ class Qwen3Attention(nn.Module):
             self._fused_k_scale = torch.tensor(1.0, dtype=torch.float32, device="cpu")
             self._fused_v_scale = torch.tensor(1.0, dtype=torch.float32, device="cpu")
 
-    def forward_prepare_native(self, positions, hidden_states):
-        qkv, _ = self.qkv_proj(hidden_states)
-        q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
+    def forward_prepare_native(self, positions, hidden_states, forward_batch=None):
+        # vpipe seam (mirrors llama.py forward_prepare_native): when the
+        # full-graph run-mask is stamped, the compact helper replaces only the
+        # QKV projection; q/k-norm and RoPE below stay the model's own path.
+        if (
+            forward_batch is not None
+            and getattr(forward_batch, "fd_full_graph_attention_run_mask", None)
+            is not None
+        ):
+            q, k, v = fd_attention_qkv_full_graph(self, hidden_states, forward_batch)
+        else:
+            qkv, _ = self.qkv_proj(hidden_states)
+            q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
         q, k = apply_qk_norm(
             q=q,
             k=k,
@@ -291,6 +303,7 @@ class Qwen3Attention(nn.Module):
             q, k, v = self.forward_prepare_native(
                 positions=positions,
                 hidden_states=hidden_states,
+                forward_batch=forward_batch,
             )
         else:
             q, k, v = self.forward_prepare_npu(
@@ -386,6 +399,19 @@ class Qwen3DecoderLayer(nn.Module):
             post_attention_layernorm=self.post_attention_layernorm,
         )
 
+        # vpipe seam: routed layers 18-35 on Qwen3-8B (the trained FlexiDepth
+        # range for this family); the declared per-head q/k-norm pair is what
+        # the deferred PROJECT K/V repair replays between QKV split and RoPE.
+        self.layer_id = layer_id
+        vp_seam.init_fd_layer(
+            self,
+            config,
+            layer_id,
+            routed_lo=18,
+            routed_hi=35,
+            qk_head_norms=(self.self_attn.q_norm, self.self_attn.k_norm),
+        )
+
     def forward(
         self,
         positions: torch.Tensor,
@@ -394,6 +420,16 @@ class Qwen3DecoderLayer(nn.Module):
         residual: Optional[torch.Tensor],
         post_residual_addition: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        # vpipe seam: FD dispatch at the same site as llama.py. Only the
+        # llama-equivalent call shape is routable; a pass carrying
+        # post_residual_addition is outside the gated body's contract and
+        # falls through to the stock path.
+        if post_residual_addition is None:
+            _vp_result = vp_seam.maybe_fd_layer_forward(
+                self, positions, hidden_states, forward_batch, residual
+            )
+            if _vp_result is not None:
+                return _vp_result
         # Self Attention
         hidden_states, residual = self.layer_communicator.prepare_attn(
             hidden_states,
@@ -448,6 +484,67 @@ class Qwen3Model(Qwen2Model):
             decoder_layer_type=Qwen3DecoderLayer,
             alt_stream=alt_stream,
         )
+        vp_seam.attach_vp_model(self, config)
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        positions: torch.Tensor,
+        forward_batch: ForwardBatch,
+        input_embeds: torch.Tensor = None,
+        pp_proxy_tensors: Optional[PPProxyTensors] = None,
+    ) -> Union[torch.Tensor, PPProxyTensors]:
+        # Faithful copy of Qwen2Model.forward at upstream 602c8615a1 with the
+        # three vpipe seam calls inserted at llama.py's exact hook sites
+        # (regime stamp + batch prepare before the layer loop, finalize after).
+        if self.pp_group.is_first_rank:
+            if input_embeds is None:
+                hidden_states = self.embed_tokens(input_ids)
+            else:
+                hidden_states = input_embeds
+            residual = None
+        else:
+            assert pp_proxy_tensors is not None
+            hidden_states = pp_proxy_tensors["hidden_states"]
+            residual = pp_proxy_tensors["residual"]
+
+        vp_seam.stamp_prefill_regime(self, forward_batch)
+        vp_seam.seam_prepare_batch(self, forward_batch, hidden_states, positions)
+
+        aux_hidden_states = []
+        for i in range(self.start_layer, self.end_layer):
+            if i in self.layers_to_capture:
+                aux_hidden_states.append(
+                    hidden_states + residual if residual is not None else hidden_states
+                )
+            layer = self.layers[i]
+            hidden_states, residual = layer(
+                positions,
+                hidden_states,
+                forward_batch,
+                residual,
+            )
+
+        vp_seam.seam_finalize_batch(self, forward_batch)
+
+        if not self.pp_group.is_last_rank:
+            return PPProxyTensors(
+                {
+                    "hidden_states": hidden_states,
+                    "residual": residual,
+                }
+            )
+        else:
+            if hidden_states.shape[0] != 0:
+                if residual is None:
+                    hidden_states = self.norm(hidden_states)
+                else:
+                    hidden_states, _ = self.norm(hidden_states, residual)
+
+        if len(aux_hidden_states) == 0:
+            return hidden_states
+
+        return hidden_states, aux_hidden_states
 
 
 class Qwen3ForCausalLM(nn.Module):
@@ -480,9 +577,11 @@ class Qwen3ForCausalLM(nn.Module):
         self.pp_group = get_pp_group()
         self.config = config
         self.quant_config = quant_config
+        self.vp_model_family = "qwen3"
         self.model = Qwen3Model(
             config, quant_config=quant_config, prefix=add_prefix("model", prefix)
         )
+        vp_seam.validate_vp_causal_lm(self, quant_config)
 
         # handle the lm head on different pp ranks
         if self.pp_group.is_last_rank:
@@ -505,6 +604,15 @@ class Qwen3ForCausalLM(nn.Module):
 
         # For EAGLE3 support
         self.capture_aux_hidden_states = False
+
+    def vp_runtime_attestation(self) -> dict:
+        return vp_seam.vp_runtime_attestation(self)
+
+    def vp_regime_switch_counters(self) -> dict:
+        return vp_seam.vp_regime_switch_counters(self)
+
+    def vp_reset_runtime_counters(self) -> None:
+        return vp_seam.vp_reset_runtime_counters(self)
 
     def get_input_embeddings(self) -> nn.Embedding:
         return self.model.get_input_embeddings()
