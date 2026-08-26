@@ -459,6 +459,15 @@ def fd_execute_project_kv_repair_full_graph(
             [attention.q_size, attention.kv_size, attention.kv_size], dim=-1
         )
         if diagnostic_stage != "qkv_only":
+            # Replay the family's declared per-head q/k-norm (None on Llama)
+            # so repaired K is exactly what the layer's own attention writes.
+            head_norms = attention.fd_qk_head_norms
+            if head_norms is not None:
+                from sglang.srt.models.utils import apply_qk_norm
+
+                q, k = apply_qk_norm(
+                    q, k, head_norms[0], head_norms[1], attention.head_dim
+                )
             q, k = attention.rotary_emb(positions, q, k)
             del q
         if diagnostic_stage == "full":

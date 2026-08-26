@@ -130,11 +130,20 @@ def _vp_regime_prefill_mixed_running_bs(forward_batch: ForwardBatch) -> int:
     return running_bs
 
 
-def init_fd_layer(layer, config, layer_id):
-    """Decoder-layer seam: execution flags + routed FDRouter/FDProj attach."""
+def init_fd_layer(layer, config, layer_id, routed_lo, routed_hi, qk_head_norms):
+    """Decoder-layer seam: execution flags + routed FDRouter/FDProj attach.
+
+    routed_lo..routed_hi (inclusive) is the family's trained routed-layer
+    range (Llama-3-8B 16-31, Qwen3-8B 18-35, ...). qk_head_norms declares the
+    per-head (q_norm, k_norm) the family applies between QKV split and RoPE
+    (None for Llama) — the deferred PROJECT K/V repair replays it so repaired
+    K matches the layer's own attention path exactly. Always set on the
+    attention module so readers need no defensive access.
+    """
     layer.fd_execution_mode = flexidepth_execution_mode()
     layer.vp_full_graph_routed = False
     layer.vp_full_graph_attention_routed = False
+    layer.self_attn.fd_qk_head_norms = qk_head_norms
     # FlexiDepth-in-vPipe (GOAL): attach the trained router + router_proj (EXTRACTED weights,
     # version-agnostic) to routing layers 16-31 on stock Llama-3. Mode-guarded by SGLANG_FD_WEIGHTS
     # (a .pt path); loaded here so it lives in the scheduler subprocess with the model. KV-complete
@@ -142,7 +151,7 @@ def init_fd_layer(layer, config, layer_id):
     layer.fd_router = None
     layer.fd_proj = None
     _fdw = os.environ.get("SGLANG_FD_WEIGHTS", "")
-    if _fdw and 16 <= layer_id <= 31:
+    if _fdw and routed_lo <= layer_id <= routed_hi:
         from sglang.srt.vpipe.routing import (
             FDProj,
             FDRouter,
@@ -731,7 +740,7 @@ def vp_runtime_attestation(lm) -> dict:
             "completion": "inline_after_own_layer_attention",
         }
     return {
-        "model_family": "llama",
+        "model_family": lm.vp_model_family,
         "flexidepth": flexidepth_state,
     }
 
