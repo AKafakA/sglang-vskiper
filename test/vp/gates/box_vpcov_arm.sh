@@ -38,6 +38,12 @@ if [ -n "${SGLANG_FD_FULL_GRAPH_CONDITIONAL_GRAPH_HELPER:-}" ]; then
   export SGLANG_FD_FULL_GRAPH_CONDITIONAL_GRAPH_HELPER="${VP_GATE_SM_HELPER:-$W/helper-sm75/libvpipe_cuda_conditional_graph.so}"
 fi
 unset SGLANG_MOE_CONFIG_DIR
+# Stock mode: strip EVERY vpipe knob (including the weights remap above) so
+# the server is genuinely stock — the per-family stock-inertness gate serves
+# the seamed tree this way and its generated text must equal upstream's.
+if [ "${VP_GATE_STOCK:-0}" = "1" ]; then
+  while read -r v; do unset "$v"; done < <(env | grep -Eo '^SGLANG_(FD|VP)_[A-Z0-9_]+')
+fi
 export SGLANG_IS_FLASHINFER_AVAILABLE=false
 export PYTHONPATH=$TREE/python
 {

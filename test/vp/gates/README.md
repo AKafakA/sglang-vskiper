@@ -19,6 +19,18 @@ the box defaults preserved.
 | `route_digest_compare.py` | the equality comparator (reads `$VP_GATE_AB_OUT`). Known instrument artifact: `tape.digest_sum_u64` differs across boots on an identical tree; the other fields are the signal. |
 | `../refactor_ab/csd3_preflight.sh` / `csd3_ab_arm.sh` / `csd3_ab_chain.sh` | the CSD3 INTR A/B chain (fail-closed preflight → per-arm serve+probe → chain driver); `csd3_ab_run.sh` + `csd3_ab_compare.py` were already in `refactor_ab/`. |
 
+**Per-family stock/mock gating** (pre-checkpoint families, e.g. qwen3):
+`VP_GATE_STOCK=1` + the `stock` arm strips every `SGLANG_FD_*`/`SGLANG_VP_*`
+knob (the driver's own weights/helper remaps included) — serve the seamed
+tree and the upstream tree with `VP_GATE_MODEL=<family model>`, then compare
+generated-text shas (the RDAB comparator's text section, or an inline sha of
+`probe/labels.jsonl` text fields): IDENTICAL = the seam is inert when
+disabled. The `deterministic_mock` arm on a family WITHOUT a trained
+checkpoint needs synthetic weights in that family's dimensions —
+`../make_mock_fd_weights.py --config <model>/config.json --layer-lo/hi
+<routed range> --out <...mock...>.pt` (random by design; machinery/routing
+attestation only, never quality).
+
 Selective route-digest re-run without the full chain:
 `box_vpcov_arm.sh vdec_fd <treeA> $W/rdab-out` for each tree, copy the three
 result files per arm name, then `VP_GATE_AB_OUT=<dir> python3
