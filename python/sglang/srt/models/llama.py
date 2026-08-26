@@ -431,7 +431,14 @@ class LlamaDecoderLayer(nn.Module):
             config.hidden_size, eps=config.rms_norm_eps
         )
 
-        vp_seam.init_fd_layer(self, config, layer_id)
+        vp_seam.init_fd_layer(
+            self,
+            config,
+            layer_id,
+            routed_lo=16,
+            routed_hi=31,
+            qk_head_norms=None,
+        )
 
     def forward(
         self,
@@ -627,6 +634,7 @@ class LlamaForCausalLM(nn.Module):
         self.pp_group = get_pp_group()
         self.config = config
         self.quant_config = quant_config
+        self.vp_model_family = "llama"
         self.model = self._init_model(config, quant_config, add_prefix("model", prefix))
         vp_seam.validate_vp_causal_lm(self, quant_config)
         # Llama 3.2 1B Instruct set tie_word_embeddings to True
