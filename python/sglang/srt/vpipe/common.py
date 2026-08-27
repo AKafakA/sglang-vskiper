@@ -32,6 +32,11 @@ import torch
 import torch.nn.functional as F
 from sglang.srt.vpipe.env import (
     FD_COMPACT_O_PROJ_MIN_ROWS_ENV,
+    FD_COMPACT_ROUTED_QKV_ENV,
+    FD_CONTIGUOUS_ROUTED_QKV_ENV,
+    FD_ROUTED_QKV_CAPACITIES_ENV,
+    FD_ROUTED_QKV_CAPACITY_MULTIPLE_ENV,
+    FD_ROUTED_QKV_MIN_ROWS_ENV,
     FD_COMPACT_PHASES_ENV,
     FD_COMPACT_Q_PROJ_ENV,
     FD_LOW_ROW_MAX_ROWS_ENV,
@@ -78,6 +83,135 @@ DECODE_BODY_LOW = "prod_allrun"
 DECODE_BODY_HIGH = "skip"
 _DECODE_BODIES = frozenset((DECODE_BODY_LOW, DECODE_BODY_HIGH))
 _FD_PARITY_EPOCHS = {}
+def full_graph_contiguous_routed_qkv_config(
+    environ: Optional[Mapping[str, str]] = None,
+) -> tuple[bool, int, int, dict[int, tuple[float, float]]]:
+    """Return fixed-capacity cuBLAS settings for complementary QKV routes."""
+
+    values = os.environ if environ is None else environ
+    raw_enabled = str(
+        values.get(FD_CONTIGUOUS_ROUTED_QKV_ENV, "0")
+    ).strip().lower()
+    if raw_enabled in {"1", "true", "yes", "on"}:
+        enabled = True
+    elif raw_enabled in {"0", "false", "no", "off", ""}:
+        enabled = False
+    else:
+        raise ValueError(
+            f"{FD_CONTIGUOUS_ROUTED_QKV_ENV} must be a boolean value"
+        )
+
+    try:
+        min_rows = int(values.get(FD_ROUTED_QKV_MIN_ROWS_ENV, "128"))
+        capacity_multiple = int(
+            values.get(FD_ROUTED_QKV_CAPACITY_MULTIPLE_ENV, "16")
+        )
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            "invalid contiguous routed QKV configuration"
+        ) from error
+    if min_rows <= 0:
+        raise ValueError(f"{FD_ROUTED_QKV_MIN_ROWS_ENV} must be positive")
+    if capacity_multiple <= 0:
+        raise ValueError(
+            f"{FD_ROUTED_QKV_CAPACITY_MULTIPLE_ENV} must be positive"
+        )
+
+    raw_capacities = str(
+        values.get(FD_ROUTED_QKV_CAPACITIES_ENV, "") or ""
+    ).strip()
+    capacities: dict[int, tuple[float, float]] = {}
+    if raw_capacities:
+        for entry in raw_capacities.split(","):
+            fields = [field.strip() for field in entry.split(":")]
+            if len(fields) != 3:
+                raise ValueError(
+                    f"invalid {FD_ROUTED_QKV_CAPACITIES_ENV} entry: "
+                    f"{entry!r}"
+                )
+            try:
+                layer_id = int(fields[0])
+                run_fraction = float(fields[1])
+                project_fraction = float(fields[2])
+            except ValueError as error:
+                raise ValueError(
+                    f"invalid {FD_ROUTED_QKV_CAPACITIES_ENV} entry: "
+                    f"{entry!r}"
+                ) from error
+            if layer_id < 0 or layer_id in capacities:
+                raise ValueError(
+                    f"duplicate or negative layer in "
+                    f"{FD_ROUTED_QKV_CAPACITIES_ENV}: {layer_id}"
+                )
+            if not 0.0 < run_fraction <= 1.0:
+                raise ValueError(
+                    f"RUN capacity in {FD_ROUTED_QKV_CAPACITIES_ENV} "
+                    "must be in (0, 1]"
+                )
+            if not 0.0 < project_fraction <= 1.0:
+                raise ValueError(
+                    f"PROJECT capacity in {FD_ROUTED_QKV_CAPACITIES_ENV} "
+                    "must be in (0, 1]"
+                )
+            capacities[layer_id] = (run_fraction, project_fraction)
+    if enabled and not capacities:
+        raise ValueError(
+            f"{FD_CONTIGUOUS_ROUTED_QKV_ENV}=1 requires "
+            f"{FD_ROUTED_QKV_CAPACITIES_ENV}"
+        )
+    if not enabled and capacities:
+        raise ValueError(
+            f"{FD_ROUTED_QKV_CAPACITIES_ENV} requires "
+            f"{FD_CONTIGUOUS_ROUTED_QKV_ENV}=1"
+        )
+    return enabled, min_rows, capacity_multiple, capacities
+def _fixed_capacity_mapped_linear(
+    input_tensor: torch.Tensor,
+    weight: torch.Tensor,
+    row_map: torch.Tensor,
+    count: torch.Tensor,
+    output: torch.Tensor,
+    *,
+    capacity: int,
+) -> None:
+    """Run a packed cuBLAS common lane and an exact mapped overflow lane."""
+
+    rows = int(input_tensor.shape[0])
+    if capacity <= 0 or capacity > rows:
+        raise ValueError("routed projection capacity is outside its row map")
+    from sglang.srt.vpipe.cohort import (
+        scatter_cohort,
+    )
+    from sglang.srt.vpipe.kernel import (
+        pack_rows,
+    )
+    from sglang.srt.vpipe.cohort import (
+        mapped_linear,
+    )
+
+    packed_input = pack_rows(
+        input_tensor,
+        row_map,
+        count,
+        capacity=capacity,
+    )
+    packed_output = F.linear(packed_input, weight)
+    scatter_cohort(output, packed_output, row_map, count)
+    mapped_linear(
+        input_tensor,
+        weight,
+        row_map,
+        count,
+        output,
+        row_offset=capacity,
+    )
+def full_graph_compact_routed_qkv_enabled(
+    environ: Optional[Mapping[str, str]] = None,
+) -> bool:
+    """Return whether routed rows use complementary mapped projections."""
+
+    values = os.environ if environ is None else environ
+    return _strict_bool(values, FD_COMPACT_ROUTED_QKV_ENV)
 def full_graph_compact_o_proj_min_rows(
     environ: Optional[Mapping[str, str]] = None,
 ) -> int:

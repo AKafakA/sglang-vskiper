@@ -69,6 +69,22 @@ results = [
         SGLANG_FD_FULL_GRAPH_BATCHED_COMMIT="1",
         SGLANG_FD_FULL_GRAPH_DEFER_PROJECT_KV_DIAGNOSTIC_STAGE="qkv_only",
     ), "G batched commit at a diagnostic stage"),
+    call(dict(DEFER_POSTURE, SGLANG_FD_FULL_GRAPH_COMPACT_ROUTED_QKV="1"),
+         "H defer posture + compact routed qkv"),
+    call({k: v for k, v in dict(
+        DEFER_POSTURE, SGLANG_FD_FULL_GRAPH_COMPACT_ROUTED_QKV="1").items()
+        if k != "SGLANG_FD_FULL_GRAPH_DEFER_PROJECT_KV"},
+         "I compact routed qkv without defer"),
+    call(dict(
+        DEFER_POSTURE,
+        SGLANG_FD_FULL_GRAPH_CONTIGUOUS_ROUTED_QKV="1",
+        SGLANG_FD_FULL_GRAPH_ROUTED_QKV_CAPACITIES="16:0.6:0.6",
+    ), "J contiguous without compact"),
+    call(dict(
+        DEFER_POSTURE,
+        SGLANG_FD_FULL_GRAPH_COMPACT_ROUTED_QKV="1",
+        SGLANG_FD_FULL_GRAPH_CONTIGUOUS_ROUTED_QKV="1",
+    ), "K contiguous without capacities"),
 ]
 
 ok = True
@@ -93,6 +109,16 @@ if "requires SGLANG_FD_FULL_GRAPH_DEFER_PROJECT_KV=1" not in outcomes[
 if "requires the full repair commit" not in outcomes[
         "G batched commit at a diagnostic stage"]:
     print("FAIL: batched commit at a diagnostic stage must be refused"); ok = False
+if outcomes["H defer posture + compact routed qkv"] != "no-raise":
+    print("FAIL: the compact-routed-qkv posture must boot"); ok = False
+if "requires SGLANG_FD_FULL_GRAPH_DEFER_PROJECT_KV=1" not in outcomes[
+        "I compact routed qkv without defer"]:
+    print("FAIL: compact without defer must be refused"); ok = False
+if "requires SGLANG_FD_FULL_GRAPH_COMPACT_ROUTED_QKV=1" not in outcomes[
+        "J contiguous without compact"]:
+    print("FAIL: contiguous without compact must be refused"); ok = False
+if "requires" not in outcomes["K contiguous without capacities"]:
+    print("FAIL: contiguous without capacities must be refused"); ok = False
 print("COMMIT-OVERLAP GATE:", "PASS" if ok else "FAIL")
 
 if __name__ == "__main__":
@@ -118,3 +144,13 @@ def test_commit_overlap_startup_gate():
     assert "requires the full repair commit" in outcomes[
         "G batched commit at a diagnostic stage"], \
         "batched commit without the full repair commit must be refused"
+    assert outcomes["H defer posture + compact routed qkv"] == "no-raise", \
+        "the compact-routed-qkv posture must boot"
+    assert "requires SGLANG_FD_FULL_GRAPH_DEFER_PROJECT_KV=1" in outcomes[
+        "I compact routed qkv without defer"], \
+        "compact routed qkv without the deferral must be refused"
+    assert "requires SGLANG_FD_FULL_GRAPH_COMPACT_ROUTED_QKV=1" in outcomes[
+        "J contiguous without compact"], \
+        "the contiguous lane without compact must be refused"
+    assert "requires" in outcomes["K contiguous without capacities"], \
+        "the contiguous lane without capacities must be refused"

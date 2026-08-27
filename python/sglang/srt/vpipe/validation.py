@@ -24,6 +24,8 @@ from sglang.srt.vpipe.attestation import (
 )
 from sglang.srt.vpipe.common import (
     full_graph_compact_o_proj_min_rows,
+    full_graph_compact_routed_qkv_enabled,
+    full_graph_contiguous_routed_qkv_config,
     full_graph_compact_phases,
     full_graph_compact_q_proj_enabled,
     full_graph_low_row_policy,
@@ -69,6 +71,8 @@ from sglang.srt.vpipe.env import (
     FD_CONDITIONAL_PRODUCTION_ALL_RUN_ENV,
     FD_BATCHED_COMMIT_ENV,
     FD_COMMIT_OVERLAP_ENV,
+    FD_COMPACT_ROUTED_QKV_ENV,
+    FD_CONTIGUOUS_ROUTED_QKV_ENV,
     FD_DEFER_PROJECT_KV_DIAGNOSTIC_STAGE_ENV,
     FD_DEFER_PROJECT_KV_ENV,
     FD_DEVICE_ROUTE_DIGEST_ENV,
@@ -321,6 +325,28 @@ def validate_full_graph_model_configuration(
     defer_project_kv_stage = (
         full_graph_defer_project_kv_diagnostic_stage(values)
     )
+    compact_routed_qkv = full_graph_compact_routed_qkv_enabled(values)
+    (
+        contiguous_routed_qkv,
+        _,
+        _,
+        _,
+    ) = full_graph_contiguous_routed_qkv_config(values)
+    if compact_routed_qkv and not defer_project_kv:
+        raise ValueError(
+            f"{FD_COMPACT_ROUTED_QKV_ENV}=1 requires "
+            f"{FD_DEFER_PROJECT_KV_ENV}=1"
+        )
+    if compact_routed_qkv and defer_project_kv_stage != "full":
+        raise ValueError(
+            f"{FD_COMPACT_ROUTED_QKV_ENV}=1 requires "
+            f"{FD_DEFER_PROJECT_KV_DIAGNOSTIC_STAGE_ENV}=full"
+        )
+    if contiguous_routed_qkv and not compact_routed_qkv:
+        raise ValueError(
+            f"{FD_CONTIGUOUS_ROUTED_QKV_ENV}=1 requires "
+            f"{FD_COMPACT_ROUTED_QKV_ENV}=1"
+        )
     batched_commit = full_graph_batched_commit_enabled(values)
     if batched_commit and not defer_project_kv:
         raise ValueError(

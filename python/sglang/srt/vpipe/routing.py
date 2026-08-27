@@ -33,6 +33,7 @@ from sglang.srt.vpipe.common import (
     _fdvp_timing_enabled,
     fdvp_fused_project_input_enabled,
     fdvp_fused_project_input_shared_storage_enabled,
+    full_graph_compact_routed_qkv_enabled,
 )
 from sglang.srt.vpipe.kv_commit import (
     _fdvp_trace_enabled,
@@ -481,6 +482,9 @@ class FullGraphPreparedLayerRoute:
     parity_context: Optional[tuple[int, int]]
     inline_kv_index: Optional[int]
     action_batch: Optional[FullGraphActionBatch] = None
+    run_row_map: Optional[torch.Tensor] = None
+    project_row_map: Optional[torch.Tensor] = None
+    route_counts: Optional[torch.Tensor] = None
 def fd_prepare_layer_route_full_graph(
     layer: Any,
     hidden_states: torch.Tensor,
@@ -577,6 +581,21 @@ def fd_prepare_layer_route_full_graph(
             layer_id=layer_id,
             token_epoch=parity_epoch,
         )
+    run_row_map = None
+    project_row_map = None
+    route_counts = None
+    if full_graph_compact_routed_qkv_enabled():
+        valid_rows = forward_batch.fd_full_graph_valid_rows
+        run_rows = run_mask.squeeze(-1)
+        if valid_rows is None or valid_rows.shape != run_rows.shape:
+            raise RuntimeError(
+                "compact routed QKV requires aligned graph-valid rows"
+            )
+
+        run_row_map, project_row_map, route_counts = build_route_maps(
+            run_rows & valid_rows,
+            (~run_rows) & valid_rows,
+        )
     return FullGraphPreparedLayerRoute(
         layer_id=layer_id,
         hidden_states=hidden_states,
@@ -586,6 +605,9 @@ def fd_prepare_layer_route_full_graph(
         parity_context=parity_context,
         inline_kv_index=inline_kv_index,
         action_batch=action_batch,
+        run_row_map=run_row_map,
+        project_row_map=project_row_map,
+        route_counts=route_counts,
     )
 def fd_parity_trace_attention(
     *,
