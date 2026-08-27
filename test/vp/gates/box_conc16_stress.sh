@@ -64,14 +64,20 @@ for BOOT in $(seq 1 "$BOOTS"); do
     --requests-jsonl "$SUITE" --first-n 100 \
     --concurrency 16 --max-new-tokens 192 --topk 20 \
     --output-dir "$OUT/probe" 2>&1 | tail -1
+  PROBE_RC=${PIPESTATUS[0]}
   ALIVE=0
   for _h in $(seq 1 8); do
     curl -sf -m 5 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && { ALIVE=1; break; }
     kill -0 $SPID 2>/dev/null || break
     sleep 5
   done
-  if [ "$ALIVE" = "1" ]; then
+  if [ "$ALIVE" = "1" ] && [ "$PROBE_RC" = "0" ]; then
     echo "boot$BOOT SURVIVED"
+  elif [ "$ALIVE" = "1" ]; then
+    # A live server with a failed probe is NOT survival — the workload
+    # never completed (the review-caught client-failure blind spot).
+    echo "boot$BOOT PROBE-FAILED rc=$PROBE_RC (server alive; workload incomplete)"
+    CRASHES=$((CRASHES + 1))
   else
     echo "boot$BOOT CRASHED"
     grep -m1 "CUDA error" "$OUT/server.log" | sed 's/^/    /'

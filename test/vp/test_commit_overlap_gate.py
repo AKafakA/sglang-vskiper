@@ -85,6 +85,20 @@ results = [
         SGLANG_FD_FULL_GRAPH_COMPACT_ROUTED_QKV="1",
         SGLANG_FD_FULL_GRAPH_CONTIGUOUS_ROUTED_QKV="1",
     ), "K contiguous without capacities"),
+    call(dict(
+        DEFER_POSTURE,
+        SGLANG_FD_FULL_GRAPH_COMPACT_ROUTED_QKV="1",
+        SGLANG_FD_FULL_GRAPH_CONTIGUOUS_ROUTED_QKV="1",
+        SGLANG_FD_FULL_GRAPH_ROUTED_QKV_CAPACITIES="16:0.6:0.6",
+    ), "L contiguous with partial coverage"),
+    call(dict(
+        DEFER_POSTURE,
+        SGLANG_FD_FULL_GRAPH_COMPACT_ROUTED_QKV="1",
+        SGLANG_FD_FULL_GRAPH_CONTIGUOUS_ROUTED_QKV="1",
+        SGLANG_FD_FULL_GRAPH_ROUTED_QKV_CAPACITIES=",".join(
+            f"{layer}:0.6:0.6" for layer in ROUTED
+        ),
+    ), "M contiguous with full coverage"),
 ]
 
 ok = True
@@ -119,6 +133,11 @@ if "requires SGLANG_FD_FULL_GRAPH_COMPACT_ROUTED_QKV=1" not in outcomes[
     print("FAIL: contiguous without compact must be refused"); ok = False
 if "requires" not in outcomes["K contiguous without capacities"]:
     print("FAIL: contiguous without capacities must be refused"); ok = False
+if "is missing routed layers" not in outcomes[
+        "L contiguous with partial coverage"]:
+    print("FAIL: partial capacity coverage must be refused at startup"); ok = False
+if outcomes["M contiguous with full coverage"] != "no-raise":
+    print("FAIL: full capacity coverage must boot"); ok = False
 print("COMMIT-OVERLAP GATE:", "PASS" if ok else "FAIL")
 
 if __name__ == "__main__":
@@ -154,3 +173,8 @@ def test_commit_overlap_startup_gate():
         "the contiguous lane without compact must be refused"
     assert "requires" in outcomes["K contiguous without capacities"], \
         "the contiguous lane without capacities must be refused"
+    assert "is missing routed layers" in outcomes[
+        "L contiguous with partial coverage"], \
+        "partial capacity coverage must be refused at startup, not at capture"
+    assert outcomes["M contiguous with full coverage"] == "no-raise", \
+        "full capacity coverage must boot"

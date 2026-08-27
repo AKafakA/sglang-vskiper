@@ -73,6 +73,7 @@ from sglang.srt.vpipe.env import (
     FD_COMMIT_OVERLAP_ENV,
     FD_COMPACT_ROUTED_QKV_ENV,
     FD_CONTIGUOUS_ROUTED_QKV_ENV,
+    FD_ROUTED_QKV_CAPACITIES_ENV,
     FD_DEFER_PROJECT_KV_DIAGNOSTIC_STAGE_ENV,
     FD_DEFER_PROJECT_KV_ENV,
     FD_DEVICE_ROUTE_DIGEST_ENV,
@@ -330,7 +331,7 @@ def validate_full_graph_model_configuration(
         contiguous_routed_qkv,
         _,
         _,
-        _,
+        _capacities,
     ) = full_graph_contiguous_routed_qkv_config(values)
     if compact_routed_qkv and not defer_project_kv:
         raise ValueError(
@@ -347,6 +348,17 @@ def validate_full_graph_model_configuration(
             f"{FD_CONTIGUOUS_ROUTED_QKV_ENV}=1 requires "
             f"{FD_COMPACT_ROUTED_QKV_ENV}=1"
         )
+    if contiguous_routed_qkv:
+        # loaded_flexidepth_layers is normalized to a concrete list above.
+        missing_capacity_layers = sorted(
+            set(loaded_flexidepth_layers) - set(_capacities)
+        )
+        if missing_capacity_layers:
+            raise ValueError(
+                f"{FD_ROUTED_QKV_CAPACITIES_ENV} is missing routed layers "
+                f"{missing_capacity_layers}; the contiguous lane fails at "
+                "capture otherwise — cover every routed layer or disable it"
+            )
     batched_commit = full_graph_batched_commit_enabled(values)
     if batched_commit and not defer_project_kv:
         raise ValueError(
