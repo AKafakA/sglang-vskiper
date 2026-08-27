@@ -44,6 +44,7 @@ from sglang.srt.vpipe.common import (
     flexidepth_active_phases,
 )
 from sglang.srt.vpipe.config import (
+    full_graph_commit_overlap_enabled,
     full_graph_device_route_digest_enabled,
     full_graph_device_route_tape_enabled,
     full_graph_fused_evidence_enabled,
@@ -388,6 +389,17 @@ def attach_vp_model(model, config):
         ),
         persistent=False,
     )
+    model.register_buffer(
+        "_fd_full_graph_commit_overlap_counters",
+        (
+            torch.zeros(1, dtype=torch.int64)
+            if model.fd_execution_mode == FD_EXECUTION_FULL_GRAPH
+            and has_routed_layers
+            and full_graph_commit_overlap_enabled()
+            else None
+        ),
+        persistent=False,
+    )
     low_row_policy, _ = full_graph_low_row_policy()
     model.register_buffer(
         "_fd_full_graph_low_row_counters",
@@ -707,6 +719,15 @@ def vp_runtime_attestation(lm) -> dict:
         flexidepth_state["full_graph_routes"]["device_route_tape"][
             "project_rows"
         ] = action_rows - run_rows
+    commit_overlap_counters = getattr(
+        lm.model, "_fd_full_graph_commit_overlap_counters", None
+    )
+    if commit_overlap_counters is not None:
+        flexidepth_state["full_graph_routes"]["commit_overlap"] = {
+            "enabled": True,
+            "commit_batches": int(commit_overlap_counters[0].item()),
+            "fence": "graph_end_dependency_on_commit_and_suffix_leaves",
+        }
     readiness_counters = getattr(
         lm.model, "_fd_full_graph_inline_kv_readiness_counters", None
     )
@@ -794,6 +815,11 @@ def vp_reset_runtime_counters(lm) -> None:
     )
     if readiness_counters is not None:
         readiness_counters.zero_()
+    commit_overlap_counters = getattr(
+        lm.model, "_fd_full_graph_commit_overlap_counters", None
+    )
+    if commit_overlap_counters is not None:
+        commit_overlap_counters.zero_()
     # [W1] Reset the prefill regime-switch decision counters (always present).
     lm.model._vp_regime_prefill_fd_passes = 0
     lm.model._vp_regime_prefill_dense_passes = 0
