@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import triton.language as tl
 import triton
+import msgspec
 import os
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 import torch
 import torch.nn.functional as F
+from sglang.srt.utils.async_probe import maybe_detect_oob
 from sglang.srt.vpipe.kv_commit import (
     _fdvp_trace_enabled,
 )
@@ -997,3 +999,249 @@ def _current_stream(device):
     if device is None or getattr(device, "type", None) != "cuda":
         return None
     return torch.cuda.current_stream(device)
+
+
+@triton.jit
+def _fd_batched_commit_kv_kernel(
+    table_ptr,  # int64 [L, 4]: k_src, v_src, k_dst, v_dst byte addresses
+    row_stride_ptr,  # int64 [L, 2]: k/v source row strides (elements)
+    loc_ptr,  # [N] cache locations, shared across layers within a step
+    mask_ptr,  # bool [L, N] per-layer PROJECT masks (layer-contiguous)
+    L: tl.constexpr,
+    N: tl.constexpr,
+    HD_K: tl.constexpr,  # flat elements per K row (heads * head_dim)
+    HD_V: tl.constexpr,  # flat elements per V row
+    CHUNK: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    if pid >= L * N:
+        return
+    layer = pid // N
+    row = pid % N
+    if tl.load(mask_ptr + layer * N + row) == 0:
+        return
+    loc = tl.load(loc_ptr + row).to(tl.int64)
+    k_src = tl.load(table_ptr + layer * 4 + 0).to(tl.pointer_type(tl.uint16))
+    v_src = tl.load(table_ptr + layer * 4 + 1).to(tl.pointer_type(tl.uint16))
+    k_dst = tl.load(table_ptr + layer * 4 + 2).to(tl.pointer_type(tl.uint16))
+    v_dst = tl.load(table_ptr + layer * 4 + 3).to(tl.pointer_type(tl.uint16))
+    k_row_stride = tl.load(row_stride_ptr + layer * 2 + 0)
+    v_row_stride = tl.load(row_stride_ptr + layer * 2 + 1)
+    for chunk in range(tl.cdiv(HD_K, CHUNK)):
+        idx = chunk * CHUNK + tl.arange(0, CHUNK)
+        live = idx < HD_K
+        key = tl.load(k_src + row * k_row_stride + idx, mask=live)
+        tl.store(k_dst + loc * HD_K + idx, key, mask=live)
+    for chunk in range(tl.cdiv(HD_V, CHUNK)):
+        idx = chunk * CHUNK + tl.arange(0, CHUNK)
+        live = idx < HD_V
+        value = tl.load(v_src + row * v_row_stride + idx, mask=live)
+        tl.store(v_dst + loc * HD_V + idx, value, mask=live)
+
+
+class BatchedCommitPlan(msgspec.Struct, frozen=True):
+    """Capture-frozen launch arguments for the batched commit kernel."""
+
+    table: torch.Tensor  # int64 [L, 4] device
+    row_strides: torch.Tensor  # int64 [L, 2] device
+    cache_locations: torch.Tensor  # captured out_cache_loc buffer
+    mask_backing: torch.Tensor  # bool [L, N], layer-contiguous
+    num_layers: int
+    num_tokens: int
+    hd_k: int
+    hd_v: int
+    total_slots: int  # pool size + page_size: the OOB bound for locations
+def _require_flat_rows(view: torch.Tensor, name: str) -> int:
+    """Return the row stride of a (N, H, D) view whose rows are flat."""
+
+    if view.dim() != 3:
+        raise RuntimeError(f"batched K/V commit: {name} must be 3-D")
+    if view.stride(2) != 1 or view.stride(1) != view.shape[2]:
+        raise RuntimeError(
+            f"batched K/V commit: {name} rows are not flat-contiguous"
+        )
+    return int(view.stride(0))
+def build_batched_commit_plan(
+    *,
+    routed_layers: Sequence[int],
+    llama: Any,
+    kv_pool: Any,
+    repair_k_buffers: Sequence[torch.Tensor],
+    repair_v_buffers: Sequence[torch.Tensor],
+    mask_backing: torch.Tensor,
+    cache_locations: torch.Tensor,
+    num_tokens: int,
+) -> BatchedCommitPlan:
+    """Validate every precondition and freeze the launch tables.
+
+    Raises instead of degrading: any layout this builder cannot prove
+    equivalent to the per-layer loop is a configuration error, not a
+    fallback case.
+    """
+
+    from sglang.srt.mem_cache.memory_pool import MHATokenToKVPool
+
+    if not routed_layers:
+        raise RuntimeError("batched K/V commit requires routed layers")
+    # Review finding 3: prove the pool IS the plain-NHD _store_kv_layer
+    # behavior being replaced — exact type (no subclass overrides) plus
+    # the plain layout string; store_dtype == dtype below excludes
+    # quantized stores.
+    if type(kv_pool) is not MHATokenToKVPool:
+        raise RuntimeError(
+            "batched K/V commit requires exactly MHATokenToKVPool, got "
+            f"{type(kv_pool).__name__}"
+        )
+    if kv_pool.kv_cache_layout != "nhd":
+        raise RuntimeError(
+            "batched K/V commit requires the plain NHD layout, got "
+            f"{kv_pool.kv_cache_layout!r}"
+        )
+    if len(repair_k_buffers) != len(routed_layers) or len(
+        repair_v_buffers
+    ) != len(routed_layers):
+        raise RuntimeError(
+            "batched K/V commit requires one repair K/V view per routed layer"
+        )
+    if kv_pool.store_dtype != kv_pool.dtype:
+        raise RuntimeError(
+            "batched K/V commit does not support store-dtype quantization"
+        )
+    if getattr(kv_pool, "use_hnd", False):
+        raise RuntimeError("batched K/V commit requires the NHD cache layout")
+    itemsize = torch.empty((), dtype=kv_pool.dtype).element_size()
+    if itemsize != 2:
+        raise RuntimeError(
+            "batched K/V commit supports 2-byte element types only"
+        )
+    if mask_backing.dtype != torch.bool or mask_backing.shape != (
+        len(routed_layers),
+        num_tokens,
+    ):
+        raise RuntimeError("batched K/V commit mask backing shape mismatch")
+    if not mask_backing.is_contiguous():
+        raise RuntimeError("batched K/V commit mask backing must be contiguous")
+    if cache_locations.shape != (num_tokens,):
+        raise RuntimeError(
+            "batched K/V commit requires aligned cache locations"
+        )
+    # Review finding 2: the kernel does raw contiguous integer loads —
+    # prove dtype, contiguity, and device colocation instead of assuming.
+    if cache_locations.dtype not in (torch.int32, torch.int64):
+        raise RuntimeError(
+            "batched K/V commit cache locations must be int32/int64, got "
+            f"{cache_locations.dtype}"
+        )
+    if not cache_locations.is_contiguous():
+        raise RuntimeError(
+            "batched K/V commit cache locations must be contiguous"
+        )
+    if cache_locations.device != mask_backing.device:
+        raise RuntimeError(
+            "batched K/V commit tensors must share one device"
+        )
+
+    first_attn = llama.layers[routed_layers[0]].self_attn.attn
+    hd_k = int(first_attn.tp_k_head_num) * int(first_attn.qk_head_dim)
+    hd_v = int(first_attn.tp_v_head_num) * int(first_attn.v_head_dim)
+    table_rows: list[list[int]] = []
+    stride_rows: list[list[int]] = []
+    for stage_index, layer_id in enumerate(routed_layers):
+        radix_attention = llama.layers[layer_id].self_attn.attn
+        if (
+            radix_attention.k_scale is not None
+            or radix_attention.v_scale is not None
+        ):
+            raise RuntimeError(
+                "batched K/V commit does not support per-layer K/V scales"
+            )
+        layer_hd_k = int(radix_attention.tp_k_head_num) * int(
+            radix_attention.qk_head_dim
+        )
+        layer_hd_v = int(radix_attention.tp_v_head_num) * int(
+            radix_attention.v_head_dim
+        )
+        if layer_hd_k != hd_k or layer_hd_v != hd_v:
+            raise RuntimeError(
+                "batched K/V commit requires uniform K/V head geometry"
+            )
+        repair_k = repair_k_buffers[stage_index]
+        repair_v = repair_v_buffers[stage_index]
+        expected_k = (
+            num_tokens,
+            radix_attention.tp_k_head_num,
+            radix_attention.qk_head_dim,
+        )
+        expected_v = (
+            num_tokens,
+            radix_attention.tp_v_head_num,
+            radix_attention.v_head_dim,
+        )
+        if repair_k.shape != expected_k or repair_v.shape != expected_v:
+            raise RuntimeError(
+                "batched K/V commit repair buffer shape mismatch"
+            )
+        if repair_k.dtype != kv_pool.dtype or repair_v.dtype != kv_pool.dtype:
+            raise RuntimeError("batched K/V commit repair dtype mismatch")
+        k_row_stride = _require_flat_rows(repair_k, "repair K view")
+        v_row_stride = _require_flat_rows(repair_v, "repair V view")
+        pool_index = int(layer_id) - int(kv_pool.start_layer)
+        k_dst = kv_pool.k_buffer[pool_index]
+        v_dst = kv_pool.v_buffer[pool_index]
+        for dst, dst_hd, name in (
+            (k_dst, hd_k, "pool K buffer"),
+            (v_dst, hd_v, "pool V buffer"),
+        ):
+            if dst.dim() != 3 or not dst.is_contiguous():
+                raise RuntimeError(
+                    f"batched K/V commit: {name} must be contiguous 3-D"
+                )
+            if int(dst.shape[1]) * int(dst.shape[2]) != dst_hd:
+                raise RuntimeError(
+                    f"batched K/V commit: {name} row width mismatch"
+                )
+        table_rows.append(
+            [
+                repair_k.data_ptr(),
+                repair_v.data_ptr(),
+                k_dst.data_ptr(),
+                v_dst.data_ptr(),
+            ]
+        )
+        stride_rows.append([k_row_stride, v_row_stride])
+
+    device = mask_backing.device
+    return BatchedCommitPlan(
+        table=torch.tensor(table_rows, dtype=torch.int64, device=device),
+        row_strides=torch.tensor(
+            stride_rows, dtype=torch.int64, device=device
+        ),
+        cache_locations=cache_locations,
+        mask_backing=mask_backing,
+        num_layers=len(routed_layers),
+        num_tokens=num_tokens,
+        hd_k=hd_k,
+        hd_v=hd_v,
+        total_slots=int(kv_pool.size) + int(kv_pool.page_size),
+    )
+def run_batched_commit(plan: BatchedCommitPlan) -> None:
+    """Launch the single cross-layer commit kernel (capture-safe)."""
+
+    # Review finding 1: the replaced set_kv_buffer path recorded an
+    # async OOB probe on the replay-varying locations; keep that
+    # invariant — recorded here, it replays with the commit graph
+    # (once per step; locations are shared across layers).
+    maybe_detect_oob(
+        plan.cache_locations, 0, plan.total_slots, "batched K/V commit"
+    )
+    _fd_batched_commit_kv_kernel[(plan.num_layers * plan.num_tokens,)](
+        plan.table,
+        plan.row_strides,
+        plan.cache_locations,
+        plan.mask_backing,
+        plan.num_layers,
+        plan.num_tokens,
+        plan.hd_k,
+        plan.hd_v,
+        256,
+    )

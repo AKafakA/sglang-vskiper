@@ -60,6 +60,8 @@ from sglang.srt.vpipe.common import (
     flexidepth_active_phases,
 )
 from sglang.srt.vpipe.config import (
+    full_graph_batched_commit_enabled,
+    full_graph_commit_overlap_enabled,
     full_graph_compact_config,
     full_graph_compact_o_proj_config,
     full_graph_defer_project_kv_enabled,
@@ -592,6 +594,8 @@ def model_runner_runtime_attestation(
     deferred_project_kv_semantic = (
         not deferred_project_kv or deferred_project_kv_stage == "full"
     )
+    commit_overlap = full_graph_commit_overlap_enabled()
+    batched_commit = full_graph_batched_commit_enabled()
     decode_graph_runner = getattr(model_runner, "decode_cuda_graph_runner", None)
     decode_graph_backend = getattr(decode_graph_runner, "backend", None)
     conditional_attestation = getattr(decode_graph_backend, "attestation", None)
@@ -604,7 +608,9 @@ def model_runner_runtime_attestation(
         }
     )
     scheduler_kv_completion = (
-        "graph_side_project_compute_joined_cache_commit_before_logits"
+        "graph_side_project_compute_overlapped_cache_commit_graph_end_fence"
+        if deferred_project_kv and deferred_project_kv_semantic and commit_overlap
+        else "graph_side_project_compute_joined_cache_commit_before_logits"
         if deferred_project_kv and deferred_project_kv_semantic
         else "diagnostic_incomplete_project_kv"
         if deferred_project_kv
@@ -757,7 +763,11 @@ def model_runner_runtime_attestation(
             "hot_path_host_readback": False,
             "hot_path_route_host_syncs": 0,
             "kv_completion": (
-                "foreground_run_plus_graph_side_project_compute_joined_cache_commit"
+                "foreground_run_plus_graph_side_project_compute_overlapped_cache_commit"
+                if deferred_project_kv
+                and deferred_project_kv_semantic
+                and commit_overlap
+                else "foreground_run_plus_graph_side_project_compute_joined_cache_commit"
                 if deferred_project_kv and deferred_project_kv_semantic
                 else "diagnostic_incomplete_project_kv"
                 if deferred_project_kv
@@ -801,8 +811,18 @@ def model_runner_runtime_attestation(
             "per_layer_host_dispatches": 0,
             "graph_key_depends_on_route_mask": False,
             "deferred_repair": deferred_project_kv,
+            "commit_overlap": commit_overlap,
+            "commit_batching": (
+                "single_cross_layer_kernel_launch_per_step"
+                if batched_commit
+                else "per_layer_masked_pool_writes"
+            ),
             "repair_topology": (
-                "route_prefix_fork_side_compute_join_cache_commit_suffix"
+                "route_prefix_fork_side_compute_overlap_commit_suffix_evidence_join"
+                if deferred_project_kv
+                and deferred_project_kv_semantic
+                and commit_overlap
+                else "route_prefix_fork_side_compute_join_cache_commit_suffix"
                 if deferred_project_kv and deferred_project_kv_semantic
                 else "route_prefix_fork_diagnostic_side_compute_suffix_join"
                 if deferred_project_kv

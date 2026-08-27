@@ -29,6 +29,8 @@ from sglang.srt.vpipe.env import (
     FD_COMPACT_MIN_ROWS_ENV,
     FD_COMPACT_O_PROJ_ENV,
     FD_COMPACT_O_PROJ_LAYERS_ENV,
+    FD_BATCHED_COMMIT_ENV,
+    FD_COMMIT_OVERLAP_ENV,
     FD_DEFER_PROJECT_KV_ENV,
     FD_DEVICE_ROUTE_DIGEST_ENV,
     FD_DEVICE_ROUTE_TAPE_ENV,
@@ -107,6 +109,20 @@ def full_graph_defer_project_kv_enabled(
 
     values = os.environ if environ is None else environ
     return _strict_bool(values, FD_DEFER_PROJECT_KV_ENV)
+def full_graph_batched_commit_enabled(
+    environ: Optional[Mapping[str, str]] = None,
+) -> bool:
+    """Return whether per-layer deferred commits fuse into one launch."""
+
+    values = os.environ if environ is None else environ
+    return _strict_bool(values, FD_BATCHED_COMMIT_ENV)
+def full_graph_commit_overlap_enabled(
+    environ: Optional[Mapping[str, str]] = None,
+) -> bool:
+    """Return whether the deferred K/V commit overlaps the logits suffix."""
+
+    values = os.environ if environ is None else environ
+    return _strict_bool(values, FD_COMMIT_OVERLAP_ENV)
 def full_graph_forced_all_run_fastpath_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:

@@ -20,6 +20,8 @@ from sglang.srt.vpipe.batch import (
     prepare_full_graph_batch,
 )
 from sglang.srt.vpipe.config import (
+    full_graph_batched_commit_enabled,
+    full_graph_commit_overlap_enabled,
     full_graph_defer_project_kv_enabled,
 )
 from sglang.srt.vpipe.executor import (
@@ -57,6 +59,8 @@ class ConditionalGraphAttestation:
     side_body_count: int = 0
     join_body_count: int = 0
     host_route_readback: bool = False
+    overlap_join: bool = False
+    evidence_body_count: int = 0
 def fd_project_kv_repair_cache_locations(
     cache_locations: torch.Tensor,
     project_rows: torch.Tensor,
@@ -99,6 +103,8 @@ class ConditionalCudaGraph:
         side_body_count: int,
         join_body_count: int,
         branch_count: int = 2,
+        overlap_join: bool = False,
+        evidence_body_count: int = 0,
     ) -> None:
         self._graph = graph
         self._executable = executable
@@ -114,6 +120,8 @@ class ConditionalCudaGraph:
             pre_body_count=pre_body_count,
             side_body_count=side_body_count,
             join_body_count=join_body_count,
+            overlap_join=overlap_join,
+            evidence_body_count=evidence_body_count,
         )
 
     @staticmethod
@@ -160,17 +168,38 @@ class ConditionalCudaGraph:
         prefix: Optional[torch.cuda.CUDAGraph] = None,
         join: Optional[torch.cuda.CUDAGraph] = None,
         suffix: Optional[torch.cuda.CUDAGraph] = None,
+        overlap_join: bool = False,
+        evidence: Optional[torch.cuda.CUDAGraph] = None,
     ) -> "ConditionalCudaGraph":
         """Compose ordered route/branch stages into one replayable graph.
 
         The join body (when present) gates the suffix; graph-launch
         completion fences every leaf, so stream order after replay
         observes all bodies.
+
+        With ``overlap_join`` the join instead runs CONCURRENT with the
+        suffix (commit ∥ logits): the suffix depends only on the stage
+        chain, and the ``evidence`` body — which reads state the join
+        writes — joins both before the graph ends. The graph-end
+        dependency on every leaf is the step-boundary fence: nothing
+        launched after replay on the stream can observe an uncommitted
+        K/V row.
         """
 
         cls._require_runtime()
         if not stages:
             raise ValueError("conditional graph requires at least one stage")
+        if overlap_join and (join is None or suffix is None):
+            raise ValueError(
+                "overlap_join requires both a join body and a suffix"
+            )
+        if overlap_join and evidence is None:
+            raise ValueError(
+                "overlap_join requires an evidence body: the state the "
+                "join writes must be read AFTER both leaves, never raced"
+            )
+        if evidence is not None and not overlap_join:
+            raise ValueError("an evidence body requires overlap_join")
         for index, stage in enumerate(stages):
             predicate = stage.predicate
             if predicate.device.type != "cuda":
@@ -297,7 +326,9 @@ class ConditionalCudaGraph:
                         cls._raw_graph(join),
                     )
                 )
-                dependency = join_node
+                if not overlap_join:
+                    # The join gates the suffix (commit before logits).
+                    dependency = join_node
                 side_nodes.clear()
 
             suffix_node = None
@@ -309,6 +340,19 @@ class ConditionalCudaGraph:
                         suffix_dependencies,
                         len(suffix_dependencies),
                         cls._raw_graph(suffix),
+                    )
+                )
+
+            if evidence is not None:
+                # Reads the readiness tape the overlapped join writes, so it
+                # must depend on BOTH concurrent leaves.
+                evidence_dependencies = [join_node, suffix_node]
+                checkCudaErrors(
+                    cuda_rt.cudaGraphAddChildGraphNode(
+                        graph,
+                        evidence_dependencies,
+                        len(evidence_dependencies),
+                        cls._raw_graph(evidence),
                     )
                 )
 
@@ -331,6 +375,7 @@ class ConditionalCudaGraph:
                     ),
                     join,
                     suffix,
+                    evidence,
                 )
                 if child is not None
             )
@@ -347,6 +392,8 @@ class ConditionalCudaGraph:
                 ),
                 join_body_count=int(join is not None),
                 branch_count=2,
+                overlap_join=overlap_join,
+                evidence_body_count=int(evidence is not None),
             )
         except Exception:
             if executable is not None:
@@ -764,6 +811,13 @@ def capture_llama_flexidepth_conditional_graph(
         defer_project_kv
         and full_graph_defer_project_kv_diagnostic_stage() == "full"
     )
+    commit_overlap = full_graph_commit_overlap_enabled()
+    if commit_overlap and not repair_semantic_kv:
+        # Startup validation already refuses this pairing; a capture-time
+        # recheck keeps the invariant local to the topology it protects.
+        raise RuntimeError(
+            "commit overlap requires the full deferred repair commit"
+        )
     repair_groups = (
         _group_stage_indices(len(routed_layers), 1)
         if defer_project_kv
@@ -926,16 +980,17 @@ def capture_llama_flexidepth_conditional_graph(
             if layer_id < next_layer:
                 raise RuntimeError("FlexiDepth routed layer order is not increasing")
             next_buffer = 1 - current_buffer
-            # LIFETIME: this predicate comes from the DEFAULT allocator and
-            # its address is baked into the captured route-prefix copy_
-            # (writer, every replay) and the setter graph (reader). Nothing
-            # used to retain it, so every predicate was freed when this
-            # function returned while the captured kernels kept writing
-            # int32 0/1 through the stale pointer on every replay — any
-            # later allocation reusing the freed block gets scribbled
-            # (found 2026-08-27 as a Warp Misaligned Address when a
-            # dev-branch buffer became the first correctness-critical
-            # victim). Retained below with the other capture-referenced
+            # LIFETIME (2026-08-27 root cause): this predicate comes from the
+            # DEFAULT allocator and its address is baked into the captured
+            # route-prefix copy_ (writer) and the setter graph (reader).
+            # Nothing on the composed object used to hold it, so every
+            # predicate was FREED when this function returned while the
+            # captured kernels kept writing int32 0/1 through the stale
+            # pointer on every replay — the freed block's reuser gets
+            # scribbled (the batched-commit plan table was the first
+            # correctness-critical victim: a 4-byte value-1 write over a
+            # frozen pointer → Warp Misaligned Address in the N=1 drain
+            # bucket). Retained below with the other capture-referenced
             # default-allocator tensors.
             predicate = torch.empty((), dtype=torch.int32, device=device)
             stage_predicates.append(predicate)
@@ -1119,28 +1174,114 @@ def capture_llama_flexidepth_conditional_graph(
             )
 
         repair_commit = None
+        commit_graph_pool = None
+        batched_commit = (
+            full_graph_batched_commit_enabled() if repair_semantic_kv else False
+        )
+        batched_plan = None
         if repair_semantic_kv:
+            commit_overlap_counters = (
+                llama._fd_full_graph_commit_overlap_counters
+                if commit_overlap
+                else None
+            )
+            if commit_overlap and commit_overlap_counters is None:
+                raise RuntimeError(
+                    "commit overlap requires its replay counter buffer"
+                )
 
-            def repair_commit_fn() -> None:
-                for stage_index, layer_id in enumerate(routed_layers):
-                    fd_commit_project_kv_repair_full_graph(
-                        llama.layers[layer_id],
-                        forward_batch,
-                        prepared_routes[stage_index],
-                        repair_k_buffers[stage_index],
-                        repair_v_buffers[stage_index],
-                        repair_project_masks[stage_index],
+            if batched_commit:
+                # HBM proposal 2 (D-299+1): one cross-layer kernel launch
+                # per step over the layer-contiguous repair/mask backings
+                # replaces the per-layer masked pool writes. The plan
+                # builder fail-closes on any layout it cannot prove
+                # equivalent; the per-layer readiness recording (cheap
+                # copy_) is unchanged.
+                from sglang.srt.model_executor.forward_context import (
+                    get_attn_backend,
+                )
+                from sglang.srt.vpipe.cohort import (
+                    build_batched_commit_plan,
+                    run_batched_commit,
+                )
+
+                batched_plan = build_batched_commit_plan(
+                    routed_layers=routed_layers,
+                    llama=llama,
+                    kv_pool=get_attn_backend().token_to_kv_pool,
+                    repair_k_buffers=repair_k_buffers,
+                    repair_v_buffers=repair_v_buffers,
+                    mask_backing=repair_project_mask_backing,
+                    cache_locations=forward_batch.out_cache_loc,
+                    num_tokens=num_tokens,
+                )
+
+                def repair_commit_fn() -> None:
+                    run_batched_commit(batched_plan)
+                    device_tape = getattr(
+                        forward_batch, "fd_full_graph_device_route_tape", None
                     )
+                    if device_tape is None:
+                        raise RuntimeError(
+                            "batched K/V commit requires device-tape readiness"
+                        )
+                    for stage_index, layer_id in enumerate(routed_layers):
+                        prepared = prepared_routes[stage_index]
+                        if prepared.inline_kv_index is None:
+                            raise RuntimeError(
+                                "batched K/V commit requires device-tape "
+                                "readiness"
+                            )
+                        device_tape.record_inline_kv_ready(
+                            int(layer_id), index=prepared.inline_kv_index
+                        )
+                    if commit_overlap_counters is not None:
+                        commit_overlap_counters[0].add_(1)
 
+            else:
+
+                def repair_commit_fn() -> None:
+                    for stage_index, layer_id in enumerate(routed_layers):
+                        fd_commit_project_kv_repair_full_graph(
+                            llama.layers[layer_id],
+                            forward_batch,
+                            prepared_routes[stage_index],
+                            repair_k_buffers[stage_index],
+                            repair_v_buffers[stage_index],
+                            repair_project_masks[stage_index],
+                        )
+                    if commit_overlap_counters is not None:
+                        # commit_batches: one overlapped commit graph per
+                        # replay. >0 in the treated arm, =0 in the control —
+                        # the flag alone is never the treatment evidence.
+                        commit_overlap_counters[0].add_(1)
+
+            # Overlap replays the commit concurrently with the suffix, and
+            # graphs sharing one memory pool must never run concurrently
+            # (allocator reuse would alias the commit's temporaries into the
+            # suffix) — same rule the repair side bodies already follow.
+            if commit_overlap:
+                commit_graph_pool = torch.cuda.graph_pool_handle()
             repair_commit = capture_raw_graph(
                 repair_commit_fn,
                 stream=stream,
-                pool=pool,
+                pool=commit_graph_pool if commit_overlap else pool,
                 post_warmup_hook=post_warmup_hook,
             )
             child_graphs.append(repair_commit)
 
         output_holder: list[Any] = []
+
+        def run_finalize() -> None:
+            finalize_full_graph_batch(
+                forward_batch,
+                llama._fd_full_graph_route_counters,
+                llama._fd_full_graph_layer_route_counters,
+                llama._fd_full_graph_route_digest_counters,
+                llama._fd_full_graph_inline_kv_readiness_counters,
+                llama._fd_full_graph_phase_route_counters,
+                llama._fd_full_graph_low_row_counters,
+            )
 
         def suffix_fn() -> None:
             hidden_states = hidden_buffers[current_buffer]
@@ -1152,15 +1293,12 @@ def capture_llama_flexidepth_conditional_graph(
                     forward_batch,
                     residual,
                 )
-            finalize_full_graph_batch(
-                forward_batch,
-                llama._fd_full_graph_route_counters,
-                llama._fd_full_graph_layer_route_counters,
-                llama._fd_full_graph_route_digest_counters,
-                llama._fd_full_graph_inline_kv_readiness_counters,
-                llama._fd_full_graph_phase_route_counters,
-                llama._fd_full_graph_low_row_counters,
-            )
+            if not commit_overlap:
+                # The control keeps evidence accumulation inside the suffix
+                # exactly where it always ran. Under overlap it moves to the
+                # evidence body: it reads the readiness tape the CONCURRENT
+                # commit writes, so it may only run after both leaves join.
+                run_finalize()
             hidden_states, _ = llama.norm(hidden_states, residual)
             output_holder[:] = [
                 model.logits_processor(
@@ -1178,6 +1316,15 @@ def capture_llama_flexidepth_conditional_graph(
             post_warmup_hook=post_warmup_hook,
         )
         child_graphs.append(suffix)
+        evidence = None
+        if commit_overlap:
+            evidence = capture_raw_graph(
+                run_finalize,
+                stream=stream,
+                pool=pool,
+                post_warmup_hook=post_warmup_hook,
+            )
+            child_graphs.append(evidence)
         composed = ConditionalCudaGraph.compose_stages(
             stages=tuple(stages),
             helper=helper,
@@ -1186,6 +1333,8 @@ def capture_llama_flexidepth_conditional_graph(
             prefix=prefix,
             join=repair_commit,
             suffix=suffix,
+            overlap_join=commit_overlap,
+            evidence=evidence,
         )
         if body_execution_counts is not None:
             with torch.cuda.stream(stream):
@@ -1204,7 +1353,11 @@ def capture_llama_flexidepth_conditional_graph(
             ),
             repair_commit_graphs=int(repair_commit is not None),
             repair_group_count=len(repair_groups),
-            repair_graph_pools=repair_graph_pools,
+            repair_graph_pools=(
+                (*repair_graph_pools, commit_graph_pool)
+                if commit_graph_pool is not None
+                else repair_graph_pools
+            ),
             repair_capture_streams=repair_capture_streams,
             retained_repair_state=(
                 *repair_input_buffers,
@@ -1212,11 +1365,12 @@ def capture_llama_flexidepth_conditional_graph(
                 *repair_v_buffers,
                 *repair_project_masks,
                 *prepared_routes,
+                *((batched_plan,) if batched_plan is not None else ()),
                 # Every default-allocator tensor a captured kernel reads or
-                # writes must outlive the graphs (the predicate-lifetime
-                # root cause). hidden/residual buffers share the hazard
-                # class (self-masking in practice — cross-bucket reuse is
-                # serialized — but the defect is identical).
+                # writes must outlive the graphs (the predicate-lifetime root
+                # cause). hidden/residual buffers share the same hazard class
+                # (self-masking in practice — cross-bucket reuse is serialized
+                # — but the defect is identical).
                 *stage_predicates,
                 *hidden_buffers,
                 *residual_buffers,

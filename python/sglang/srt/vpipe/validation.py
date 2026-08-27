@@ -35,6 +35,8 @@ from sglang.srt.vpipe.common import (
 from sglang.srt.vpipe.config import (
     full_graph_compact_config,
     full_graph_compact_o_proj_config,
+    full_graph_batched_commit_enabled,
+    full_graph_commit_overlap_enabled,
     full_graph_defer_project_kv_enabled,
     full_graph_device_route_digest_enabled,
     full_graph_device_route_tape_enabled,
@@ -65,6 +67,8 @@ from sglang.srt.vpipe.env import (
     FD_CONDITIONAL_GRAPH_HELPER_ENV,
     FD_CONDITIONAL_MAX_ROWS_ENV,
     FD_CONDITIONAL_PRODUCTION_ALL_RUN_ENV,
+    FD_BATCHED_COMMIT_ENV,
+    FD_COMMIT_OVERLAP_ENV,
     FD_DEFER_PROJECT_KV_DIAGNOSTIC_STAGE_ENV,
     FD_DEFER_PROJECT_KV_ENV,
     FD_DEVICE_ROUTE_DIGEST_ENV,
@@ -317,6 +321,26 @@ def validate_full_graph_model_configuration(
     defer_project_kv_stage = (
         full_graph_defer_project_kv_diagnostic_stage(values)
     )
+    batched_commit = full_graph_batched_commit_enabled(values)
+    if batched_commit and not defer_project_kv:
+        raise ValueError(
+            f"{FD_BATCHED_COMMIT_ENV}=1 requires {FD_DEFER_PROJECT_KV_ENV}=1"
+        )
+    if batched_commit and defer_project_kv_stage != "full":
+        raise ValueError(
+            f"{FD_BATCHED_COMMIT_ENV}=1 requires the full repair commit; "
+            f"{FD_DEFER_PROJECT_KV_DIAGNOSTIC_STAGE_ENV} must be full"
+        )
+    commit_overlap = full_graph_commit_overlap_enabled(values)
+    if commit_overlap and not defer_project_kv:
+        raise ValueError(
+            f"{FD_COMMIT_OVERLAP_ENV}=1 requires {FD_DEFER_PROJECT_KV_ENV}=1"
+        )
+    if commit_overlap and defer_project_kv_stage != "full":
+        raise ValueError(
+            f"{FD_COMMIT_OVERLAP_ENV}=1 requires the full repair commit; "
+            f"{FD_DEFER_PROJECT_KV_DIAGNOSTIC_STAGE_ENV} must be full"
+        )
     if conditional_branch_counters and not conditional_graph:
         raise ValueError(
             f"{FD_CONDITIONAL_BRANCH_COUNTERS_ENV}=1 requires "
