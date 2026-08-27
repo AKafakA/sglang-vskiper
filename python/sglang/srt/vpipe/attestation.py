@@ -86,6 +86,7 @@ from sglang.srt.vpipe.mlp_compact import (
 )
 from sglang.srt.vpipe.common import (
     full_graph_compact_q_proj_enabled,
+    full_graph_compact_routed_qkv_enabled,
 )
 from sglang.srt.vpipe.coverage import (
     coverage_dense_armed,
@@ -596,6 +597,7 @@ def model_runner_runtime_attestation(
     )
     commit_overlap = full_graph_commit_overlap_enabled()
     batched_commit = full_graph_batched_commit_enabled()
+    compact_routed_qkv = full_graph_compact_routed_qkv_enabled()
     decode_graph_runner = getattr(model_runner, "decode_cuda_graph_runner", None)
     decode_graph_backend = getattr(decode_graph_runner, "backend", None)
     conditional_attestation = getattr(decode_graph_backend, "attestation", None)
@@ -777,6 +779,13 @@ def model_runner_runtime_attestation(
                 "per_routed_stage_graph_static_full_shape"
                 if deferred_project_kv
                 else "not_materialized_until_grouped_repair"
+            ),
+            "repair_projection": (
+                "mapped_project_rows_kv_columns_only_above_min_rows"
+                if deferred_project_kv and compact_routed_qkv
+                else "all_rows_released_shape"
+                if deferred_project_kv
+                else "inline"
             ),
             **(
                 {

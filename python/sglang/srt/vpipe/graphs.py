@@ -35,6 +35,14 @@ from sglang.srt.vpipe.attestation import (
     full_graph_conditional_production_all_run_enabled,
     full_graph_defer_project_kv_diagnostic_stage,
 )
+from sglang.srt.vpipe.common import (
+    _fixed_capacity_mapped_linear,
+    full_graph_compact_routed_qkv_enabled,
+    full_graph_contiguous_routed_qkv_config,
+)
+from sglang.srt.vpipe.mlp_compact import (
+    _compact_capacity,
+)
 from sglang.srt.vpipe.routing import (
     FullGraphPreparedLayerRoute,
 )
@@ -471,8 +479,10 @@ def fd_execute_project_kv_repair_full_graph(
     prepared: "FullGraphPreparedLayerRoute",
     *,
     repair_hidden_states: Optional[torch.Tensor] = None,
+    repair_kv_output: Optional[torch.Tensor] = None,
     repair_k_output: Optional[torch.Tensor] = None,
     repair_v_output: Optional[torch.Tensor] = None,
+    repair_q_scratch: Optional[torch.Tensor] = None,
 ) -> None:
     """Compute PROJECT-row own-layer K/V in graph-owned side work.
 
@@ -501,10 +511,112 @@ def fd_execute_project_kv_repair_full_graph(
             "deferred PROJECT K/V repair requires aligned valid rows"
         )
     if diagnostic_stage != "readiness_only":
-        qkv, _ = attention.qkv_proj(hidden_states)
-        q, k, v = qkv.split(
-            [attention.q_size, attention.kv_size, attention.kv_size], dim=-1
-        )
+        # Row-threshold the mapped lane (the K-cells finding, 2026-08-27):
+        # at tiny repair-row counts the pack/mapped/scatter launches cost
+        # more wall-clock than the saved GEMM width, while the kernel-time
+        # win lives at large-row (prefill-heavy) passes. Below the
+        # routed-QKV min-rows the released-shape path runs instead — the
+        # same min-rows philosophy the contiguous lane already applies.
+        # Static per capture bucket (shape is capture-frozen).
+        compact_active = full_graph_compact_routed_qkv_enabled()
+        if compact_active:
+            _, _threshold_min_rows, _, _ = (
+                full_graph_contiguous_routed_qkv_config()
+            )
+            if int(hidden_states.shape[0]) < _threshold_min_rows:
+                compact_active = False
+        if compact_active:
+            # HBM-1a: project ONLY the mapped PROJECT rows, K/V columns
+            # only (the Q projection is skipped entirely — 4096 of 6144
+            # output width on Llama). Pre-drop body verbatim, plus the
+            # qk-norm guard: the fused mechanism postdates the pre-drop
+            # and the Q scratch cannot feed per-head norms — qwen3
+            # compact is a declared follow-up.
+            if diagnostic_stage != "full":
+                raise RuntimeError(
+                    "compact routed K/V repair requires full semantic mode"
+                )
+            if attention.fd_qk_head_norms is not None:
+                raise RuntimeError(
+                    "compact routed K/V repair does not support per-head "
+                    "q/k norms yet (qwen3 compact is a follow-up)"
+                )
+            if prepared.project_row_map is None or prepared.route_counts is None:
+                raise RuntimeError(
+                    "compact routed K/V repair requires PROJECT row metadata"
+                )
+            expected_shape = (
+                int(hidden_states.shape[0]),
+                2 * int(attention.kv_size),
+            )
+            if repair_kv_output is None or repair_kv_output.shape != expected_shape:
+                raise RuntimeError(
+                    "compact routed K/V repair requires a stable combined output"
+                )
+            radix_attention = attention.attn
+            expected_q_shape = (
+                int(hidden_states.shape[0]),
+                int(radix_attention.qk_head_dim),
+            )
+            if repair_q_scratch is None or repair_q_scratch.shape != expected_q_shape:
+                raise RuntimeError(
+                    "compact routed K/V repair requires stable rotary Q scratch"
+                )
+            qkv_weight = attention.qkv_proj.weight
+            expected_width = attention.q_size + 2 * attention.kv_size
+            if (
+                getattr(attention.qkv_proj, "bias", None) is not None
+                or qkv_weight.ndim != 2
+                or int(qkv_weight.shape[0]) != expected_width
+            ):
+                raise RuntimeError(
+                    "compact routed K/V repair requires compatible bias-free weights"
+                )
+            (
+                contiguous_routed_qkv,
+                routed_qkv_min_rows,
+                routed_qkv_multiple,
+                routed_qkv_capacities,
+            ) = full_graph_contiguous_routed_qkv_config()
+            layer_id = int(getattr(attention.attn, "layer_id", prepared.layer_id))
+            capacity_fractions = routed_qkv_capacities.get(layer_id)
+            if contiguous_routed_qkv and hidden_states.shape[0] >= routed_qkv_min_rows:
+                if capacity_fractions is None:
+                    raise RuntimeError(
+                        "contiguous routed K/V is missing the active layer"
+                    )
+                project_capacity = _compact_capacity(
+                    int(hidden_states.shape[0]),
+                    capacity_fractions[1],
+                    routed_qkv_multiple,
+                )
+                _fixed_capacity_mapped_linear(
+                    hidden_states,
+                    qkv_weight[attention.q_size : expected_width],
+                    prepared.project_row_map,
+                    prepared.route_counts[1:2],
+                    repair_kv_output,
+                    capacity=project_capacity,
+                )
+            else:
+                from sglang.srt.vpipe.cohort import mapped_linear
+
+                mapped_linear(
+                    hidden_states,
+                    qkv_weight[attention.q_size : expected_width],
+                    prepared.project_row_map,
+                    prepared.route_counts[1:2],
+                    repair_kv_output,
+                )
+            k, v = repair_kv_output.split(
+                [attention.kv_size, attention.kv_size], dim=-1
+            )
+            q = repair_q_scratch
+        else:
+            qkv, _ = attention.qkv_proj(hidden_states)
+            q, k, v = qkv.split(
+                [attention.q_size, attention.kv_size, attention.kv_size], dim=-1
+            )
         if diagnostic_stage != "qkv_only":
             # Replay the family's declared per-head q/k-norm (None on Llama)
             # so repaired K is exactly what the layer's own attention writes.
@@ -848,8 +960,31 @@ def capture_llama_flexidepth_conditional_graph(
         if repair_semantic_kv
         else 0
     )
+    # HBM-1a: with compact routed QKV the mapped projection writes one
+    # combined [N, 2*kv_size] buffer per layer; k/v become split views of
+    # it (same layer-contiguous backing discipline, and the batched-commit
+    # plan builder's flat-row check accepts the 2*kv_size row stride).
+    compact_routed_qkv = (
+        full_graph_compact_routed_qkv_enabled() if repair_semantic_kv else False
+    )
+    repair_kv_buffers = (
+        _layer_contiguous_views(
+            len(routed_layers), num_tokens, 2 * repair_kv_size, dtype, device
+        )
+        if repair_semantic_kv and compact_routed_qkv
+        else []
+    )
     repair_k_buffers = (
         [
+            buffer[:, :repair_kv_size].view(
+                num_tokens,
+                repair_radix_attention.tp_k_head_num,
+                repair_radix_attention.qk_head_dim,
+            )
+            for buffer in repair_kv_buffers
+        ]
+        if repair_semantic_kv and compact_routed_qkv
+        else [
             view.view(
                 num_tokens,
                 repair_radix_attention.tp_k_head_num,
@@ -869,6 +1004,15 @@ def capture_llama_flexidepth_conditional_graph(
     )
     repair_v_buffers = (
         [
+            buffer[:, repair_kv_size:].view(
+                num_tokens,
+                repair_radix_attention.tp_v_head_num,
+                repair_radix_attention.v_head_dim,
+            )
+            for buffer in repair_kv_buffers
+        ]
+        if repair_semantic_kv and compact_routed_qkv
+        else [
             view.view(
                 num_tokens,
                 repair_radix_attention.tp_v_head_num,
@@ -884,6 +1028,18 @@ def capture_llama_flexidepth_conditional_graph(
             )
         ]
         if repair_semantic_kv
+        else []
+    )
+    repair_q_scratch = (
+        [
+            torch.zeros(
+                (num_tokens, repair_radix_attention.qk_head_dim),
+                dtype=dtype,
+                device=device,
+            )
+            for _ in repair_groups
+        ]
+        if repair_semantic_kv and compact_routed_qkv
         else []
     )
     # Layer-contiguous [L, N] mask backing with per-layer views.
@@ -1149,6 +1305,11 @@ def capture_llama_flexidepth_conditional_graph(
                         repair_hidden_states=repair_input_buffers[
                             repair_stage_index
                         ],
+                        repair_kv_output=(
+                            repair_kv_buffers[repair_stage_index]
+                            if compact_routed_qkv
+                            else None
+                        ),
                         repair_k_output=(
                             repair_k_buffers[repair_stage_index]
                             if repair_semantic_kv
@@ -1157,6 +1318,11 @@ def capture_llama_flexidepth_conditional_graph(
                         repair_v_output=(
                             repair_v_buffers[repair_stage_index]
                             if repair_semantic_kv
+                            else None
+                        ),
+                        repair_q_scratch=(
+                            repair_q_scratch[group_index]
+                            if repair_q_scratch
                             else None
                         ),
                     )
@@ -1349,7 +1515,9 @@ def capture_llama_flexidepth_conditional_graph(
             run_body=run_body_name,
             repair_input_buffers=len(repair_input_buffers),
             repair_kv_output_buffers=(
-                len(repair_k_buffers) + len(repair_v_buffers)
+                len(repair_kv_buffers)
+                if compact_routed_qkv
+                else len(repair_k_buffers) + len(repair_v_buffers)
             ),
             repair_commit_graphs=int(repair_commit is not None),
             repair_group_count=len(repair_groups),
@@ -1361,8 +1529,10 @@ def capture_llama_flexidepth_conditional_graph(
             repair_capture_streams=repair_capture_streams,
             retained_repair_state=(
                 *repair_input_buffers,
+                *repair_kv_buffers,
                 *repair_k_buffers,
                 *repair_v_buffers,
+                *repair_q_scratch,
                 *repair_project_masks,
                 *prepared_routes,
                 *((batched_plan,) if batched_plan is not None else ()),
