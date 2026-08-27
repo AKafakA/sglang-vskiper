@@ -912,11 +912,24 @@ def capture_llama_flexidepth_conditional_graph(
         current_buffer = 0
         next_layer = routed_layers[0]
 
+        stage_predicates: list[torch.Tensor] = []
         for stage_index, layer_id in enumerate(routed_layers):
             if layer_id < next_layer:
                 raise RuntimeError("FlexiDepth routed layer order is not increasing")
             next_buffer = 1 - current_buffer
+            # LIFETIME: this predicate comes from the DEFAULT allocator and
+            # its address is baked into the captured route-prefix copy_
+            # (writer, every replay) and the setter graph (reader). Nothing
+            # used to retain it, so every predicate was freed when this
+            # function returned while the captured kernels kept writing
+            # int32 0/1 through the stale pointer on every replay — any
+            # later allocation reusing the freed block gets scribbled
+            # (found 2026-08-27 as a Warp Misaligned Address when a
+            # dev-branch buffer became the first correctness-critical
+            # victim). Retained below with the other capture-referenced
+            # default-allocator tensors.
             predicate = torch.empty((), dtype=torch.int32, device=device)
+            stage_predicates.append(predicate)
             prepared_holder: list[Any] = []
 
             def route_prefix_fn(
@@ -1190,6 +1203,14 @@ def capture_llama_flexidepth_conditional_graph(
                 *repair_v_buffers,
                 *repair_project_masks,
                 *prepared_routes,
+                # Every default-allocator tensor a captured kernel reads or
+                # writes must outlive the graphs (the predicate-lifetime
+                # root cause). hidden/residual buffers share the hazard
+                # class (self-masking in practice — cross-bucket reuse is
+                # serialized — but the defect is identical).
+                *stage_predicates,
+                *hidden_buffers,
+                *residual_buffers,
             ),
         )
     except Exception:
