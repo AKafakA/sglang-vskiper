@@ -18,6 +18,8 @@ from sglang.srt.vpipe.attestation import (
     full_graph_defer_project_kv_diagnostic_stage,
 )
 from sglang.srt.vpipe.config import (
+    full_graph_batched_commit_enabled,
+    full_graph_commit_overlap_enabled,
     full_graph_defer_project_kv_enabled,
 )
 from sglang.srt.vpipe.env import (
@@ -368,6 +370,8 @@ class FlexiDepthConditionalCudaGraphBackend(FullCudaGraphBackend):
             for shape_key, capture in self._captures.items()
         }
         deferred_project_kv = full_graph_defer_project_kv_enabled()
+        batched_commit = full_graph_batched_commit_enabled()
+        commit_overlap = full_graph_commit_overlap_enabled()
         repair_diagnostic_stage = (
             full_graph_defer_project_kv_diagnostic_stage()
         )
@@ -451,12 +455,20 @@ class FlexiDepthConditionalCudaGraphBackend(FullCudaGraphBackend):
                 else None
             ),
             "repair_cache_write": (
-                "joined_standard_writer_non_project_to_padding_slot_0"
+                "batched_kernel_mask_skips_non_project_rows"
+                if deferred_project_kv
+                and repair_diagnostic_stage == "full"
+                and batched_commit
+                else "joined_standard_writer_non_project_to_padding_slot_0"
                 if deferred_project_kv and repair_diagnostic_stage == "full"
                 else None
             ),
             "repair_topology": (
-                "route_prefix_fork_side_compute_join_cache_commit_suffix"
+                "route_prefix_fork_side_compute_overlap_commit_suffix_evidence_join"
+                if deferred_project_kv
+                and repair_diagnostic_stage == "full"
+                and commit_overlap
+                else "route_prefix_fork_side_compute_join_cache_commit_suffix"
                 if deferred_project_kv and repair_diagnostic_stage == "full"
                 else "route_prefix_fork_diagnostic_side_compute_suffix_join"
                 if deferred_project_kv
@@ -468,7 +480,11 @@ class FlexiDepthConditionalCudaGraphBackend(FullCudaGraphBackend):
                 else "full_batch_qkv_with_complete_cache_write"
             ),
             "repair_barrier": (
-                "foreground_side_join_before_cache_commit_and_logits"
+                "graph_end_dependency_on_commit_and_suffix_leaves"
+                if deferred_project_kv
+                and repair_diagnostic_stage == "full"
+                and commit_overlap
+                else "foreground_side_join_before_cache_commit_and_logits"
                 if deferred_project_kv and repair_diagnostic_stage == "full"
                 else "suffix_joins_diagnostic_side_compute"
                 if deferred_project_kv

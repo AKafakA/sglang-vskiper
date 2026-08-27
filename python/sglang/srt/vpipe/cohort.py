@@ -1225,7 +1225,15 @@ def build_batched_commit_plan(
         total_slots=int(kv_pool.size) + int(kv_pool.page_size),
     )
 def run_batched_commit(plan: BatchedCommitPlan) -> None:
-    """Launch the single cross-layer commit kernel (capture-safe)."""
+    """Launch the single cross-layer commit kernel (capture-safe).
+
+    DECLARED delta vs the per-layer writer (review finding, 2026-08-28):
+    the per-layer path maps non-PROJECT rows to the reserved padding
+    slot 0 and overwrites it; this kernel SKIPS masked rows instead, so
+    padding slot 0 keeps stale bytes. Slot 0 is dead storage by
+    contract (never read as cache), so live-slot semantics are
+    identical — but pool BYTE equality at slot 0 does not hold.
+    """
 
     # Review finding 1: the replaced set_kv_buffer path recorded an
     # async OOB probe on the replay-varying locations; keep that
