@@ -12,7 +12,33 @@ from typing import Any
 
 from build_labeled_workload import validate_frozen_output_policy
 from labeled_workload import read_jsonl, write_jsonl
-from sglang.benchmark.request_identity import generation_policy_sha256
+from sglang.benchmark.request_identity import (
+    SGLANG_NATIVE_BACKENDS,
+    generation_policy_sha256,
+    split_sglang_native_request_body,
+)
+
+
+def _client_effective_body(body: dict[str, Any], backend: str) -> dict[str, Any]:
+    """Reproduce the benchmark client's effective generation body.
+
+    The client hashes the body it actually SENDS (native sampling split +
+    defaults + stream), not the raw workload body — mirror of
+    sglang/benchmark/serving.py's construction under the runner's fixed
+    invocation (--disable-ignore-eos on, streaming on).
+    """
+    if backend in SGLANG_NATIVE_BACKENDS:
+        native_body, native_sampling = split_sglang_native_request_body(dict(body))
+        native_sampling.setdefault("temperature", 0.0)
+        native_sampling.setdefault("ignore_eos", False)
+        native_body["sampling_params"] = native_sampling
+        native_body.setdefault("stream", True)
+        return native_body
+    effective = dict(body)
+    effective.setdefault("temperature", 0.0)
+    effective.setdefault("ignore_eos", False)
+    effective.setdefault("stream", True)
+    return effective
 from validate_qps_artifact import read_last_record
 
 
@@ -134,8 +160,8 @@ def _production_lengths(
     artifacts: list[Path],
     backend: str,
 ) -> tuple[dict[str, list[int]], dict[str, list[str]], set[str]]:
-    if len(artifacts) != 3:
-        raise ValueError("equal-work construction requires exactly three repetitions")
+    if not artifacts:
+        raise ValueError("equal-work construction requires production artifacts")
     request_by_id = {str(row["request_id"]): request for request, row in zip(requests, metadata)}
     expected_ids = [str(row["request_id"]) for row in metadata]
     decode_ids = {
@@ -174,7 +200,9 @@ def _production_lengths(
             expected_policy_hash = generation_policy_sha256(
                 backend=backend,
                 requested_output_len=int(request["output_len"]),
-                request_body=dict(request.get("extra_request_body") or {}),
+                request_body=_client_effective_body(
+                    dict(request.get("extra_request_body") or {}), backend
+                ),
             )
             if arrays["generation_policy_sha256s"][index] != expected_policy_hash:
                 raise ValueError(
@@ -254,7 +282,7 @@ def build_equal_work_rows(
         "policy": EQUAL_WORK_POLICY,
         "backend": backend,
         "frequency_penalty": penalty,
-        "production_repetitions": 3,
+        "production_repetitions": len(production_artifacts),
         "production_artifacts": source_artifacts,
         "rows": manifest_rows,
     }
@@ -302,7 +330,9 @@ def build_equal_work_rows(
                     manifest_row["finish_reasons"]
                 ),
                 "equal_work_production_max_output_len": selected,
-                "equal_work_production_repetitions": 3,
+                "equal_work_production_repetitions": len(
+                    manifest_row["raw_output_lengths"]
+                ),
                 "equal_work_production_context_hit": bool(
                     manifest_row["production_context_hit"]
                 ),

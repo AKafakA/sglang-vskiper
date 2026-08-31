@@ -196,7 +196,7 @@ def validate_frozen_output_policy(
             manifest_sha256 = str(row.get("equal_work_manifest_sha256") or "")
             if (
                 not isinstance(observations, list)
-                or len(observations) != 3
+                or not observations
                 or any(not isinstance(value, int) or value <= 0 for value in observations)
             ):
                 raise ValueError(
@@ -204,15 +204,15 @@ def validate_frozen_output_policy(
                 )
             if (
                 not isinstance(finish_reasons, list)
-                or len(finish_reasons) != 3
+                or len(finish_reasons) != len(observations)
                 or any(not isinstance(value, str) or not value for value in finish_reasons)
             ):
                 raise ValueError(
                     f"row {index} has invalid equal-work finish reasons"
                 )
-            if repetitions != 3 or selected != max(observations):
+            if repetitions != len(observations) or selected != max(observations):
                 raise ValueError(
-                    f"row {index} does not use the three-repetition production maximum"
+                    f"row {index} does not use the declared production-repetition maximum"
                 )
             if requested != selected or prompt_len + requested > context_length:
                 raise ValueError(f"row {index} has invalid equal-work capacity")
