@@ -199,4 +199,10 @@ def regime_switch_zero_counters() -> dict[str, dict[str, int]]:
     return {
         "prefill": {PREFILL_BODY_DENSE: 0, PREFILL_BODY_FD: 0},
         "decode": {DECODE_BODY_LOW: 0, DECODE_BODY_HIGH: 0},
+        # Batch-composition telemetry, counted for every prefill-phase pass
+        # regardless of regime-switch config. The mixed split derives from
+        # the trailing-run estimator (_est suffix): it over-counts decode
+        # rows only when the final prefill chunk itself has length 1.
+        "mixed": {"passes": 0, "decode_rows_est": 0, "prefill_tokens_est": 0},
+        "volume": {"prefill_pass_tokens": 0},
     }
