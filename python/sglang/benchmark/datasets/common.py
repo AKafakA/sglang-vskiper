@@ -28,6 +28,7 @@ class DatasetRow:
     image_data: Optional[List[str]] = None
     timestamp: Optional[float] = None
     routing_key: Optional[str] = None
+    request_id: Optional[str] = None
     extra_request_body: Optional[Dict[str, Any]] = None  # Per-request API parameters
 
     def __post_init__(self):
