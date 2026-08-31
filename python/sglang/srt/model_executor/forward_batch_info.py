@@ -458,6 +458,16 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
     # (c3): site-B dedup marker — the dense-body positive witness increments
     # exactly once per stamped pass (first routed layer), F2/F18.
     vp_fd_coverage_counted: bool = False
+    # [P4] Regime switch, prefill leg at graph dispatch: the prefill cuda-graph
+    # runner captures BOTH body variants per num-tokens bucket and selects one
+    # at replay by prefill_regime_decision on the RAW (pre-padding) pass shape.
+    # vp_fd_prefill_dense mirrors vp_fd_decode_dense (default False = routed
+    # body); vp_fd_prefill_variant_pinned marks a batch whose stamp was set by
+    # the runner (capture dummies + replay static batches) so
+    # stamp_prefill_regime leaves it untouched — the padded static shape must
+    # never re-decide the variant the raw shape chose.
+    vp_fd_prefill_dense: bool = False
+    vp_fd_prefill_variant_pinned: bool = False
     # Pin all layers' attention to the production decode backend for this pass
     # (and suppress the routed-backend plan, F4). Previously a dynamically-set
     # attribute (full-graph layer execution + W1 capture dummies); declared with
