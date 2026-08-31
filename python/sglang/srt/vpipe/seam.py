@@ -445,6 +445,12 @@ def attach_vp_model(model, config):
 
 def stamp_prefill_regime(model, forward_batch):
     """Forward-side seam: the W1 prefill regime-switch leg (per-pass stamp)."""
+    # [P4] A variant-pinned batch (prefill runner capture dummy, or the replay
+    # static batch whose variant the runner already chose from the RAW shape)
+    # keeps its stamp: re-deciding here on the PADDED shape could flip the
+    # decision at bucket boundaries. Pinned passes are counted by the runner.
+    if forward_batch.vp_fd_prefill_variant_pinned:
+        return
     # [W1] Unified regime switch — prefill leg (I5). Compute the per-pass
     # dense/FD prefill decision ONCE, before any FlexiDepth phase gate reads
     # it, and stamp it on forward_batch. When the switch is off (config

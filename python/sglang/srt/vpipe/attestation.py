@@ -260,6 +260,18 @@ def scheduler_runtime_attestation(scheduler: Any) -> dict[str, Any]:
         decode_counts = decode_regime_counters()
         if decode_counts is not None:
             regime_counters["decode"] = decode_counts
+    # [P4] The prefill leg dispatches at the prefill cuda-graph runner (the
+    # model-side stamp only executes on eager passes), so overlay the runner's
+    # replay-level per-body counts additively onto the stamp counts.
+    prefill_graph_runner = getattr(model_runner, "prefill_cuda_graph_runner", None)
+    prefill_variant_counters = getattr(
+        prefill_graph_runner, "vp_regime_switch_prefill_counters", None
+    )
+    if regime_counters is not None and callable(prefill_variant_counters):
+        prefill_counts = prefill_variant_counters()
+        if prefill_counts is not None:
+            for body, count in prefill_counts.items():
+                regime_counters["prefill"][body] += count
 
     result = {
         "schema_version": 1,

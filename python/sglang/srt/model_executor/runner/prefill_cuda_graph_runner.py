@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import os
 import warnings
 from typing import TYPE_CHECKING, Dict, Optional, Union
 
@@ -61,6 +62,18 @@ from sglang.srt.model_executor.runner.base_cuda_graph_runner import (
     freeze_gc,
 )
 from sglang.srt.model_executor.runner.shape_key import ShapeKey
+from sglang.srt.vpipe.common import (
+    flexidepth_active_phases,
+    flexidepth_execution_mode,
+    regime_switch_config,
+)
+from sglang.srt.vpipe.env import FD_EXECUTION_FULL_GRAPH
+from sglang.srt.vpipe.regime import (
+    PREFILL_BODY_DENSE,
+    PREFILL_BODY_FD,
+    prefill_regime_decision,
+)
+from sglang.srt.vpipe.seam import _vp_regime_prefill_mixed_running_bs
 from sglang.srt.model_executor.runner_backend.breakable_cuda_graph_backend import (
     BreakableCudaGraphBackend,
 )
@@ -173,6 +186,28 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
             max(self.capture_num_tokens) if self.capture_num_tokens else 8192
         )
         self.max_bs = model_runner.req_to_token_pool.size
+
+        # [P4] W1 prefill regime decision at graph dispatch: when the regime
+        # switch prefill leg is on for an FD full-graph prefill deployment,
+        # capture BOTH body variants per bucket (dense/base-Llama and routed)
+        # and select per pass at replay from the RAW shape — the model-side
+        # stamp cannot act on replayed passes (it executes only at capture).
+        _regime_cfg = regime_switch_config()
+        self._vp_prefill_variant_cfg = (
+            _regime_cfg
+            if _regime_cfg is not None
+            and _regime_cfg.prefill.enabled
+            and flexidepth_execution_mode() == FD_EXECUTION_FULL_GRAPH
+            and "prefill" in flexidepth_active_phases()
+            and os.environ.get("SGLANG_FD_WEIGHTS", "")
+            else None
+        )
+        # Replay-level per-body pass counts; surfaced into the attestation's
+        # regime_switch.counters.prefill (runtime evidence, identity-stripped).
+        self._vp_prefill_variant_counts = {
+            PREFILL_BODY_DENSE: 0,
+            PREFILL_BODY_FD: 0,
+        }
 
         self.capture_forward_mode = ForwardMode.EXTEND
         self.capture_hidden_mode = CaptureHiddenMode.NULL
@@ -538,6 +573,14 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
             static_forward_batch=static_forward_batch,
         )
 
+    def vp_regime_switch_prefill_counters(self) -> Optional[dict]:
+        """Replay-level per-body prefill pass counts (None when the variant
+        machinery is off). The model-side stamp counters only ever see eager
+        passes; these count where dispatch actually happens."""
+        if self._vp_prefill_variant_cfg is None:
+            return None
+        return dict(self._vp_prefill_variant_counts)
+
     def can_run_graph(self, forward_batch: ForwardBatch) -> bool:
         if forward_batch.input_embeds is not None:
             return False
@@ -788,16 +831,34 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
             post_warmup_hook = None
         else:
             post_warmup_hook = getattr(attn_backend, "on_after_cuda_graph_warmup", None)
-        self.backend.capture_one(
-            ShapeKey(size=num_tokens),
-            run_once,
-            dummies=(
-                forward_batch
-                if isinstance(self.backend, BreakableCudaGraphBackend)
-                else None
-            ),
-            post_warmup_hook=post_warmup_hook,
-        )
+        if self._vp_prefill_variant_cfg is None:
+            variants = (None,)
+        else:
+            # [P4] Dual-variant capture needs the BCG ShapeKey-addressed
+            # replay path; the TC_PIECEWISE backend replays by size only.
+            if not isinstance(self.backend, BreakableCudaGraphBackend):
+                raise ValueError(
+                    "regime-switch prefill leg with CUDA graphs requires the "
+                    "BCG prefill backend (ShapeKey variants); the TC_PIECEWISE "
+                    "backend cannot address per-variant graphs"
+                )
+            variants = (PREFILL_BODY_FD, PREFILL_BODY_DENSE)
+        for variant in variants:
+            if variant is not None:
+                # Pin the traced body: the stamp seam leaves pinned batches
+                # untouched, so the dummy pass traces exactly this variant.
+                forward_batch.vp_fd_prefill_variant_pinned = True
+                forward_batch.vp_fd_prefill_dense = variant == PREFILL_BODY_DENSE
+            self.backend.capture_one(
+                ShapeKey(size=num_tokens, variant_label=variant),
+                run_once,
+                dummies=(
+                    forward_batch
+                    if isinstance(self.backend, BreakableCudaGraphBackend)
+                    else None
+                ),
+                post_warmup_hook=post_warmup_hook,
+            )
 
     def load_batch(self, forward_batch: ForwardBatch, **kwargs) -> ForwardBatch:
         """Pad, populate static buffers, and build the static_forward_batch
@@ -969,10 +1030,41 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
     def execute(
         self, forward_batch: ForwardBatch, **kwargs
     ) -> Union[LogitsProcessorOutput, PPProxyTensors, EmbeddingPoolerOutput]:
+        # [P4] W1 prefill regime decision at dispatch, computed on the RAW
+        # (pre-padding) shape — the padded bucket size must never re-decide.
+        variant = None
+        if self._vp_prefill_variant_cfg is not None:
+            cfg = self._vp_prefill_variant_cfg
+            is_mixed = forward_batch.forward_mode.is_mixed()
+            if is_mixed and not cfg.prefill.include_mixed:
+                # Mixed switching disabled: FD body unchanged (W1 contract).
+                variant = PREFILL_BODY_FD
+            else:
+                running_bs = (
+                    _vp_regime_prefill_mixed_running_bs(forward_batch)
+                    if is_mixed
+                    else 0
+                )
+                variant = prefill_regime_decision(
+                    len(forward_batch.input_ids),
+                    forward_batch.batch_size,
+                    is_mixed,
+                    running_bs,
+                    cfg,
+                )
+            self._vp_prefill_variant_counts[variant] += 1
         with self.backend.replay_session():
             static_forward_batch = self.load_batch(forward_batch, **kwargs)
             static_num_tokens = len(static_forward_batch.input_ids)
             raw_num_tokens = self.raw_num_tokens
+            if variant is not None:
+                # Pin the chosen variant on the static batch: the eager outer
+                # forward's stamp seam honors the pin, and the phase gate then
+                # dispatches the SAME body the replayed inner graph runs.
+                static_forward_batch.vp_fd_prefill_variant_pinned = True
+                static_forward_batch.vp_fd_prefill_dense = (
+                    variant == PREFILL_BODY_DENSE
+                )
 
             if self.layer_model is not None:
                 # BCG path. The captured graph is a bs=1 replay of
@@ -982,7 +1074,9 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
                 # model.forward eagerly with the live multi-req
                 # static_forward_batch. The outer's logits_processor /
                 # pooler then runs on top with live multi-req metadata.
-                shape_key = ShapeKey(size=self._static_num_tokens)
+                shape_key = ShapeKey(
+                    size=self._static_num_tokens, variant_label=variant
+                )
                 static_n = self._static_num_tokens
 
                 ie_idx = self._input_embeds_arg_idx
