@@ -42,8 +42,14 @@ from transformers import AutoTokenizer, PreTrainedTokenizerBase
 from sglang.benchmark.datasets import DatasetRow, get_dataset
 from sglang.benchmark.datasets.mooncake import get_mooncake_request_over_time
 from sglang.benchmark.request_identity import (
-    SGLANG_OPENAI_BACKENDS,
+    SGLANG_IDENTITY_BACKENDS,
+    SGLANG_NATIVE_BACKENDS,
     attach_stable_sglang_rid,
+    canonical_json_sha256,
+    generation_policy_sha256,
+    reconcile_streamed_output_ids,
+    reconcile_transport_request_id,
+    split_sglang_native_request_body,
 )
 from sglang.benchmark.utils import (
     get_tokenizer,
@@ -55,6 +61,7 @@ from sglang.srt.disaggregation.utils import FAKE_BOOTSTRAP_HOST
 from sglang.srt.utils.network import resolve_base_url, resolve_host_port
 
 _ROUTING_KEY_HEADER = "X-SMG-Routing-Key"
+METRIC_ACCOUNTING_VERSION = 5
 
 _EMBEDDING_UNSUPPORTED_DATASETS = {"image", "mmmu", "mooncake"}
 
@@ -94,12 +101,19 @@ class RequestFuncInput:
     lora_name: str
     image_data: Optional[List[str]]
     extra_request_body: Dict[str, Any]
+    request_id: Optional[str] = None
+    prompt_sha256: str = ""
+    generation_policy_sha256: str = ""
     timestamp: Optional[float] = None
     routing_key: Optional[str] = None
 
 
 @dataclass
 class RequestFuncOutput:
+    request_id: Optional[str] = None
+    transport_request_id: Optional[str] = None
+    prompt_sha256: str = ""
+    generation_policy_sha256: str = ""
     generated_text: str = ""
     success: bool = False
     latency: float = 0.0
@@ -107,8 +121,19 @@ class RequestFuncOutput:
     itl: List[float] = field(default_factory=list)  # List of inter-token latencies
     text_chunks: List[str] = field(default_factory=list)
     prompt_len: int = 0
+    server_input_len: Optional[int] = None
+    input_len: int = 0
+    input_len_source: str = "unset"
     error: str = ""
+    requested_output_len: int = 0
+    server_output_len: Optional[int] = None
+    raw_output_ids: List[int] = field(default_factory=list)
+    raw_output_id_source: str = "unavailable"
+    retokenized_output_len: int = 0
+    retokenized_output_ids: List[int] = field(default_factory=list)
     output_len: int = 0
+    output_len_source: str = "unset"
+    finish_reason: Optional[str] = None
     start_time: float = 0.0
     cached_tokens: int = 0
     cached_tokens_details: Optional[Dict[str, Any]] = None
@@ -116,6 +141,12 @@ class RequestFuncOutput:
     @staticmethod
     def init_new(request_func_input: RequestFuncInput):
         output = RequestFuncOutput()
+        output.request_id = request_func_input.request_id
+        output.prompt_sha256 = request_func_input.prompt_sha256
+        output.generation_policy_sha256 = (
+            request_func_input.generation_policy_sha256
+        )
+        output.requested_output_len = request_func_input.output_len
         output.prompt_len = request_func_input.prompt_len
         return output
 
@@ -246,6 +277,25 @@ def _extract_cache_from_sglext(data, output):
             + (details.get("storage") or 0)
         )
         output.cached_tokens_details = details
+
+
+def _capture_openai_response_metadata(
+    data: Dict[str, Any], output: RequestFuncOutput
+) -> None:
+    output.transport_request_id = reconcile_transport_request_id(
+        output.transport_request_id,
+        data.get("id"),
+    )
+    usage = data.get("usage") or {}
+    prompt_tokens = usage.get("prompt_tokens")
+    if prompt_tokens is not None:
+        output.server_input_len = int(prompt_tokens)
+    completion_tokens = usage.get("completion_tokens")
+    if completion_tokens is not None:
+        output.server_output_len = int(completion_tokens)
+    choices = data.get("choices") or []
+    if choices and choices[0].get("finish_reason") is not None:
+        output.finish_reason = str(choices[0]["finish_reason"])
 
 
 # set ignore_eos True by default
@@ -650,6 +700,20 @@ async def async_request_sglang_generate(
         }
         if args.top_p < 1.0:
             sampling_params["top_p"] = args.top_p
+        request_body, sampling_overrides = split_sglang_native_request_body(
+            request_func_input.extra_request_body
+        )
+        configured_max_new_tokens = sampling_overrides.pop(
+            "max_new_tokens", request_func_input.output_len
+        )
+        if configured_max_new_tokens != request_func_input.output_len:
+            raise ValueError(
+                "native max_new_tokens conflicts with the frozen requested "
+                f"output length: configured={configured_max_new_tokens}, "
+                f"requested={request_func_input.output_len}"
+            )
+        sampling_params.update(sampling_overrides)
+        sampling_params["max_new_tokens"] = request_func_input.output_len
         payload = {
             ("text" if isinstance(prompt, str) else "input_ids"): prompt,
             "sampling_params": sampling_params,
@@ -658,7 +722,7 @@ async def async_request_sglang_generate(
             "return_logprob": args.return_logprob,
             "return_routed_experts": args.return_routed_experts,
             "logprob_start_len": args.logprob_start_len,
-            **request_func_input.extra_request_body,
+            **request_body,
         }
         if args.top_logprobs_num > 0:
             payload["top_logprobs_num"] = args.top_logprobs_num
@@ -676,7 +740,7 @@ async def async_request_sglang_generate(
         output = RequestFuncOutput.init_new(request_func_input)
 
         generated_text = ""
-        output_len = request_func_input.output_len
+        output_len = 0
         ttft = 0.0
         st = time.perf_counter()
         output.start_time = st
@@ -699,37 +763,80 @@ async def async_request_sglang_generate(
                         else:
                             data = json.loads(chunk)
 
-                            # NOTE: Some completion API might have a last
-                            # usage summary response without a token so we
-                            # want to check a token was generated
+                            meta_info = data.get("meta_info") or {}
+                            output.transport_request_id = (
+                                reconcile_transport_request_id(
+                                    output.transport_request_id,
+                                    meta_info.get("id"),
+                                )
+                            )
+                            prompt_tokens = meta_info.get("prompt_tokens")
+                            if prompt_tokens is not None:
+                                output.server_input_len = int(prompt_tokens)
+                            completion_tokens = meta_info.get("completion_tokens")
+                            chunk_id_mode = None
+                            if completion_tokens is not None:
+                                output_len = int(completion_tokens)
+                                output.server_output_len = output_len
+                                if "output_ids" in data:
+                                    (
+                                        output.raw_output_ids,
+                                        chunk_id_mode,
+                                    ) = reconcile_streamed_output_ids(
+                                        output.raw_output_ids,
+                                        data["output_ids"],
+                                        output_len,
+                                    )
+                                    output.raw_output_id_source = (
+                                        "server_output_ids"
+                                    )
+
+                            finish_reason = meta_info.get("finish_reason")
+                            if finish_reason:
+                                output.finish_reason = str(finish_reason["type"])
+
                             if getattr(args, "cache_report", False):
-                                _meta = data.get("meta_info") or {}
-                                output.cached_tokens = _meta.get("cached_tokens", 0)
-                                output.cached_tokens_details = _meta.get(
+                                output.cached_tokens = meta_info.get(
+                                    "cached_tokens", 0
+                                )
+                                output.cached_tokens_details = meta_info.get(
                                     "cached_tokens_details"
                                 )
 
-                            if "text" in data and data["text"]:
+                            if output_len > last_output_len:
                                 timestamp = time.perf_counter()
-                                generated_text = data["text"]
-                                output_len = data["meta_info"]["completion_tokens"]
-
-                                # First token
                                 if ttft == 0.0:
-                                    ttft = time.perf_counter() - st
+                                    ttft = timestamp - st
                                     output.ttft = ttft
-
-                                # Decoding phase
                                 else:
                                     num_new_tokens = output_len - last_output_len
-                                    if num_new_tokens == 0:
-                                        continue
                                     chunk_gap = timestamp - most_recent_timestamp
                                     adjust_itl = chunk_gap / num_new_tokens
                                     output.itl.extend([adjust_itl] * num_new_tokens)
-
                                 most_recent_timestamp = timestamp
                                 last_output_len = output_len
+
+                            text = data.get("text")
+                            if text:
+                                if chunk_id_mode == "server_incremental":
+                                    generated_text += text
+                                else:
+                                    generated_text = text
+
+                    if output.server_output_len is None:
+                        raise ValueError(
+                            "native SGLang response omitted completion-token usage"
+                        )
+                    if output.raw_output_id_source != "server_output_ids":
+                        raise ValueError(
+                            "native SGLang response omitted raw output IDs"
+                        )
+                    if len(output.raw_output_ids) != output.server_output_len:
+                        raise ValueError(
+                            "native SGLang raw output-ID count does not match "
+                            f"server usage: ids={len(output.raw_output_ids)}, "
+                            f"usage={output.server_output_len}"
+                        )
 
                     output.generated_text = generated_text
                     output.success = True
@@ -1063,16 +1170,37 @@ def calculate_metrics(
 
     for i in range(len(outputs)):
         if outputs[i].success:
-            output_len = outputs[i].output_len
-            output_lens.append(output_len)
-            retokenized_output_len = len(
-                tokenizer.encode(outputs[i].generated_text, add_special_tokens=False)
+            retokenized_output_ids = tokenizer.encode(
+                outputs[i].generated_text, add_special_tokens=False
             )
+            outputs[i].retokenized_output_ids = list(retokenized_output_ids)
+            retokenized_output_len = len(retokenized_output_ids)
+            outputs[i].retokenized_output_len = retokenized_output_len
             retokenized_output_lens.append(retokenized_output_len)
-            if input_requests is not None:
-                total_input += input_requests[i].prompt_len
+            if outputs[i].server_output_len is not None:
+                output_len = outputs[i].server_output_len
+                outputs[i].output_len_source = "server_usage"
+            elif outputs[i].output_len > 0:
+                output_len = outputs[i].output_len
+                outputs[i].output_len_source = "backend_reported"
+            else:
+                output_len = retokenized_output_len
+                outputs[i].output_len_source = "retokenized_fallback"
+            outputs[i].output_len = output_len
+            output_lens.append(output_len)
+            if outputs[i].server_input_len is not None:
+                input_len = outputs[i].server_input_len
+                outputs[i].input_len_source = "server_usage"
+            else:
+                input_len = outputs[i].prompt_len
+                outputs[i].input_len_source = "declared_fallback"
+            outputs[i].input_len = input_len
+            total_input += input_len
+            if input_requests is not None and input_requests[i].vision_prompt_len:
                 total_input_text += input_requests[i].text_prompt_len
                 total_input_vision += input_requests[i].vision_prompt_len
+            else:
+                total_input_text += input_len
             if output_len > 1:
                 tpots.append((outputs[i].latency - outputs[i].ttft) / (output_len - 1))
             if use_retokenized_itl:
@@ -1092,6 +1220,14 @@ def calculate_metrics(
 
             completed += 1
         else:
+            outputs[i].input_len = outputs[i].prompt_len
+            outputs[i].input_len_source = "failed"
+            outputs[i].output_len = 0
+            outputs[i].retokenized_output_len = 0
+            outputs[i].retokenized_output_ids = []
+            outputs[i].raw_output_ids = []
+            outputs[i].raw_output_id_source = "failed"
+            outputs[i].output_len_source = "failed"
             output_lens.append(0)
             retokenized_output_lens.append(0)
 
@@ -1304,10 +1440,9 @@ async def benchmark(
         getattr(args, "forward_request_id_as_rid", False)
     )
     if forward_request_id_as_rid:
-        if backend not in SGLANG_OPENAI_BACKENDS:
+        if backend not in SGLANG_IDENTITY_BACKENDS:
             raise ValueError(
-                "--forward-request-id-as-rid requires sglang-oai or "
-                "sglang-oai-chat"
+                "--forward-request-id-as-rid requires an SGLang backend"
             )
         missing_request_ids = [
             index
@@ -1457,6 +1592,7 @@ async def benchmark(
 
     # Run all requests
     benchmark_start_time = time.perf_counter()
+    benchmark_start_unix_s = time.time()
     tasks: List[asyncio.Task] = []
     pbar_total = len(input_requests)
     if (
@@ -1509,6 +1645,26 @@ async def benchmark(
                 request.request_id,
                 merged_extra_body,
             )
+        if backend in SGLANG_NATIVE_BACKENDS:
+            native_body, native_sampling = split_sglang_native_request_body(
+                merged_extra_body
+            )
+            native_sampling.setdefault("temperature", 0.0)
+            native_sampling.setdefault(
+                "ignore_eos", not args.disable_ignore_eos
+            )
+            native_body["sampling_params"] = native_sampling
+            native_body.setdefault("stream", not args.disable_stream)
+            effective_generation_body = native_body
+        else:
+            effective_generation_body = dict(merged_extra_body)
+            effective_generation_body.setdefault("temperature", 0.0)
+            effective_generation_body.setdefault(
+                "ignore_eos", not args.disable_ignore_eos
+            )
+            effective_generation_body.setdefault("stream", not args.disable_stream)
+        if lora_name is not None:
+            effective_generation_body["lora_name"] = lora_name
 
         request_func_input = RequestFuncInput(
             model=model_id,
@@ -1519,6 +1675,13 @@ async def benchmark(
             lora_name=lora_name,
             image_data=request.image_data,
             extra_request_body=merged_extra_body,
+            request_id=request.request_id,
+            prompt_sha256=canonical_json_sha256(request.prompt),
+            generation_policy_sha256=generation_policy_sha256(
+                backend=backend,
+                requested_output_len=request.output_len,
+                request_body=effective_generation_body,
+            ),
             timestamp=request.timestamp,
             routing_key=request.routing_key,
         )
@@ -1772,7 +1935,10 @@ async def benchmark(
             "server_info": server_info,
             # Results
             "duration": benchmark_duration,
+            "submitted": len(outputs),
+            "started": sum(output.start_time > 0 for output in outputs),
             "completed": metrics.completed,
+            "reported": len(outputs),
             "total_input_tokens": metrics.total_input,
             "total_input_text_tokens": metrics.total_input_text,
             "total_input_vision_tokens": metrics.total_input_vision,
@@ -1810,6 +1976,41 @@ async def benchmark(
             "accept_length": accept_length,
             "max_output_tokens_per_s": metrics.max_output_tokens_per_s,
             "max_concurrent_requests": metrics.max_concurrent_requests,
+            "server_input_usage_reported": sum(
+                output.success and output.server_input_len is not None
+                for output in outputs
+            ),
+            "declared_input_fallbacks": sum(
+                output.success and output.input_len_source == "declared_fallback"
+                for output in outputs
+            ),
+            "server_usage_reported": sum(
+                output.success and output.server_output_len is not None
+                for output in outputs
+            ),
+            "raw_output_ids_reported": sum(
+                output.success
+                and output.raw_output_id_source == "server_output_ids"
+                for output in outputs
+            ),
+            "total_output_tokens_raw": sum(
+                len(output.raw_output_ids)
+                for output in outputs
+                if output.success
+                and output.raw_output_id_source == "server_output_ids"
+            ),
+            "retokenized_fallbacks": sum(
+                output.success
+                and output.output_len_source == "retokenized_fallback"
+                for output in outputs
+            ),
+            "missing_finish_reasons": sum(
+                output.success and output.finish_reason is None for output in outputs
+            ),
+            "cap_hit_count": sum(
+                output.success and output.finish_reason == "length"
+                for output in outputs
+            ),
         }
 
         if args.cache_report:
@@ -1844,9 +2045,82 @@ async def benchmark(
                 f"{args.backend}_{now}_{args.num_prompts}_{args.dataset_name}.jsonl"
             )
 
+    request_start_offsets_s = [
+        output.start_time - benchmark_start_time for output in outputs
+    ]
     result_details = {
-        "input_lens": [output.prompt_len for output in outputs],
+        "metric_accounting_version": METRIC_ACCOUNTING_VERSION,
+        "benchmark_start_unix_s": benchmark_start_unix_s,
+        "request_start_offsets_s": request_start_offsets_s,
+        "request_end_offsets_s": [
+            start_offset + output.latency
+            for start_offset, output in zip(request_start_offsets_s, outputs)
+        ],
+        "injection_span_s": (
+            max(request_start_offsets_s) - min(request_start_offsets_s)
+            if request_start_offsets_s
+            else 0.0
+        ),
+        "request_ids": [output.request_id for output in outputs],
+        "logical_request_ids": [output.request_id for output in outputs],
+        "transport_request_ids": [
+            output.transport_request_id for output in outputs
+        ],
+        "prompt_sha256s": [output.prompt_sha256 for output in outputs],
+        "generation_policy_sha256s": [
+            output.generation_policy_sha256 for output in outputs
+        ],
+        "declared_input_lens": [output.prompt_len for output in outputs],
+        "server_reported_input_lens": [
+            output.server_input_len for output in outputs
+        ],
+        "input_lens": [output.input_len for output in outputs],
+        "input_len_sources": [output.input_len_source for output in outputs],
+        "requested_output_lens": [
+            output.requested_output_len for output in outputs
+        ],
+        "server_reported_output_lens": [
+            output.server_output_len for output in outputs
+        ],
+        "raw_output_lens": [
+            (
+                len(output.raw_output_ids)
+                if output.raw_output_id_source == "server_output_ids"
+                else None
+            )
+            for output in outputs
+        ],
+        "raw_output_ids": [output.raw_output_ids for output in outputs],
+        "raw_output_id_sources": [
+            output.raw_output_id_source for output in outputs
+        ],
+        "retokenized_output_lens": [
+            output.retokenized_output_len for output in outputs
+        ],
+        "retokenized_output_ids": [
+            output.retokenized_output_ids for output in outputs
+        ],
+        "output_ids": [
+            (
+                output.raw_output_ids
+                if output.raw_output_id_source == "server_output_ids"
+                else output.retokenized_output_ids
+            )
+            for output in outputs
+        ],
+        "output_id_sources": [
+            (
+                "server_output_ids"
+                if output.raw_output_id_source == "server_output_ids"
+                else "retokenized_text"
+            )
+            for output in outputs
+        ],
         "output_lens": output_lens,
+        "output_len_sources": [output.output_len_source for output in outputs],
+        "finish_reasons": [output.finish_reason for output in outputs],
+        "e2e_latencies": [output.latency for output in outputs],
+        "successes": [output.success for output in outputs],
         "ttfts": [output.ttft for output in outputs],
         "itls": [output.itl for output in outputs],
         "generated_texts": [output.generated_text for output in outputs],
