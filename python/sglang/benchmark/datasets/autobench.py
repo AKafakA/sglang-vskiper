@@ -1,5 +1,6 @@
 import json
 from argparse import Namespace
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -22,6 +23,7 @@ AUTOBENCH_RESERVED_FIELDS = {
     "image_data",
     "timestamp",
     "routing_key",
+    "request_id",
     "metadata",
     "extra_request_body",
     "param_send",
@@ -157,11 +159,22 @@ def _estimate_prompt_lens(
         return prompt_len, text_prompt_len, vision_prompt_len
 
     if prompt_kind == "messages":
-        text_prompt_len = len(
-            tokenizer.apply_chat_template(
-                prompt, tokenize=True, add_generation_prompt=True
-            )
+        tokenized = tokenizer.apply_chat_template(
+            prompt, tokenize=True, add_generation_prompt=True
         )
+        if isinstance(tokenized, Mapping):
+            tokenized = tokenized["input_ids"]
+        shape = getattr(tokenized, "shape", None)
+        if shape is not None:
+            text_prompt_len = int(shape[-1])
+        elif (
+            isinstance(tokenized, (list, tuple))
+            and len(tokenized) == 1
+            and isinstance(tokenized[0], (list, tuple))
+        ):
+            text_prompt_len = len(tokenized[0])
+        else:
+            text_prompt_len = len(tokenized)
         vision_prompt_len = 0
         return text_prompt_len, text_prompt_len, vision_prompt_len
 
@@ -289,6 +302,11 @@ def sample_autobench_requests(
                     image_data=row.get("image_data"),
                     timestamp=row.get("timestamp"),
                     routing_key=row.get("routing_key"),
+                    request_id=(
+                        str(row["request_id"])
+                        if row.get("request_id") is not None
+                        else None
+                    ),
                     extra_request_body=_collect_extra_request_body(row),
                 )
             )
