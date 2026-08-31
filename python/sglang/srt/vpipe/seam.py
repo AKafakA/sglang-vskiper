@@ -441,13 +441,6 @@ def attach_vp_model(model, config):
     # zeroed by vp_reset_runtime_counters between evaluation cells.
     model._vp_regime_prefill_fd_passes = 0
     model._vp_regime_prefill_dense_passes = 0
-    # Batch-composition telemetry: counted for every prefill-phase pass
-    # independent of regime-switch config (mixed split via the trailing-run
-    # estimator — see _vp_regime_prefill_mixed_running_bs for the bias note).
-    model._vp_mixed_passes = 0
-    model._vp_mixed_decode_rows_est = 0
-    model._vp_mixed_prefill_tokens_est = 0
-    model._vp_prefill_pass_tokens = 0
 
 
 def stamp_prefill_regime(model, forward_batch):
@@ -457,55 +450,41 @@ def stamp_prefill_regime(model, forward_batch):
     # it, and stamp it on forward_batch. When the switch is off (config
     # None) or its prefill leg is disabled, the batch is left unstamped and
     # flexidepth_phase_enabled never reads the stamp -> byte-identical FD.
-    if flexidepth_forward_phase(forward_batch) != "prefill":
-        return
-    _regime_is_mixed = forward_batch.forward_mode.is_mixed()
-    _pass_tokens = forward_batch.extend_num_tokens
-    _regime_running_bs = (
-        _vp_regime_prefill_mixed_running_bs(forward_batch)
-        if _regime_is_mixed
-        else 0
-    )
-    # Batch-composition telemetry (regime-independent), surfaced into
-    # regime_switch.counters.{mixed,volume}. Skipped (never crashed) on a
-    # pass without extend accounting; the regime leg below keeps its own
-    # original contract on such passes.
-    if _pass_tokens is not None:
-        model._vp_prefill_pass_tokens += int(_pass_tokens)
-        if _regime_is_mixed:
-            model._vp_mixed_passes += 1
-            model._vp_mixed_decode_rows_est += _regime_running_bs
-            model._vp_mixed_prefill_tokens_est += (
-                int(_pass_tokens) - _regime_running_bs
-            )
     _regime_cfg = regime_switch_config()
     if _regime_cfg is not None and _regime_cfg.prefill.enabled:
-        if _regime_is_mixed and not _regime_cfg.prefill.include_mixed:
-            # MIXED pass with mixed switching disabled: leave FlexiDepth
-            # enabled (unchanged). The appended running-decode rows are
-            # governed by the decode leg (I6), not the prefill leg.
-            forward_batch.vp_fd_prefill_dense = False
-        else:
-            _regime_decision = prefill_regime_decision(
-                forward_batch.extend_num_tokens,
-                forward_batch.batch_size,
-                _regime_is_mixed,
-                _regime_running_bs,
-                _regime_cfg,
-            )
-            # A sub-threshold MIXED pass forces its WHOLE batch — the
-            # appended running-decode rows included — onto the dense
-            # body. This is an intentional consequence of stamping at
-            # pass granularity (documented for the integrated endpoint).
-            forward_batch.vp_fd_prefill_dense = (
-                _regime_decision == PREFILL_BODY_DENSE
-            )
-        # Per-pass decision counter (dense vs grouped-FD), surfaced into
-        # regime_switch.counters.prefill (stripped from deploy identity).
-        if forward_batch.vp_fd_prefill_dense:
-            model._vp_regime_prefill_dense_passes += 1
-        else:
-            model._vp_regime_prefill_fd_passes += 1
+        if flexidepth_forward_phase(forward_batch) == "prefill":
+            _regime_is_mixed = forward_batch.forward_mode.is_mixed()
+            if _regime_is_mixed and not _regime_cfg.prefill.include_mixed:
+                # MIXED pass with mixed switching disabled: leave FlexiDepth
+                # enabled (unchanged). The appended running-decode rows are
+                # governed by the decode leg (I6), not the prefill leg.
+                forward_batch.vp_fd_prefill_dense = False
+            else:
+                _regime_running_bs = (
+                    _vp_regime_prefill_mixed_running_bs(forward_batch)
+                    if _regime_is_mixed
+                    else 0
+                )
+                _regime_decision = prefill_regime_decision(
+                    forward_batch.extend_num_tokens,
+                    forward_batch.batch_size,
+                    _regime_is_mixed,
+                    _regime_running_bs,
+                    _regime_cfg,
+                )
+                # A sub-threshold MIXED pass forces its WHOLE batch — the
+                # appended running-decode rows included — onto the dense
+                # body. This is an intentional consequence of stamping at
+                # pass granularity (documented for the integrated endpoint).
+                forward_batch.vp_fd_prefill_dense = (
+                    _regime_decision == PREFILL_BODY_DENSE
+                )
+            # Per-pass decision counter (dense vs grouped-FD), surfaced into
+            # regime_switch.counters.prefill (stripped from deploy identity).
+            if forward_batch.vp_fd_prefill_dense:
+                model._vp_regime_prefill_dense_passes += 1
+            else:
+                model._vp_regime_prefill_fd_passes += 1
 
 
 def seam_prepare_batch(model, forward_batch, hidden_states, positions):
@@ -803,14 +782,6 @@ def vp_regime_switch_counters(lm) -> dict:
     counters["prefill"][PREFILL_BODY_FD] = int(
         lm.model._vp_regime_prefill_fd_passes
     )
-    counters["mixed"]["passes"] = int(lm.model._vp_mixed_passes)
-    counters["mixed"]["decode_rows_est"] = int(lm.model._vp_mixed_decode_rows_est)
-    counters["mixed"]["prefill_tokens_est"] = int(
-        lm.model._vp_mixed_prefill_tokens_est
-    )
-    counters["volume"]["prefill_pass_tokens"] = int(
-        lm.model._vp_prefill_pass_tokens
-    )
     return counters
 
 
@@ -852,7 +823,3 @@ def vp_reset_runtime_counters(lm) -> None:
     # [W1] Reset the prefill regime-switch decision counters (always present).
     lm.model._vp_regime_prefill_fd_passes = 0
     lm.model._vp_regime_prefill_dense_passes = 0
-    lm.model._vp_mixed_passes = 0
-    lm.model._vp_mixed_decode_rows_est = 0
-    lm.model._vp_mixed_prefill_tokens_est = 0
-    lm.model._vp_prefill_pass_tokens = 0
