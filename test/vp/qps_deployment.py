@@ -120,6 +120,9 @@ def stable_server_identity(server_info: dict[str, Any]) -> dict[str, Any]:
         regime_switch = runtime.get("regime_switch")
         if isinstance(regime_switch, dict):
             regime_switch.pop("counters", None)
+        # batch_composition: live per-step host counters (Scheduler.run_batch)
+        # — runtime evidence like the counter blocks above, never identity.
+        runtime.pop("batch_composition", None)
         # binary_cohort (D-302): the REALIZED dispatch counters advance on
         # every executor call (warmup and capture included), so they cannot
         # sit in the identity hash — the manifest snapshot and the runner's

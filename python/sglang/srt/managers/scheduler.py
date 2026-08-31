@@ -492,6 +492,8 @@ class Scheduler(
         # Init running status
         self.init_running_status()
 
+        self.init_vp_batch_composition()
+
         # Init chunked prefill
         self.init_chunked_prefill()
 
@@ -992,6 +994,20 @@ class Scheduler(
         self.session_controller = SessionController(self.tree_cache)
         self.forward_sleep_time = None
         self._engine_paused = False
+
+    def init_vp_batch_composition(self):
+        # VP batch-composition telemetry, counted in run_batch on the host so
+        # replayed (CUDA-graph) and eager passes count alike — model-forward
+        # counters only ever see eager passes. Exact mixed split from
+        # ScheduleBatch.mix_running_indices (no estimator). Emitted by
+        # scheduler_runtime_attestation as vp_runtime.batch_composition;
+        # runtime evidence only, never part of the deployment identity.
+        self.vp_bc_prefill_passes = 0
+        self.vp_bc_prefill_tokens = 0
+        self.vp_bc_mixed_passes = 0
+        self.vp_bc_mixed_decode_rows = 0
+        self.vp_bc_mixed_prefill_tokens = 0
+        self.vp_bc_decode_passes = 0
 
     def init_chunked_prefill(self):
         self.chunked_prefill_size = self.server_args.chunked_prefill_size
@@ -3197,6 +3213,30 @@ class Scheduler(
 
         if self.scripted_scheduler_hook is not None:
             self.scripted_scheduler_hook.on_run_batch(batch)
+
+        # VP batch-composition telemetry (see init_vp_batch_composition).
+        # Must run before the overlap path's resolve_seq_lens_cpu, which
+        # consumes mix_running_indices.
+        if self.is_generation:
+            _vp_bc_mode = batch.forward_mode
+            if _vp_bc_mode.is_extend():
+                self.vp_bc_prefill_passes += 1
+                if batch.extend_num_tokens is not None:
+                    self.vp_bc_prefill_tokens += int(batch.extend_num_tokens)
+                if _vp_bc_mode.is_mixed():
+                    self.vp_bc_mixed_passes += 1
+                    _vp_bc_rows = (
+                        int(batch.mix_running_indices.numel())
+                        if batch.mix_running_indices is not None
+                        else 0
+                    )
+                    self.vp_bc_mixed_decode_rows += _vp_bc_rows
+                    if batch.extend_num_tokens is not None:
+                        self.vp_bc_mixed_prefill_tokens += (
+                            int(batch.extend_num_tokens) - _vp_bc_rows
+                        )
+            elif _vp_bc_mode.is_decode():
+                self.vp_bc_decode_passes += 1
 
         # Whether to run the profiler
         self.profiler_manager._profile_batch_predicate(batch)

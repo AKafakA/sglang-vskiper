@@ -266,6 +266,18 @@ def scheduler_runtime_attestation(scheduler: Any) -> dict[str, Any]:
         "v3_full_graph_enabled": v3_full_graph_enabled,
         "v3_full_graph": v3_full_graph,
         "regime_switch": regime_switch_attestation(counters=regime_counters),
+        # Host-side per-step batch composition from Scheduler.run_batch —
+        # counts replayed and eager passes alike (model-side counters only
+        # see eager passes). Runtime evidence, identity-stripped like the
+        # regime counters; never assert in expectations.
+        "batch_composition": {
+            "prefill_passes": int(scheduler.vp_bc_prefill_passes),
+            "prefill_tokens": int(scheduler.vp_bc_prefill_tokens),
+            "mixed_passes": int(scheduler.vp_bc_mixed_passes),
+            "mixed_decode_rows": int(scheduler.vp_bc_mixed_decode_rows),
+            "mixed_prefill_tokens": int(scheduler.vp_bc_mixed_prefill_tokens),
+            "decode_passes": int(scheduler.vp_bc_decode_passes),
+        },
         "model": model_state,
     }
     # (c3) coverage-dense evidence block (design 2026-08-04). Emitted ONLY when
