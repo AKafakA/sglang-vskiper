@@ -937,6 +937,12 @@ def regime_switch_config(
     raw = str(values.get(REGIME_SWITCH_ENV, "") or "").strip()
     if not raw or raw.lower() == "off":
         return None
+    # Memoized on the raw string: the gate (flexidepth_phase_enabled)
+    # consults this ~32-48x per pass, and the config is boot-constant —
+    # re-decoding the JSON per call taxed every regime-on pass.
+    cached = _REGIME_SWITCH_CONFIG_CACHE.get(raw)
+    if cached is not None:
+        return cached
     try:
         config = msgspec.json.decode(raw, type=RegimeSwitchConfig)
     except msgspec.MsgspecError as error:
@@ -944,4 +950,8 @@ def regime_switch_config(
             f"{REGIME_SWITCH_ENV} is not a valid regime-switch config: {error}"
         ) from error
     config.validate()
+    _REGIME_SWITCH_CONFIG_CACHE[raw] = config
     return config
+
+
+_REGIME_SWITCH_CONFIG_CACHE: dict[str, RegimeSwitchConfig] = {}
