@@ -73,7 +73,20 @@ from sglang.srt.vpipe.regime import (
     PREFILL_BODY_FD,
     prefill_regime_decision,
 )
+from sglang.srt.vpipe.attestation import _BINARY_COHORT_STATS
 from sglang.srt.vpipe.seam import _vp_regime_prefill_mixed_running_bs
+
+
+def _vp_cohort_totals() -> tuple:
+    """Summed (run_rows, project_rows) across the binary-cohort device
+    counters — the engagement source for the P8 v2 escape (D-339)."""
+    run = 0
+    project = 0
+    for stats in _BINARY_COHORT_STATS.values():
+        values = stats.detach().cpu().tolist()
+        run += int(values[1])
+        project += int(values[2])
+    return (run, project)
 from sglang.srt.model_executor.runner_backend.breakable_cuda_graph_backend import (
     BreakableCudaGraphBackend,
 )
@@ -208,6 +221,15 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
             PREFILL_BODY_DENSE: 0,
             PREFILL_BODY_FD: 0,
         }
+        # [P8 v2, D-339] Engagement EMA state: PROJECT-row share of the
+        # binary-cohort stats, updated lazily from the device counters'
+        # delta after each routed pass (read at the NEXT decision — one
+        # small D2H on a >100ms pass). None = no routed pass observed yet
+        # (optimistic: route until measured otherwise).
+        self._vp_prefill_engagement_ema: Optional[float] = None
+        self._vp_prefill_cohort_baseline: Optional[tuple] = None
+        self._vp_prefill_last_variant: Optional[str] = None
+        self._vp_prefill_dense_streak = 0
 
         self.capture_forward_mode = ForwardMode.EXTEND
         self.capture_hidden_mode = CaptureHiddenMode.NULL
@@ -1035,6 +1057,25 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
         variant = None
         if self._vp_prefill_variant_cfg is not None:
             cfg = self._vp_prefill_variant_cfg
+            # [P8 v2] Lazy EMA update: fold in the previous ROUTED pass's
+            # realized engagement from the binary-cohort device counters.
+            if (
+                cfg.prefill.engagement_min is not None
+                and self._vp_prefill_last_variant == PREFILL_BODY_FD
+            ):
+                totals = _vp_cohort_totals()
+                base = self._vp_prefill_cohort_baseline
+                if base is not None:
+                    d_run = totals[0] - base[0]
+                    d_project = totals[1] - base[1]
+                    d_total = d_run + d_project
+                    if d_total > 0:
+                        sample = d_project / d_total
+                        ema = self._vp_prefill_engagement_ema
+                        self._vp_prefill_engagement_ema = (
+                            sample if ema is None else 0.8 * ema + 0.2 * sample
+                        )
+                self._vp_prefill_cohort_baseline = totals
             is_mixed = forward_batch.forward_mode.is_mixed()
             if is_mixed and not cfg.prefill.include_mixed:
                 # Mixed switching disabled: FD body unchanged (W1 contract).
@@ -1052,6 +1093,33 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
                     running_bs,
                     cfg,
                 )
+            # [P8 v2] Engagement override: a token-bracket FD decision is
+            # demoted to dense while the measured engagement sits below the
+            # floor — except one routed probe pass per streak window so the
+            # estimate can recover when the workload shifts.
+            if (
+                variant == PREFILL_BODY_FD
+                and cfg.prefill.engagement_min is not None
+                and self._vp_prefill_engagement_ema is not None
+                and self._vp_prefill_engagement_ema < cfg.prefill.engagement_min
+            ):
+                if (
+                    self._vp_prefill_dense_streak
+                    < cfg.prefill.engagement_probe_every
+                ):
+                    variant = PREFILL_BODY_DENSE
+                    self._vp_prefill_dense_streak += 1
+                else:
+                    self._vp_prefill_dense_streak = 0
+            elif variant == PREFILL_BODY_FD:
+                self._vp_prefill_dense_streak = 0
+            if variant == PREFILL_BODY_FD and (
+                self._vp_prefill_cohort_baseline is None
+            ):
+                # First routed pass: capture the counter baseline so the
+                # next decision can fold in this pass's engagement.
+                self._vp_prefill_cohort_baseline = _vp_cohort_totals()
+            self._vp_prefill_last_variant = variant
             self._vp_prefill_variant_counts[variant] += 1
         with self.backend.replay_session():
             static_forward_batch = self.load_batch(forward_batch, **kwargs)

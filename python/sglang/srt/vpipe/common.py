@@ -698,8 +698,29 @@ class RegimeSwitchPrefillConfig(
     # ABOVE this gate run the dense body. None = no upper gate, byte-
     # identical to the pre-existing sub-threshold-only behavior.
     max_tokens: Optional[int] = None
+    # [P8 v2, D-339] Engagement-keyed escape: token thresholds cannot
+    # separate engaged large packs (gsm8k 2-4K: routed WINS) from
+    # low-engagement ones (mmlu_pro 2.5K: routed loses). When set, the
+    # dispatch decision uses a running engagement estimate (EMA of the
+    # binary-cohort PROJECT-row share, read per routed pass): routed while
+    # EMA >= engagement_min (or unknown — optimistic start), else dense,
+    # with one routed probe pass every engagement_probe_every dense passes
+    # so the estimate can recover. Token brackets still apply first as
+    # hard bounds. None = pure token-bracket behavior (v1, unchanged).
+    engagement_min: Optional[float] = None
+    engagement_probe_every: int = 64
 
     def validate(self) -> None:
+        if self.engagement_min is not None and not (
+            0.0 <= self.engagement_min <= 1.0
+        ):
+            raise ValueError(
+                "regime switch prefill.engagement_min must be in [0, 1]"
+            )
+        if self.engagement_probe_every < 1:
+            raise ValueError(
+                "regime switch prefill.engagement_probe_every must be >= 1"
+            )
         if self.min_tokens < 0:
             raise ValueError(
                 "regime switch prefill.min_tokens must be non-negative"
