@@ -383,13 +383,22 @@ def fd_conditional_mlp_full_graph(
         active_rows = run_mask
         if valid_rows is not None:
             active_rows = active_rows & valid_rows.view(-1, 1)
-        run_output = _one_expert_mlp(
-            hidden_states,
-            layer.mlp.gate_up_proj.weight.unsqueeze(0),
-            layer.mlp.down_proj.weight.unsqueeze(0),
-            route_weights,
-            active_rows,
-        )
+        # Lane-2 cut2: the conditional graph's all-RUN branch replayed the
+        # one-expert fused-MoE kernel (11.6 launches / 5.75 ms per step at 4
+        # rows even with the low-row body in place). Below the low-row bound
+        # decode is weight-bound, so the dense MLP on all rows costs exactly
+        # production's MLP; same output (active rows w*MLP, others zero).
+        lr_policy, lr_max_rows = full_graph_low_row_policy()
+        if lr_policy == "full_dual" and int(hidden_states.shape[0]) <= lr_max_rows:
+            run_output = layer.mlp(hidden_states) * route_weights
+        else:
+            run_output = _one_expert_mlp(
+                hidden_states,
+                layer.mlp.gate_up_proj.weight.unsqueeze(0),
+                layer.mlp.down_proj.weight.unsqueeze(0),
+                route_weights,
+                active_rows,
+            )
         return torch.where(active_rows, run_output, torch.zeros_like(run_output))
 
     if full_graph_eager_semantic_debug_enabled():
