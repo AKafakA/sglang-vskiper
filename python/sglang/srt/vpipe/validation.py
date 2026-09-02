@@ -535,11 +535,15 @@ def validate_full_graph_model_configuration(
                 f"{FD_LOW_ROW_POLICY_ENV} requires decode in "
                 f"{FD_ACTIVE_PHASES_ENV}"
             )
-        if low_row_max_rows >= compact_min_rows:
-            raise ValueError(
-                f"{FD_LOW_ROW_MAX_ROWS_ENV} must be smaller than "
-                f"{FD_COMPACT_MIN_ROWS_ENV}"
-            )
+        # Lane-2 cut2b (2026-09-02): the low-row body now resolves BEFORE the
+        # compact and binary-cohort dispatches, so a bound above
+        # COMPACT_MIN_ROWS is well-defined (it simply takes precedence for
+        # those row counts) instead of ambiguous. Keeping the bound below the
+        # measured crossover is a policy question, not a correctness one: the
+        # ladders put the skip body's crossover near 200 rows at 1k context, so
+        # the deployable bound is measured, not structural.
+        if low_row_max_rows < 1:
+            raise ValueError(f"{FD_LOW_ROW_MAX_ROWS_ENV} must be positive")
         if eager_semantic_debug or forced_all_run_fastpath:
             raise ValueError(
                 f"{FD_LOW_ROW_POLICY_ENV} conflicts with eager semantic "
