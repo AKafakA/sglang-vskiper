@@ -362,6 +362,43 @@ def test_seam_observe_is_level_triggered_idempotent_in_state() -> None:
     assert dispatch.observe(1024) == "skip"
 
 
+def test_decode_regime_kv_criterion_keys_on_resident_tokens() -> None:
+    """Lane-2 cut1: with enter/exit_kv_tokens set the band ignores rows and keys
+    on the batch's resident KV tokens (rows x context); 0/0 keeps the rows band."""
+    import json
+
+    import pytest
+
+    from sglang.srt.vpipe.common import regime_switch_config
+    from sglang.srt.vpipe.regime import DecodeRegimeDispatch
+
+    base = json.loads(REGIME_JSON)
+    base["decode"].update(
+        {"enabled": True, "enter_kv_tokens": 200_000, "exit_kv_tokens": 160_000}
+    )
+    cfg = regime_switch_config({"SGLANG_VP_REGIME_SWITCH": json.dumps(base)})
+    assert cfg.decode.kv_criterion
+    dispatch = DecodeRegimeDispatch(cfg)
+    # 512 rows x 256 tokens = 131k KV tokens: below the band -> low body even
+    # though rows >> enter_rows; 256 rows x 1k = 262k -> high.
+    assert dispatch.observe(512, 131_072) == "prod_allrun"
+    assert dispatch.observe(256, 262_144) == "skip"
+    assert dispatch.observe(64, 180_000) == "skip"  # inside the band -> hold
+    assert dispatch.observe(64, 160_000) == "prod_allrun"  # exit edge
+    assert dispatch.observe(8, 200_000) == "skip"  # re-enter edge, rows irrelevant
+    with pytest.raises(ValueError):
+        dispatch.observe(300)  # kv criterion needs seq_lens_sum
+    # Rows criterion (0/0) still ignores kv_tokens.
+    rows_cfg = regime_switch_config({"SGLANG_VP_REGIME_SWITCH": REGIME_JSON})
+    if rows_cfg.decode.enabled:
+        rows_dispatch = DecodeRegimeDispatch(rows_cfg)
+        assert rows_dispatch.observe(300, 1) == "skip"
+    bad = json.loads(REGIME_JSON)
+    bad["decode"].update({"enabled": True, "enter_kv_tokens": 100, "exit_kv_tokens": 0})
+    with pytest.raises(ValueError):
+        regime_switch_config({"SGLANG_VP_REGIME_SWITCH": json.dumps(bad)})
+
+
 def test_cdopt_corrected_legality_padded_bucket_premise() -> None:
     ladder = [8, 16, 168, 176, 256]
     # Bucket 176 maps raw rows 169..176; raw 169-175 under a held-low band

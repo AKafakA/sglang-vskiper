@@ -1049,7 +1049,12 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
         # speculative decode so rows == batch_size) and hold the selected body
         # for the replay-key composition below (both the pre-planned and the main
         # path). No-op / None when the decode leg is off -> byte-identical keying.
-        self._vp_regime_dispatch.observe(int(forward_batch.batch_size))
+        # Lane-2 cut1: seq_lens_sum is the batch's resident KV tokens (host int,
+        # no sync) -- the kv criterion keys the band on it; the rows criterion
+        # ignores it.
+        self._vp_regime_dispatch.observe(
+            int(forward_batch.batch_size), int(forward_batch.seq_lens_sum)
+        )
 
         if not forward_batch.needs_forward_metadata_init():
             # Pre-planned (plan-stream load_batch already ran).
