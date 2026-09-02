@@ -414,11 +414,11 @@ def fd_conditional_mlp_full_graph(
     compact_enabled = compact_enabled and compact_phase_enabled
     rows = int(hidden_states.shape[0])
     low_row_policy, low_row_max_rows = full_graph_low_row_policy()
-    if (
-        compact_enabled
-        and low_row_policy == "full_dual"
-        and rows <= low_row_max_rows
-    ):
+    # The body needs no compaction, so it is keyed on the policy + rows only
+    # (validation already requires COMPACT=1 with the policy); tying it to the
+    # per-batch compact-phase flag left graph-captured passes on the
+    # fused-MoE fallback (cut2 profile: 11.6 fused_moe launches/step at 4 rows).
+    if low_row_policy == "full_dual" and rows <= low_row_max_rows:
         output = _full_dual_mlp(
             layer, proj, hidden_states, route_weights, run_mask
         )
