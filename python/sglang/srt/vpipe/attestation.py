@@ -137,6 +137,11 @@ def regime_switch_attestation(
                 "high_body": config.decode.high_body,
             },
         }
+        if config.decode.kv_criterion:
+            # Lane-2 cut1: attested only when active, so rows-criterion
+            # deployments keep their byte-identical block.
+            block["decode"]["enter_kv_tokens"] = config.decode.enter_kv_tokens
+            block["decode"]["exit_kv_tokens"] = config.decode.exit_kv_tokens
     block["counters"] = (
         regime_switch_zero_counters() if counters is None else counters
     )

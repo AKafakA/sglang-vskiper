@@ -754,11 +754,38 @@ class RegimeSwitchDecodeConfig(
     # flipping skip->dense, so a transient occupancy dip does not withhold skip
     # (the D-138 switch tax). Default 1 == byte-identical to the un-smoothed band.
     exit_dwell: int = 1
+    # Lane-2 cut1 (2026-09-02): KV-volume criterion. When enter_kv_tokens > 0
+    # the band is keyed on the decode batch's resident KV tokens
+    # (ForwardBatch.seq_lens_sum, a host int -- no device sync) instead of its
+    # rows: the CSD3 ladders put the skip body's crossover at ~512 rows x 256
+    # tokens (131k KV tokens, parity) vs 256 rows x 1k (262k, -4%), i.e. the
+    # saving scales with rows x context while the floor is fixed, so rows alone
+    # mis-key the band. 0/0 (default) == the rows criterion, byte-identical.
+    enter_kv_tokens: int = 0
+    exit_kv_tokens: int = 0
+
+    @property
+    def kv_criterion(self) -> bool:
+        return self.enter_kv_tokens > 0
 
     def validate(self) -> None:
         if self.enter_rows < 0 or self.exit_rows < 0:
             raise ValueError(
                 "regime switch decode enter/exit rows must be non-negative"
+            )
+        if self.enter_kv_tokens < 0 or self.exit_kv_tokens < 0:
+            raise ValueError(
+                "regime switch decode enter/exit kv tokens must be non-negative"
+            )
+        if (self.enter_kv_tokens > 0) != (self.exit_kv_tokens > 0):
+            raise ValueError(
+                "regime switch decode.enter_kv_tokens and exit_kv_tokens must "
+                "be set together (both 0 selects the rows criterion)"
+            )
+        if self.enter_kv_tokens and self.enter_kv_tokens <= self.exit_kv_tokens:
+            raise ValueError(
+                "regime switch decode.enter_kv_tokens must exceed "
+                "decode.exit_kv_tokens (hysteresis band requires enter > exit)"
             )
         if self.enter_rows <= self.exit_rows:
             raise ValueError(

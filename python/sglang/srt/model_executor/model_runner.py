@@ -3399,7 +3399,8 @@ class ModelRunner(ModelRunnerKVCacheMixin):
                 runner = self.decode_cuda_graph_runner
                 band_body = (
                     runner._vp_regime_dispatch.observe(
-                        int(forward_batch.batch_size)
+                        int(forward_batch.batch_size),
+                        int(forward_batch.seq_lens_sum),
                     )
                     if runner is not None
                     else None

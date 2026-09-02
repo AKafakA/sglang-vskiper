@@ -44,13 +44,24 @@ class DecodeHysteresis:
     def state(self) -> str:
         return self._state
 
-    def update(self, rows: int) -> str:
+    def update(self, rows: int, kv_tokens: Optional[int] = None) -> str:
         if not self._cfg.decode.enabled:
             return DECODE_BODY_HIGH
-        if rows >= self._cfg.decode.enter_rows:
+        decode = self._cfg.decode
+        if decode.kv_criterion:
+            # Lane-2 cut1: key the band on resident KV tokens (rows x context).
+            if kv_tokens is None:
+                raise ValueError(
+                    "regime switch decode kv criterion needs the batch's "
+                    "seq_lens_sum; the caller passed none"
+                )
+            metric, enter, exit_ = int(kv_tokens), decode.enter_kv_tokens, decode.exit_kv_tokens
+        else:
+            metric, enter, exit_ = int(rows), decode.enter_rows, decode.exit_rows
+        if metric >= enter:
             self._state = DECODE_BODY_HIGH
             self._exit_streak = 0
-        elif rows <= self._cfg.decode.exit_rows:
+        elif metric <= exit_:
             # c2: only a SUSTAINED run of sub-exit passes flips to dense; a
             # transient dip (interrupted by any pass above exit_rows) does not.
             self._exit_streak += 1
@@ -134,13 +145,16 @@ class DecodeRegimeDispatch:
             return [None]
         return [DECODE_BODY_LOW, DECODE_BODY_HIGH]
 
-    def observe(self, rows: int) -> Optional[str]:
-        """Advance the hysteresis from raw pre-pad rows; count and hold the body."""
+    def observe(
+        self, rows: int, kv_tokens: Optional[int] = None
+    ) -> Optional[str]:
+        """Advance the hysteresis from raw pre-pad rows (and, under the cut1
+        kv criterion, the batch's resident KV tokens); count and hold the body."""
 
         if not self._active:
             self._current_body = None
             return None
-        body = self._hysteresis.update(int(rows))
+        body = self._hysteresis.update(int(rows), kv_tokens)
         self._counts[body] += 1
         self._current_body = body
         return body
