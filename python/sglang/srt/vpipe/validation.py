@@ -520,10 +520,15 @@ def validate_full_graph_model_configuration(
                 f"{FD_LOW_ROW_POLICY_ENV} requires "
                 f"{FD_COMPACT_ENABLED_ENV}=1"
             )
-        if compact_phases != {"decode"}:
+        # Lane-2 cut2 (2026-09-02): the low-row body now resolves before every
+        # routed-MLP dispatch (binary_cohort included), so it is well-defined
+        # for prefill passes too (a <= max_rows-token prefill chunk takes the
+        # exact fixed-shape full_dual body). Decode must still be a compact
+        # phase; prefill may be as well (the I3 vp_final posture is `both`).
+        if "decode" not in compact_phases:
             raise ValueError(
-                f"{FD_LOW_ROW_POLICY_ENV} currently requires "
-                f"{FD_COMPACT_PHASES_ENV}=decode"
+                f"{FD_LOW_ROW_POLICY_ENV} requires decode in "
+                f"{FD_COMPACT_PHASES_ENV}"
             )
         if "decode" not in active_phases:
             raise ValueError(
