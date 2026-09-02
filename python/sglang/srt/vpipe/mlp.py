@@ -402,6 +402,32 @@ def fd_conditional_mlp_full_graph(
             valid_rows,
         )
 
+    # Lane-2 cut2 (2026-09-02): the low-row `full_dual` body resolves BEFORE
+    # every routed-MLP dispatch, binary_cohort included. Below ~32 rows decode
+    # is weight-bandwidth-bound, so partial-row skipping saves no weight reads
+    # and the count-adaptive / grouped machinery is pure cost (measured on the
+    # CSD3 ladder: +8.5 ms/step at 1-16 rows, 1,142 vs 376 launches). The
+    # dense-both-branches body costs the production MLP plus the small
+    # projector GEMMs. Invalid (padded) rows are zeroed exactly as the
+    # binary-cohort path does. Same env gate as the compact-path low-row body.
+    compact_enabled, min_rows, fraction, multiple = full_graph_compact_config()
+    compact_enabled = compact_enabled and compact_phase_enabled
+    rows = int(hidden_states.shape[0])
+    low_row_policy, low_row_max_rows = full_graph_low_row_policy()
+    if (
+        compact_enabled
+        and low_row_policy == "full_dual"
+        and rows <= low_row_max_rows
+    ):
+        output = _full_dual_mlp(
+            layer, proj, hidden_states, route_weights, run_mask
+        )
+        if valid_rows is not None:
+            output = torch.where(
+                valid_rows.view(-1, 1), output, torch.zeros_like(output)
+            )
+        return output
+
     # binary_cohort resolves BEFORE the grouped and compact gates
     # (kernel design v2.1 item 5) and fail-closes on conflicts.
     binary_policies = full_graph_layer_policies()
@@ -434,18 +460,6 @@ def fd_conditional_mlp_full_graph(
             valid_rows,
         )
 
-    compact_enabled, min_rows, fraction, multiple = full_graph_compact_config()
-    compact_enabled = compact_enabled and compact_phase_enabled
-    rows = int(hidden_states.shape[0])
-    low_row_policy, low_row_max_rows = full_graph_low_row_policy()
-    if (
-        compact_enabled
-        and low_row_policy == "full_dual"
-        and rows <= low_row_max_rows
-    ):
-        return _full_dual_mlp(
-            layer, proj, hidden_states, route_weights, run_mask
-        )
     if compact_enabled and rows >= min_rows:
         policies = full_graph_layer_policies()
         layer_id = int(getattr(layer, "layer_id", -1))
