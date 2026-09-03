@@ -40,9 +40,11 @@ from sglang.srt.vpipe.env import (
     FD_COMPACT_PHASES_ENV,
     FD_COMPACT_Q_PROJ_ENV,
     FD_LOW_ROW_MAX_ROWS_ENV,
+    FD_GATE_MODE_ENV,
     FD_LOW_ROW_POLICY_ENV,
     _VALID_ACTIVE_PHASES,
     _NATIVE_DENSE_UNBOUNDED_ROWS,
+    _VALID_GATE_MODES,
     _VALID_LOW_ROW_POLICIES,
     FD_EXECUTION_FULL_GRAPH,
     FD_EXECUTION_DIRECT_EAGER,
@@ -244,6 +246,26 @@ def _strict_bool(
     if value in {"0", "false", "no", "off", ""}:
         return False
     raise ValueError(f"{name} must be a boolean value")
+def full_graph_gate_mode(environ: Optional[Mapping[str, str]] = None) -> str:
+    """Return the routed-MLP gate arithmetic the loaded checkpoint was trained with.
+
+    This is a property of the CHECKPOINT, never a tuning knob. `released` is the
+    published FlexiDepth gate (`w * MLP` on RUN, `(1 - w) * PROJECT` otherwise);
+    `hard_mask` is the straight-through gate, whose forward selects branches by
+    the hard mask with NO `w` scaling. Defaults to `released` so every existing
+    deployment is unchanged, and fails closed on any other value.
+    """
+
+    values = os.environ if environ is None else environ
+    mode = str(values.get(FD_GATE_MODE_ENV, "released")).strip().lower()
+    if mode not in _VALID_GATE_MODES:
+        choices = ", ".join(sorted(_VALID_GATE_MODES))
+        raise ValueError(
+            f"{FD_GATE_MODE_ENV} must be one of {choices}; got {mode!r}"
+        )
+    return mode
+
+
 def full_graph_low_row_policy(
     environ: Optional[Mapping[str, str]] = None,
 ) -> tuple[str, int]:

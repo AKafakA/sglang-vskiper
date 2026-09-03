@@ -132,6 +132,15 @@ _VALID_EXECUTION_MODES = frozenset(
 # posture — the count-adaptive and grouped paths stay in the tree for their
 # gate arms but are not reachable from a `native_dense` deployment.
 _VALID_LOW_ROW_POLICIES = frozenset(("off", "full_dual", "native_dense"))
+# Routed-MLP gate arithmetic, which is a property of the CHECKPOINT, not a tuning
+# knob. `released` is the published FlexiDepth gate: `w * MLP` on RUN rows and
+# `(1 - w) * PROJECT` on the rest. `hard_mask` is the straight-through gate
+# (`m = hard + w - w.detach()`, trained 2026-09-03 for the Qwen3 family): the
+# forward is a hard selection with NO `w` scaling on either branch. Serving an
+# `ste_hard` checkpoint under `released` applies scaling it was never trained
+# with and fails silently — the same defect that voided the 09-03 quality gates.
+FD_GATE_MODE_ENV = "SGLANG_FD_GATE_MODE"
+_VALID_GATE_MODES = frozenset(("released", "hard_mask"))
 # Sentinel bound for `native_dense`; larger than any capturable decode bucket
 # (the req-to-token pool ceiling is 4096 rows) so the body always resolves.
 _NATIVE_DENSE_UNBOUNDED_ROWS = 1 << 30
