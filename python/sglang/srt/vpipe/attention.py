@@ -114,12 +114,17 @@ def fd_attention_o_proj_full_graph(
     )
     if row_map is None or count is None or row_map_layer != layer_id:
         row_map, count = build_row_map(run_mask)
-    packed_attention = pack_rows(
-        attention_output,
-        row_map,
-        count,
-        capacity=capacity,
+    # Lane-2 cut6 (2026-09-03): this call used to pass `capacity=` to
+    # `kernel.pack_rows`, which takes a PREALLOCATED destination and returns
+    # None — so the compact-o_proj path raised `TypeError: pack_rows() got an
+    # unexpected keyword argument 'capacity'` at its first use and had never
+    # run in any deployment (found when the mapped-attention arm refused to
+    # boot). Allocate the fixed-capacity destination here and use the kernel's
+    # real signature; capacity is graph-static, so the shape stays capturable.
+    packed_attention = attention_output.new_empty(
+        (capacity, int(attention_output.shape[1]))
     )
+    pack_rows(attention_output, row_map, count, packed_attention)
     packed_output, _ = attention.o_proj(packed_attention)
     output = attention_output.new_zeros(
         (rows, int(attention.o_proj.weight.shape[0]))
