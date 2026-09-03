@@ -362,6 +362,48 @@ def test_seam_observe_is_level_triggered_idempotent_in_state() -> None:
     assert dispatch.observe(1024) == "skip"
 
 
+def test_fused_evidence_allows_both_phases_and_attests_its_scope() -> None:
+    """Lane-2 cut3 item 4 (D-359): the fused evidence kernel is decode-layout and
+    row-capped, so the mode is chosen per PASS. A both-phase deployment is therefore
+    legal, must still have decode active, and must say in the attestation that two
+    evidence definitions coexist."""
+    import pytest
+
+    from sglang.srt.vpipe.validation import (
+        validate_full_graph_model_configuration,
+    )
+
+    base = {
+        "SGLANG_FD_EXECUTION_MODE": "full_graph",
+        "SGLANG_FD_FULL_GRAPH_FUSED_EVIDENCE": "1",
+        "SGLANG_FD_FULL_GRAPH_ROUTE_ACCOUNTING": "1",
+        "SGLANG_FD_FULL_GRAPH_LAYER_COUNTERS": "1",
+        "SGLANG_FD_FULL_GRAPH_DEVICE_ROUTE_TAPE": "1",
+        "SGLANG_FD_FULL_GRAPH_DEVICE_ROUTE_DIGEST": "1",
+        "SGLANG_FD_FULL_GRAPH_SCHEDULER_CONVERGENCE": "1",
+        "SGLANG_FD_FULL_GRAPH_COMPACT": "1",
+    }
+
+    def check(phases):
+        env = dict(base, SGLANG_FD_ACTIVE_PHASES=phases)
+        routed = list(range(16, 32))
+        validate_full_graph_model_configuration(
+            loaded_layers=routed,
+            loaded_flexidepth_layers=routed,
+            tp_size=1,
+            pp_size=1,
+            quant_config=None,
+            environ=env,
+        )
+
+    # both phases is now legal (it was refused before this cut)
+    check("both")
+    check("decode")
+    # ... but decode must be active, or the fused path could never run
+    with pytest.raises(ValueError):
+        check("prefill")
+
+
 def test_native_dense_low_row_policy_is_unbounded_and_attested() -> None:
     """Lane-2 cut3 item 1 (D-358): `native_dense` is the serving arm's routed-MLP
     posture — the model's own dense feed-forward at EVERY occupancy. It carries no

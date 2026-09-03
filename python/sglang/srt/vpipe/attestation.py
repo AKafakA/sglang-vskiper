@@ -782,6 +782,23 @@ def model_runner_runtime_attestation(
                 if fused_evidence
                 else "per_layer_valid_row_matrix"
             ),
+            # Lane-2 cut3 item 4 (D-359): the fused kernel is decode-layout and
+            # row-capped, so the mode is chosen PER PASS. A both-phase
+            # deployment therefore carries BOTH evidence definitions — fused on
+            # decode passes within the cap, the per-pass accumulators on prefill
+            # passes and on any decode pass above it. Stated here so a readout
+            # cannot silently attribute one definition to the whole run.
+            "scope": (
+                "decode_passes_within_row_cap"
+                if fused_evidence
+                else "all_passes"
+            ),
+            "row_cap": 1024 if fused_evidence else None,
+            "unfused_fallback": (
+                "prefill_passes_and_decode_above_row_cap"
+                if fused_evidence
+                else None
+            ),
         },
         "device_resident_routes": True,
         "full_batch_attention": not mapped_decode_attention,

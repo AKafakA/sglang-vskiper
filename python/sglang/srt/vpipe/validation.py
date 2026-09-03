@@ -693,10 +693,16 @@ def validate_full_graph_model_configuration(
             raise ValueError(
                 f"{FD_FUSED_EVIDENCE_ENV}=1 requires " + ", ".join(missing)
             )
-        if flexidepth_active_phases(values) != {"decode"}:
+        # Lane-2 cut3 item 4 (D-359): the decode-only restriction existed because
+        # the fused kernel is decode-layout and capped at 1024 rows. The decision
+        # is now made PER PASS in `prepare_full_graph_batch` (fused on a decode
+        # pass within the cap, the existing accumulators otherwise), so a
+        # both-phase deployment is well-defined. Decode must still be active —
+        # without it the fused path could never run and the flag would be inert.
+        if "decode" not in flexidepth_active_phases(values):
             raise ValueError(
-                f"{FD_FUSED_EVIDENCE_ENV}=1 currently requires "
-                f"{FD_ACTIVE_PHASES_ENV}=decode"
+                f"{FD_FUSED_EVIDENCE_ENV}=1 requires decode in "
+                f"{FD_ACTIVE_PHASES_ENV}"
             )
     if compact_o_proj and not compact_enabled:
         raise ValueError(

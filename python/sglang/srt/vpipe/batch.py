@@ -240,7 +240,20 @@ def prepare_full_graph_batch(
     tape_enabled = full_graph_device_route_tape_enabled()
     layer_counters_enabled = full_graph_layer_counters_enabled()
     scheduler_convergence = full_graph_scheduler_convergence_enabled()
+    # Lane-2 cut3 item 4 (D-359): the fused evidence kernel is decode-layout and
+    # capped at 1024 rows, which is why `validation.py` refused it unless the
+    # deployment was decode-only. The shipping arm serves BOTH phases, so decide
+    # PER PASS instead of per deployment: fused on a decode pass within the row
+    # cap, the existing per-pass accumulators otherwise. The decision is stamped
+    # on the batch so `finalize_full_graph_batch` reads the same fact the
+    # allocation used, rather than re-reading the environment.
     fused_evidence = full_graph_fused_evidence_enabled()
+    if fused_evidence:
+        rows_now = int(hidden_states.shape[0])
+        fused_evidence = (
+            forward_batch.forward_mode.is_decode() and rows_now <= 1024
+        )
+    forward_batch.fd_full_graph_fused_evidence_active = fused_evidence
     if fused_evidence:
         enabled = (
             accounting_enabled,
@@ -403,7 +416,11 @@ def finalize_full_graph_batch(
                     )
                 )
             )
-    if full_graph_fused_evidence_enabled():
+    # Lane-2 cut3 item 4: read the PER-PASS stamp, not the environment, so the
+    # accumulation path always matches the allocation decision made in
+    # `prepare_full_graph_batch` (a prefill pass, or a decode pass above the
+    # kernel's row cap, keeps the unfused accumulators).
+    if getattr(forward_batch, "fd_full_graph_fused_evidence_active", False):
         if not routes.is_cuda:
             raise RuntimeError("fused route evidence requires CUDA routes")
         if device_tape is None:
