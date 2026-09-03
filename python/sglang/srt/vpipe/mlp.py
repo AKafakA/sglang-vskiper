@@ -20,6 +20,7 @@ from typing import Any, Callable, Optional
 import torch
 import torch.nn.functional as F
 from sglang.srt.vpipe.common import (
+    full_graph_gate_mode,
     full_graph_low_row_policy,
 )
 from sglang.srt.vpipe.env import (
@@ -113,6 +114,7 @@ def _grouped_prefill_mlp(
     elif valid_rows.shape != (rows,) or valid_rows.dtype != torch.bool:
         raise RuntimeError("grouped prefill MLP valid rows do not match the batch")
 
+    scale_by_route_weight = full_graph_gate_mode() == "released"
     run_active = run_mask.squeeze(-1) & valid_rows
     project_active = (~run_mask.squeeze(-1)) & valid_rows
     run_rows = run_active.nonzero(as_tuple=True)[0]
@@ -121,13 +123,15 @@ def _grouped_prefill_mlp(
     if run_rows.numel() > 0:
         run_hidden = hidden_states.index_select(0, run_rows)
         run_output = layer.mlp(run_hidden)
-        run_output.mul_(route_weights.index_select(0, run_rows))
+        if scale_by_route_weight:
+            run_output.mul_(route_weights.index_select(0, run_rows))
         output.index_copy_(0, run_rows, run_output)
     if project_rows.numel() > 0:
         project_hidden = hidden_states.index_select(0, project_rows)
         project_output = proj(project_hidden)
-        project_weights = route_weights.index_select(0, project_rows)
-        project_output.mul_(project_weights.neg().add_(1.0))
+        if scale_by_route_weight:
+            project_weights = route_weights.index_select(0, project_rows)
+            project_output.mul_(project_weights.neg().add_(1.0))
         output.index_copy_(0, project_rows, project_output)
     return output
 def _binary_cohort_stats(device: torch.device) -> torch.Tensor:
@@ -692,8 +696,14 @@ def _full_dual_mlp(
 ) -> torch.Tensor:
     """Exact fixed-shape fallback that computes both branches for every row."""
 
-    run_output = layer.mlp(hidden_states) * route_weights
-    project_output = proj(hidden_states) * (1.0 - route_weights)
+    run_output = layer.mlp(hidden_states)
+    project_output = proj(hidden_states)
+    if full_graph_gate_mode() == "released":
+        # Published FlexiDepth gate: both branches carry the router weight.
+        run_output = run_output * route_weights
+        project_output = project_output * (1.0 - route_weights)
+    # `hard_mask` (straight-through checkpoints): the forward is the hard
+    # selection below with NO `w` scaling on either branch.
     return torch.where(run_mask, run_output, project_output)
 def _dense_filtered_project_mlp(
     layer: Any,

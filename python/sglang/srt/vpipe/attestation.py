@@ -51,6 +51,7 @@ from sglang.srt.vpipe.common import (
 )
 from sglang.srt.vpipe.common import (
     full_graph_compact_phases,
+    full_graph_gate_mode,
     full_graph_low_row_policy,
 )
 from sglang.srt.vpipe.common import (
@@ -533,6 +534,7 @@ def low_row_policy_attestation(
 
     if policy is None or max_rows is None:
         policy, max_rows = full_graph_low_row_policy()
+    gate_mode = full_graph_gate_mode()
     return {
         "enabled": policy != "off",
         "policy": policy,
@@ -550,6 +552,15 @@ def low_row_policy_attestation(
             "model_native_dense_only"
             if policy == "native_dense"
             else "policy_dispatch"
+        ),
+        # The gate arithmetic the routed MLP actually applied, so a reader of
+        # /server_info can tell whether a checkpoint was served under the gate
+        # it was trained with instead of inferring it from the environment.
+        "gate_mode": gate_mode,
+        "gate_branch_scaling": (
+            "run_times_w_project_times_one_minus_w"
+            if gate_mode == "released"
+            else "hard_selection_no_w_scaling"
         ),
     }
 def model_runner_runtime_attestation(
