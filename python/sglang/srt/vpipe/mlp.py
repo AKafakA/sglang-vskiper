@@ -427,7 +427,7 @@ def fd_conditional_mlp_full_graph(
     # (validation already requires COMPACT=1 with the policy); tying it to the
     # per-batch compact-phase flag left graph-captured passes on the
     # fused-MoE fallback (cut2 profile: 11.6 fused_moe launches/step at 4 rows).
-    if low_row_policy == "full_dual" and rows <= low_row_max_rows:
+    if low_row_policy in ("full_dual", "native_dense") and rows <= low_row_max_rows:
         output = _full_dual_mlp(
             layer, proj, hidden_states, route_weights, run_mask
         )

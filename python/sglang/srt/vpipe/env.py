@@ -126,7 +126,15 @@ _VALID_LAYER_POLICIES = frozenset(
 _VALID_EXECUTION_MODES = frozenset(
     (FD_EXECUTION_DIRECT_EAGER, FD_EXECUTION_FULL_GRAPH)
 )
-_VALID_LOW_ROW_POLICIES = frozenset(("off", "full_dual"))
+# `native_dense` (lane-2 cut3 item 1, D-358) is `full_dual` without a row bound:
+# the model's OWN dense feed-forward for every row plus the projector, selected
+# by the route mask, at every occupancy. It is the serving arm's routed-MLP
+# posture — the count-adaptive and grouped paths stay in the tree for their
+# gate arms but are not reachable from a `native_dense` deployment.
+_VALID_LOW_ROW_POLICIES = frozenset(("off", "full_dual", "native_dense"))
+# Sentinel bound for `native_dense`; larger than any capturable decode bucket
+# (the req-to-token pool ceiling is 4096 rows) so the body always resolves.
+_NATIVE_DENSE_UNBOUNDED_ROWS = 1 << 30
 _VALID_ACTIVE_PHASES = frozenset(("decode", "prefill", "both"))
 _VALID_FORCED_ROUTES = frozenset(("off", "all_run", "all_project"))
 _VALID_DEFER_PROJECT_KV_DIAGNOSTIC_STAGES = frozenset(
