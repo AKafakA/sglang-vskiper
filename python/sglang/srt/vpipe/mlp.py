@@ -393,7 +393,19 @@ def fd_conditional_mlp_full_graph(
         # decode is weight-bound, so the dense MLP on all rows costs exactly
         # production's MLP; same output (active rows w*MLP, others zero).
         lr_policy, lr_max_rows = full_graph_low_row_policy()
-        if lr_policy == "full_dual" and int(hidden_states.shape[0]) <= lr_max_rows:
+        # `native_dense` (D-358) must be honoured here too. This test named only
+        # `full_dual` because it predates that policy, and when native_dense was
+        # added the MAIN dispatch below was widened while this branch was not --
+        # so the shipped posture fell through to the fused-MoE path the ruling
+        # exists to remove. MEASURED on the 2026-09-03 decode profile
+        # (bs 53 x 4096, the cell's real shape): `fused_moe_kernel` cost 46.6 ms
+        # of a 611 ms window (7.6 %) while masked attention was saving 93.4 ms --
+        # i.e. half the win handed straight back. It also made the attestation
+        # lie: /server_info reported `routed_mlp_kernels: model_native_dense_only`
+        # with the fused-MoE kernel plainly in the trace.
+        if lr_policy in ("full_dual", "native_dense") and int(
+            hidden_states.shape[0]
+        ) <= lr_max_rows:
             run_output = layer.mlp(hidden_states) * route_weights
         else:
             run_output = _one_expert_mlp(
