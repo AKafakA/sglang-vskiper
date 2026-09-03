@@ -519,6 +519,39 @@ def record_model_runner_dispatch(
     row_name = f"_fd_full_graph_decode_{suffix}_rows"
     setattr(model_runner, dispatch_name, getattr(model_runner, dispatch_name, 0) + 1)
     setattr(model_runner, row_name, getattr(model_runner, row_name, 0) + rows)
+def low_row_policy_attestation(
+    policy: Optional[str] = None, max_rows: Optional[int] = None
+) -> dict[str, Any]:
+    """The routed-MLP body posture, as a standalone (testable) evidence block.
+
+    `native_dense` (lane-2 cut3 item 1, D-358) means the routed MLP is the
+    model's OWN dense feed-forward at every occupancy plus the projector,
+    selected by the route mask — no count-adaptive or grouped dispatch is
+    reachable from such a deployment. Reported so the posture is read off
+    `/server_info` rather than inferred from the environment.
+    """
+
+    if policy is None or max_rows is None:
+        policy, max_rows = full_graph_low_row_policy()
+    return {
+        "enabled": policy != "off",
+        "policy": policy,
+        "max_rows": max_rows if policy != "off" else None,
+        "active_phases": ["decode"] if policy != "off" else [],
+        "logical_routes_preserved": True,
+        "physical_work": (
+            "dense_and_project_all_graph_rows"
+            if policy in ("full_dual", "native_dense")
+            else "unchanged"
+        ),
+        "flop_savings_claim_allowed": policy == "off",
+        "applies_to_all_rows": policy == "native_dense",
+        "routed_mlp_kernels": (
+            "model_native_dense_only"
+            if policy == "native_dense"
+            else "policy_dispatch"
+        ),
+    }
 def model_runner_runtime_attestation(
     model_runner: Any, *, loaded_layer_count: int
 ) -> dict[str, Any]:
@@ -919,23 +952,9 @@ def model_runner_runtime_attestation(
                 )
             ),
         },
-        "low_row_policy": {
-            "enabled": low_row_policy != "off",
-            "policy": low_row_policy,
-            "max_rows": (
-                low_row_max_rows if low_row_policy != "off" else None
-            ),
-            "active_phases": (
-                ["decode"] if low_row_policy != "off" else []
-            ),
-            "logical_routes_preserved": True,
-            "physical_work": (
-                "dense_and_project_all_graph_rows"
-                if low_row_policy == "full_dual"
-                else "unchanged"
-            ),
-            "flop_savings_claim_allowed": low_row_policy == "off",
-        },
+        "low_row_policy": low_row_policy_attestation(
+            low_row_policy, low_row_max_rows
+        ),
         "virtual_cohort": {
             "enabled": virtual_cohort,
             "mapping": "device_row_map",

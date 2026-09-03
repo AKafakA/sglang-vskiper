@@ -362,6 +362,52 @@ def test_seam_observe_is_level_triggered_idempotent_in_state() -> None:
     assert dispatch.observe(1024) == "skip"
 
 
+def test_native_dense_low_row_policy_is_unbounded_and_attested() -> None:
+    """Lane-2 cut3 item 1 (D-358): `native_dense` is the serving arm's routed-MLP
+    posture — the model's own dense feed-forward at EVERY occupancy. It carries no
+    row bound (setting one is refused) and says so in the attestation."""
+    import pytest
+
+    from sglang.srt.vpipe.attestation import low_row_policy_attestation
+    from sglang.srt.vpipe.common import full_graph_low_row_policy
+
+    policy, max_rows = full_graph_low_row_policy(
+        {"SGLANG_FD_FULL_GRAPH_LOW_ROW_POLICY": "native_dense"}
+    )
+    assert policy == "native_dense"
+    assert max_rows >= 4096, "native_dense must cover every capturable bucket"
+
+    # A row bound contradicts the policy and is refused rather than ignored.
+    with pytest.raises(ValueError):
+        full_graph_low_row_policy(
+            {
+                "SGLANG_FD_FULL_GRAPH_LOW_ROW_POLICY": "native_dense",
+                "SGLANG_FD_FULL_GRAPH_LOW_ROW_MAX_ROWS": "32",
+            }
+        )
+    # The bounded policy still behaves exactly as before.
+    bounded_policy, bounded_rows = full_graph_low_row_policy(
+        {
+            "SGLANG_FD_FULL_GRAPH_LOW_ROW_POLICY": "full_dual",
+            "SGLANG_FD_FULL_GRAPH_LOW_ROW_MAX_ROWS": "31",
+        }
+    )
+    assert (bounded_policy, bounded_rows) == ("full_dual", 31)
+    # An unknown policy name is still refused.
+    with pytest.raises(ValueError):
+        full_graph_low_row_policy(
+            {"SGLANG_FD_FULL_GRAPH_LOW_ROW_POLICY": "dense_everywhere"}
+        )
+
+    block = low_row_policy_attestation(policy, max_rows)
+    assert block["policy"] == "native_dense"
+    assert block["enabled"] is True
+    assert block["applies_to_all_rows"] is True
+    assert block["routed_mlp_kernels"] == "model_native_dense_only"
+    assert block["physical_work"] == "dense_and_project_all_graph_rows"
+    assert block["flop_savings_claim_allowed"] is False
+
+
 def test_decode_regime_kv_criterion_keys_on_resident_tokens() -> None:
     """Lane-2 cut1: with enter/exit_kv_tokens set the band ignores rows and keys
     on the batch's resident KV tokens (rows x context); 0/0 keeps the rows band."""

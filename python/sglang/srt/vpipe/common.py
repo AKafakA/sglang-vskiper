@@ -42,6 +42,7 @@ from sglang.srt.vpipe.env import (
     FD_LOW_ROW_MAX_ROWS_ENV,
     FD_LOW_ROW_POLICY_ENV,
     _VALID_ACTIVE_PHASES,
+    _NATIVE_DENSE_UNBOUNDED_ROWS,
     _VALID_LOW_ROW_POLICIES,
     FD_EXECUTION_FULL_GRAPH,
     FD_EXECUTION_DIRECT_EAGER,
@@ -255,6 +256,21 @@ def full_graph_low_row_policy(
         raise ValueError(
             f"{FD_LOW_ROW_POLICY_ENV} must be one of {choices}; got {policy!r}"
         )
+    if policy == "native_dense":
+        # Lane-2 cut3 item 1 (D-358): the routed MLP is the model's OWN dense
+        # feed-forward at every occupancy, plus the projector, selected by the
+        # route mask. Measured on A100: dense-all is faster than the
+        # count-adaptive kernel at 32-128 rows and within 0.4 ms at 256, while
+        # a routed layer is weight-bound below ~208 rows, so exact-count
+        # compute cannot pay there. Unbounded by construction — a row bound
+        # would reintroduce the very dispatch this policy removes.
+        if str(values.get(FD_LOW_ROW_MAX_ROWS_ENV, "") or "").strip():
+            raise ValueError(
+                f"{FD_LOW_ROW_MAX_ROWS_ENV} must not be set with "
+                f"{FD_LOW_ROW_POLICY_ENV}=native_dense (it applies to every "
+                "occupancy)"
+            )
+        return policy, _NATIVE_DENSE_UNBOUNDED_ROWS
     try:
         max_rows = int(values.get(FD_LOW_ROW_MAX_ROWS_ENV, "16"))
     except (TypeError, ValueError) as error:
