@@ -169,6 +169,9 @@ class FlexiDepthConditionalCudaGraphBackend(FullCudaGraphBackend):
                 "ForwardBatch"
             )
         dummies.vp_fd_decode_dense = True
+        # cut8: the seam memo depends on this stamp; invalidate it (static batches are reused).
+        dummies.vp_seam_batch_routed = None
+        dummies.vp_seam_batch_eager = None
         dummies.fd_full_graph_force_production_attention = True
         try:
             super().capture_one(
@@ -179,6 +182,8 @@ class FlexiDepthConditionalCudaGraphBackend(FullCudaGraphBackend):
             )
         finally:
             dummies.vp_fd_decode_dense = False
+            dummies.vp_seam_batch_routed = None
+            dummies.vp_seam_batch_eager = None
             dummies.fd_full_graph_force_production_attention = False
         self._stock_decode_shapes.add(shape_key)
         # Snapshot the production (FlashInfer) decode-graph wrapper this stock

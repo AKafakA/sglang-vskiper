@@ -193,10 +193,20 @@ def init_fd_layer(layer, config, layer_id, routed_lo, routed_hi, qk_head_norms):
 
 def maybe_fd_layer_forward(layer, positions, hidden_states, forward_batch, residual):
     """Decoder-forward seam: FD dispatch; None = fall through to the stock body."""
+    # Lane-2 cut8: memoise the two BATCH-level predicates on the ForwardBatch.
+    # This function runs per decoder layer, and both predicates re-parsed
+    # SGLANG_FD_* environment variables on every call; the prefill profile
+    # attributed the dense-pass surcharge to host submission cost, not kernels.
+    # The per-LAYER parts (fd_execution_mode, vp_full_graph_routed, fd_router)
+    # stay per layer — only the batch-level parts are cached.
+    if forward_batch.vp_seam_batch_routed is None:
+        forward_batch.vp_seam_batch_routed = full_graph_routed_enabled(
+            forward_batch
+        )
     if (
         layer.fd_execution_mode == FD_EXECUTION_FULL_GRAPH
         and layer.vp_full_graph_routed
-        and full_graph_routed_enabled(forward_batch)
+        and forward_batch.vp_seam_batch_routed
     ):
         return fd_layer_forward_full_graph(
             layer,
@@ -207,7 +217,11 @@ def maybe_fd_layer_forward(layer, positions, hidden_states, forward_batch, resid
             layer.fd_router,
             layer.fd_proj,
         )
-    if layer.fd_router is not None and flexidepth_phase_enabled(forward_batch):
+    if forward_batch.vp_seam_batch_eager is None:
+        forward_batch.vp_seam_batch_eager = flexidepth_phase_enabled(
+            forward_batch
+        )
+    if layer.fd_router is not None and forward_batch.vp_seam_batch_eager:
         # direct_eager: the quality-attribution reference. It answers whether
         # a quality result is the checkpoint's or vPipe's execution of it, so
         # it is a gate instrument, never a performance path.
@@ -465,6 +479,8 @@ def stamp_prefill_regime(model, forward_batch):
                 # enabled (unchanged). The appended running-decode rows are
                 # governed by the decode leg (I6), not the prefill leg.
                 forward_batch.vp_fd_prefill_dense = False
+                forward_batch.vp_seam_batch_routed = None
+                forward_batch.vp_seam_batch_eager = None
             else:
                 _regime_running_bs = (
                     _vp_regime_prefill_mixed_running_bs(forward_batch)
@@ -485,6 +501,8 @@ def stamp_prefill_regime(model, forward_batch):
                 forward_batch.vp_fd_prefill_dense = (
                     _regime_decision == PREFILL_BODY_DENSE
                 )
+                forward_batch.vp_seam_batch_routed = None
+                forward_batch.vp_seam_batch_eager = None
             # Per-pass decision counter (dense vs grouped-FD), surfaced into
             # regime_switch.counters.prefill (stripped from deploy identity).
             if forward_batch.vp_fd_prefill_dense:

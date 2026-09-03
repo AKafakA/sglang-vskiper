@@ -871,6 +871,9 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
                 # untouched, so the dummy pass traces exactly this variant.
                 forward_batch.vp_fd_prefill_variant_pinned = True
                 forward_batch.vp_fd_prefill_dense = variant == PREFILL_BODY_DENSE
+                # cut8: the seam memo reads this stamp; capture dummies are reused.
+                forward_batch.vp_seam_batch_routed = None
+                forward_batch.vp_seam_batch_eager = None
             self.backend.capture_one(
                 ShapeKey(size=num_tokens, variant_label=variant),
                 run_once,
@@ -1133,6 +1136,10 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
                 static_forward_batch.vp_fd_prefill_dense = (
                     variant == PREFILL_BODY_DENSE
                 )
+                # cut8: the static batch is reused across replays and this
+                # stamp changes per variant, so the seam memo must not persist.
+                static_forward_batch.vp_seam_batch_routed = None
+                static_forward_batch.vp_seam_batch_eager = None
 
             if self.layer_model is not None:
                 # BCG path. The captured graph is a bs=1 replay of
