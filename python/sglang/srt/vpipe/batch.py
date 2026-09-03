@@ -328,11 +328,15 @@ def prepare_full_graph_batch(
             cache_positions=cache_positions,
             row_ids=row_ids,
             adapter_name=forward_batch.fd_full_graph_skipper_adapter.name,
-            branch_weights=torch.empty(
-                (len(route_layer_order), row_count),
-                dtype=torch.float32,
-                device=hidden_states.device,
-            ),
+            # lane-2 cut3: the branch-weight TAPE is write-only. `FullGraphDeviceRouteTape`
+            # copies the per-layer route weights into it (common.py:380, :416) and NOTHING
+            # reads them back -- not the executor, not the compaction kernels (whose own
+            # `branch_weights` parameters are the per-pass route weights, a different
+            # object), and not the attestation, which never reports a branch-weight tape.
+            # `None` is a first-class state, guarded at common.py:374, :410 and :428, so
+            # passing it skips the [layers, rows] float32 allocation and 16 device copies
+            # per pass without introducing a new code path.
+            branch_weights=None,
             logical_request_ids=logical_request_ids,
             compact_evidence_specs=compact_evidence_specs,
             inline_kv_ready=(
