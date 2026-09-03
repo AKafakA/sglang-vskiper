@@ -468,6 +468,18 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
     # never re-decide the variant the raw shape chose.
     vp_fd_prefill_dense: bool = False
     vp_fd_prefill_variant_pinned: bool = False
+    # Lane-2 cut8 (2026-09-03): per-PASS memo of the two batch-level seam
+    # predicates. `maybe_fd_layer_forward` runs once per decoder layer (32 for
+    # Llama-3-8B) and each call re-read and re-parsed SGLANG_FD_* environment
+    # variables through flexidepth_execution_mode / flexidepth_active_phases.
+    # The EXTEND-phase profile of a 512-token prefill pass showed the device
+    # doing identical work (GPU busy 41.63 vs 41.38 ms) while the GPU sat idle
+    # 49.5 vs 3.4 ms — the surcharge was host submission, not kernels. Both
+    # predicates are pure functions of this batch plus the environment, and the
+    # environment cannot change mid-pass, so they are computed once and reused.
+    # None = not yet decided for this batch.
+    vp_seam_batch_routed: Optional[bool] = None
+    vp_seam_batch_eager: Optional[bool] = None
     # Pin all layers' attention to the production decode backend for this pass
     # (and suppress the routed-backend plan, F4). Previously a dynamically-set
     # attribute (full-graph layer execution + W1 capture dummies); declared with

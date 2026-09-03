@@ -178,6 +178,9 @@ def stamp_coverage_dense(
         return False
     # Overflow OR oracle unavailable — same branch (R-E, fail-closed dense).
     forward_batch.vp_fd_decode_coverage_dense = True
+    # cut8: invalidate the per-pass seam memo, which reads this stamp.
+    forward_batch.vp_seam_batch_routed = None
+    forward_batch.vp_seam_batch_eager = None
     # Same pairing as the W1 low band: every layer delegates to the
     # production attention backend, and the routed-backend plan is
     # suppressed for this pass (F4).
@@ -205,6 +208,8 @@ def reset_coverage_stamps(forward_batch: Any) -> None:
     """try/finally reset for both stamps + the attention pairing (SS2.1)."""
 
     forward_batch.vp_fd_decode_coverage_dense = False
+    forward_batch.vp_seam_batch_routed = None
+    forward_batch.vp_seam_batch_eager = None
     forward_batch.vp_fd_coverage_counted = False
     forward_batch.fd_full_graph_force_production_attention = False
 
