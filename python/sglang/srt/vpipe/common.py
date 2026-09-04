@@ -246,6 +246,29 @@ def _strict_bool(
     if value in {"0", "false", "no", "off", ""}:
         return False
     raise ValueError(f"{name} must be a boolean value")
+def full_graph_fused_router_norm_enabled(
+    environ: Optional[Mapping[str, str]] = None,
+) -> bool:
+    """Whether the router's RMSNorm uses SGLang's fused kernel.
+
+    Defaults to FALSE, which keeps the local ``FDRMSNorm`` and therefore keeps
+    routing bit-identical to the released FlexiDepth checkpoint. Enabling it
+    trades that identity for ~0.32 ms/step of decode tax: the fused kernel's
+    parallel variance reduction differs from PyTorch's in the last bit, which
+    moves rows sitting within an epsilon of the 0.5 RUN/PROJECT threshold
+    (measured: one row of 735,888). Deterministic, but not route-identical.
+    Fails closed on a non-boolean value.
+    """
+
+    values = os.environ if environ is None else environ
+    raw = str(values.get(FD_FUSED_ROUTER_NORM_ENV, "0")).strip().lower()
+    true_values = {"1", "true", "yes", "on"}
+    false_values = {"0", "false", "no", "off", ""}
+    if raw not in true_values | false_values:
+        raise ValueError(f"{FD_FUSED_ROUTER_NORM_ENV} must be a boolean value")
+    return raw in true_values
+
+
 def full_graph_gate_mode(environ: Optional[Mapping[str, str]] = None) -> str:
     """Return the routed-MLP gate arithmetic the loaded checkpoint was trained with.
 
