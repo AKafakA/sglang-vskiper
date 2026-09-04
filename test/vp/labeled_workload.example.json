@@ -1,0 +1,39 @@
+{
+  "schema_version": 4,
+  "protocol_suite_id": "flexidepth-lm-eval-0.4.9.1-serving-v1",
+  "status": "active",
+  "model": "NousResearch/Meta-Llama-3-8B-Instruct",
+  "model_revision": "53346005fb0ef11d3b6a83b12c895cca40156b6c",
+  "output_policy": {
+    "decode": "remaining_model_context",
+    "prefill": "one_token_probe",
+    "context_length": 8192
+  },
+  "decode_ratio": 0.5,
+  "categories": {
+    "decode": {
+      "datasets": ["gsm8k", "coqa", "humaneval"],
+      "weights": {
+        "gsm8k": 0.45,
+        "coqa": 0.45,
+        "humaneval": 0.10
+      }
+    },
+    "prefill": {
+      "datasets": [
+        "mmlu",
+        "hellaswag",
+        "winogrande",
+        "gov_report",
+        "multi_news"
+      ],
+      "weights": {
+        "mmlu": 0.3333333333,
+        "hellaswag": 0.3333333333,
+        "winogrande": 0.3333333334,
+        "gov_report": 0.0,
+        "multi_news": 0.0
+      }
+    }
+  }
+}
