@@ -843,25 +843,39 @@ def load_scrolls_summary(
             break
         considered += 1
         prompt = scrolls.render_prompt(dataset, record)
-        prompt_tokens = len(tokenizer(prompt)["input_ids"])
+        candidate = WorkloadItem(
+            dataset=dataset,
+            item_id=str(record["id"]),
+            phase="decode",
+            prompt=[{"role": "user", "content": prompt}],
+            prompt_kind="chat_messages",
+            reference_output_len=reference_output_len,
+            metric="rouge_offline",
+            gold=list(record["answers"]),
+            protocol_id=protocol["id"],
+            quality_semantics=protocol["quality_semantics"],
+            task_reference_max_output_len=protocol[
+                "task_reference_max_output_len"
+            ],
+            stop=[],
+            evaluator_data={},
+        )
+        # Measure with the SAME function that records prompt_len, not a
+        # convenient approximation of it. An earlier version filtered on
+        # `len(tokenizer(prompt)["input_ids"])` -- the bare text -- while the
+        # suite records the CHAT-TEMPLATED length from `_render_prompt_ids`.
+        # The template's header and generation prompt make the recorded length
+        # larger, so two gov_report rows passed the filter and were then granted
+        # 1,022 and 1,023 output tokens against a 1,024-token reference: under
+        # the window by the filter's arithmetic, over it by the server's, and
+        # silently quality-ineligible. Sharing the function makes the filter and
+        # the record unable to disagree.
+        prompt_tokens = len(_render_prompt_ids(tokenizer, candidate))
         if not scrolls.fits_window(prompt_tokens, dataset, context_length):
             continue
         items.append(
-            WorkloadItem(
-                dataset=dataset,
-                item_id=str(record["id"]),
-                phase="decode",
-                prompt=[{"role": "user", "content": prompt}],
-                prompt_kind="chat_messages",
-                reference_output_len=reference_output_len,
-                metric="rouge_offline",
-                gold=list(record["answers"]),
-                protocol_id=protocol["id"],
-                quality_semantics=protocol["quality_semantics"],
-                task_reference_max_output_len=protocol[
-                    "task_reference_max_output_len"
-                ],
-                stop=[],
+            replace(
+                candidate,
                 evaluator_data={
                     "source_split": protocol["evaluation_split"],
                     "prompt_tokens": prompt_tokens,
