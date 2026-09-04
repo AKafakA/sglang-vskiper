@@ -139,6 +139,13 @@ def fits_window(
     The generated tokens share the window with the prompt, so the test is
     ``prompt + output <= context_length``. Rows that fail are dropped, never
     truncated (ruling A1).
+
+    ``prompt_tokens`` MUST be the length the suite will record, i.e. the
+    chat-templated length with the generation prompt -- not the bare text.
+    Passing the text length lets rows through whose templated form no longer
+    leaves room for the reference output, which then silently lose quality
+    eligibility. ``load_scrolls_summary`` gets this right by calling the very
+    function that records ``prompt_len``.
     """
 
     return prompt_tokens + GENLEN[dataset] <= context_length
