@@ -23,18 +23,28 @@ Contents:
 Bodies are byte-identical to the frozen tree so route decisions -- and
 therefore route digests -- are unchanged by construction.
 
-EXCEPTION (2026-09-04, lane-2 stage 1): ``router_norm`` is now SGLang's fused
-``RMSNorm`` instead of the local ``FDRMSNorm``, to collapse ~6-8 elementwise
-launches per routed layer per step into one kernel. This forfeits the
+EXCEPTION (2026-09-04, lane-2 stage 1), OPT-IN AND DEFAULT OFF: with
+``SGLANG_FD_FUSED_ROUTER_NORM=1`` the ``router_norm`` becomes SGLang's fused
+``RMSNorm`` instead of the local ``FDRMSNorm``, collapsing ~6-8 elementwise
+launches per routed layer per step into one kernel. Enabling it forfeits the
 "byte-identical bodies" provenance argument for that one module, so route
 identity is no longer unchanged *by construction* and must be demonstrated
 EMPIRICALLY: ``test/vp/gates/route_digest_compare.py`` (route counters + output
 text sha256) plus a bit-exact ``route_weight``/``route_mask`` capture through
-``test/vp/compare_fd_parity_traces.py``. The arithmetic is chosen to be
-bit-exact -- ``cast_x_before_out_mul=True`` reproduces ``FDRMSNorm``'s
-weight-after-narrowing-cast order exactly (see the class docstring below) -- but
-"chosen to be" is not "shown to be", and the router feeds a 0.5 threshold where
-a single flipped bit changes a route.
+``test/vp/compare_fd_parity_traces.py``.
+
+MEASURED 2026-09-04, and it is NOT bit-exact: one row of 735,888 flips
+RUN -> PROJECT (``run_rows`` 389192 -> 389191). ``cast_x_before_out_mul=True``
+does reproduce ``FDRMSNorm``'s elementwise order exactly, so the *formula*
+matches -- but the fused kernel reduces the 256-wide variance with a parallel
+tree while PyTorch's ``.pow(2).mean(-1)`` does not, and the two differ in the
+last bit. The router feeds a 0.5 threshold, so one epsilon-close row is enough.
+The effect is DETERMINISTIC (two boots of one tree give bit-identical counters).
+
+The narrow lesson, which bounds any future fusion here: ELEMENTWISE ops are
+order-independent and can be fused bit-exactly; REDUCTIONS cannot. Of
+``FDRMSNorm``'s ~8 kernels only ``.mean(-1)`` is a reduction, so fusing the
+other seven around PyTorch's own mean would keep routes identical.
 """
 
 from __future__ import annotations
@@ -44,6 +54,7 @@ from typing import Any, Mapping, Optional
 from sglang.srt.layers.layernorm import RMSNorm
 from sglang.srt.vpipe.common import (
     _fdvp_router_graph_enabled,
+    full_graph_fused_router_norm_enabled,
     _fdvp_timing_enabled,
     fdvp_fused_project_input_enabled,
     fdvp_fused_project_input_shared_storage_enabled,
@@ -253,17 +264,26 @@ class FDRouter(nn.Module):
         super().__init__()
         r = hidden_size // reduction
         self.router_enc = nn.Linear(hidden_size, r, bias=False)
-        # Fused RMSNorm (lane-2 stage 1). `cast_x_before_out_mul=True` is the
-        # load-bearing argument: it selects `weight * x.to(orig_dtype)`
-        # (layers/layernorm.py:523-524), which is FDRMSNorm's exact order. The
-        # DEFAULT (False) multiplies the weight in fp32 and takes a different
-        # kernel -- different numerics, and this feeds a 0.5 route threshold.
-        # `eps` must stay explicit: RMSNorm defaults to 1e-6, FlexiDepth uses
+        # Router norm. DEFAULT = FDRMSNorm, which reproduces the released
+        # FlexiDepth checkpoint's routing EXACTLY and is what the oracle and the
+        # route-digest gate expect.
+        #
+        # Opting into the fused kernel (SGLANG_FD_FUSED_ROUTER_NORM=1) collapses
+        # ~6-8 elementwise launches per routed layer per step into one and buys a
+        # MEASURED 0.32 ms/step of flat decode tax, but it is NOT route-identical:
+        # the fused kernel reduces the 256-wide variance with a parallel tree,
+        # PyTorch's `.pow(2).mean(-1)` does not, and one row of 735,888 sitting
+        # within an epsilon of the 0.5 threshold flips RUN -> PROJECT.
+        # `cast_x_before_out_mul=True` is still load-bearing when enabled: it
+        # selects `weight * x.to(orig_dtype)` (layers/layernorm.py:523-524),
+        # FDRMSNorm's own order; the default (False) multiplies the weight in
+        # fp32 via a different kernel and would perturb more. `eps` must stay
+        # explicit -- RMSNorm defaults to 1e-6, FlexiDepth uses
         # config.rms_norm_eps (1e-5), threaded from seam.py.
-        # The single-kernel JIT path additionally requires fp16/bf16 AND
-        # weight.dtype == x.dtype (layers/layernorm.py:284-285); otherwise it
-        # silently falls back to forward_native -- correct, but no launch win.
-        self.router_norm = RMSNorm(r, eps=eps, cast_x_before_out_mul=True)
+        if full_graph_fused_router_norm_enabled():
+            self.router_norm = RMSNorm(r, eps=eps, cast_x_before_out_mul=True)
+        else:
+            self.router_norm = FDRMSNorm(r, eps=eps)
         self.router_act = nn.Tanh()
         self.router_dec = nn.Linear(r, hidden_size, bias=False)
         self.router_head = nn.Linear(hidden_size, 1, bias=False)

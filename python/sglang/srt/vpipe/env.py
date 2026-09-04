@@ -141,6 +141,23 @@ _VALID_LOW_ROW_POLICIES = frozenset(("off", "full_dual", "native_dense"))
 # with and fails silently — the same defect that voided the 09-03 quality gates.
 FD_GATE_MODE_ENV = "SGLANG_FD_GATE_MODE"
 _VALID_GATE_MODES = frozenset(("released", "hard_mask"))
+# Router-norm implementation. `0` (default) keeps the local FDRMSNorm, whose
+# arithmetic reproduces the released FlexiDepth checkpoint's routing EXACTLY.
+# `1` swaps in SGLang's fused RMSNorm, collapsing ~6-8 elementwise launches per
+# routed layer per step into one: MEASURED 2026-09-04 at -0.32 ms/step of flat
+# decode tax (2.67 -> 2.35), vp-vs-production +0.87 pp at ctx 4096 / +0.60 pp at
+# 6144, crossover 2597 -> 2313.
+#
+# It defaults OFF because it is NOT route-identical. The fused kernel reduces the
+# 256-wide variance with a parallel tree, PyTorch's `.pow(2).mean(-1)` does not,
+# and they differ in the last bit -- enough to move a row whose sigmoid sits
+# within an epsilon of the 0.5 RUN/PROJECT threshold. Measured: exactly one row
+# of 735,888 flipped RUN -> PROJECT (run_rows 389192 -> 389191). The effect is
+# DETERMINISTIC (two boots of one tree give bit-identical counters), so this is a
+# changed route, not a flaky one -- but it does break the exact-equality
+# assertion in `test/vp/gates/route_digest_compare.py` and it makes vSkipper's
+# routes differ from the FlexiDepth oracle. Opt in only with that declared.
+FD_FUSED_ROUTER_NORM_ENV = "SGLANG_FD_FUSED_ROUTER_NORM"
 # Sentinel bound for `native_dense`; larger than any capturable decode bucket
 # (the req-to-token pool ceiling is 4096 rows) so the body always resolves.
 _NATIVE_DENSE_UNBOUNDED_ROWS = 1 << 30
