@@ -10,7 +10,11 @@ import math
 from pathlib import Path
 from typing import Any
 
-from build_labeled_workload import validate_frozen_output_policy
+from build_labeled_workload import (
+    DEFAULT_FREQUENCY_PENALTY,
+    declared_frequency_penalty,
+    validate_frozen_output_policy,
+)
 from labeled_workload import read_jsonl, write_jsonl
 from sglang.benchmark.request_identity import (
     SGLANG_NATIVE_BACKENDS,
@@ -242,19 +246,37 @@ def build_equal_work_rows(
     production_artifacts: list[Path],
     *,
     backend: str = "sglang",
+    declared_penalty: float = DEFAULT_FREQUENCY_PENALTY,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     """Freeze each decode request to max raw production work across three reps."""
 
     if len(requests) != len(metadata):
         raise ValueError("request and metadata counts differ")
+    # The per-row `frequency_penalty` is written by THIS builder onto its own output (see
+    # `_pinned_body`), and by older versions of `build_labeled_workload.py` onto natural rows.
+    # The current natural builder does NOT emit it per row -- it declares the penalty once, in
+    # the suite summary. Reading the row field unconditionally therefore made the equal-work
+    # path fail on every freshly built natural suite (KeyError, 2026-09-04); the historical
+    # banks only worked because their input suites came from the older builder.
+    #
+    # `declared_penalty` is the suite-level declaration, which is the authoritative record --
+    # `workload_config_sha256` binds it into the build identity. Falling back to it is faithful,
+    # not permissive: the per-row value, when present, must still agree with it, and a row that
+    # disagrees is a real defect and still raises below.
     penalties = {
-        float(row["frequency_penalty"])
+        float(row.get("frequency_penalty", declared_penalty))
         for row in metadata
         if row.get("output_policy") != PREFILL_POLICY
     }
     if len(penalties) != 1:
         raise ValueError("natural workload must pin one decode frequency penalty")
     penalty = _validate_penalty(next(iter(penalties)))
+    if declared_penalty is not None and penalty != _validate_penalty(declared_penalty):
+        raise ValueError(
+            f"rows carry frequency_penalty={penalty} but the suite summary declares "
+            f"{declared_penalty}; a generation penalty may only come from the recorded "
+            "builder input"
+        )
     lengths, finish_reasons, context_hits = _production_lengths(
         requests, metadata, production_artifacts, backend
     )
@@ -440,6 +462,9 @@ def main() -> None:
             metadata,
             args.production_artifact,
             backend=args.backend,
+            declared_penalty=declared_frequency_penalty(
+                json.loads(args.summary.read_text(encoding="utf-8"))
+            ),
         )
     _write_outputs(
         args.summary,
