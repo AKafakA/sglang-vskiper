@@ -21,7 +21,19 @@ DECODE_DATASETS = ("gsm8k", "coqa", "humaneval")
 # Broader-decode workloads (v1.3): standalone named workloads only — they are
 # deliberately NOT part of DECODE_DATASETS so the decode_mix/mixed composition
 # contracts stay byte-stable.
-EXTENDED_DECODE_DATASETS = ("gsm8k_cot", "ifeval", "mmlu_pro", "mmlu_pro_cot")
+EXTENDED_DECODE_DATASETS = (
+    "gsm8k_cot",
+    "ifeval",
+    "mmlu_pro",
+    "mmlu_pro_cot",
+    # Long-context writing row (sealed axis A1-A6, 2026-09-04). Phase is
+    # "decode" because these generate 1024 tokens -- ~55% of cell time is
+    # decode -- unlike LongBench's gov_report/multi_news in PREFILL_DATASETS,
+    # whose 512-token outputs over the same documents are prefill-dominated.
+    "scrolls_gov_report",
+    "scrolls_summ_screen_fd",
+    "scrolls_qmsum",
+)
 PREFILL_DATASETS = (
     "mmlu",
     "hellaswag",
@@ -36,6 +48,12 @@ WORKLOAD_DATASETS = {
     "mixed": DECODE_DATASETS + PREFILL_DATASETS[:3],
     "prefill_core": PREFILL_DATASETS[:3],
     "prefill_long": PREFILL_DATASETS[3:],
+    # Sealed writing row: SCROLLS trio, window-FILTERED (never truncated).
+    "longctx_writing": (
+        "scrolls_gov_report",
+        "scrolls_summ_screen_fd",
+        "scrolls_qmsum",
+    ),
     "mixed_25": DECODE_DATASETS + PREFILL_DATASETS[:3],
     "mixed_50": DECODE_DATASETS + PREFILL_DATASETS[:3],
     "mixed_75": DECODE_DATASETS + PREFILL_DATASETS[:3],
@@ -49,12 +67,19 @@ WORKLOAD_PHASE = {
     "mixed": "mixed",
     "prefill_core": "prefill",
     "prefill_long": "prefill",
+    "longctx_writing": "decode",
     "mixed_25": "mixed",
     "mixed_50": "mixed",
     "mixed_75": "mixed",
     "mixed_all8": "mixed",
 }
 DEFAULT_DECODE_WEIGHTS = {
+    # Proportional to the MEASURED window-fit survivors (330/145/38 of
+    # 972/338/272) so the three pools drain together under sample_items'
+    # weighted draw; equal weights would exhaust qmsum's 38 rows first.
+    "scrolls_gov_report": 0.643,
+    "scrolls_summ_screen_fd": 0.283,
+    "scrolls_qmsum": 0.074,
     "gsm8k": 0.45,
     "coqa": 0.45,
     "humaneval": 0.10,
@@ -122,6 +147,27 @@ DATASET_PROTOCOLS: dict[str, dict[str, Any]] = {
         "evaluation_split": "validation",
         "quality_semantics": "paper_exact",
         "task_reference_max_output_len": 256,
+    },
+    "scrolls_gov_report": {
+        "id": "lm-eval:longbench_gov_report:zero-shot-chat",
+        "source": "tau/scrolls",
+        "evaluation_split": "validation",
+        "quality_semantics": "longbench_rouge_offline",
+        "task_reference_max_output_len": 1024,
+    },
+    "scrolls_summ_screen_fd": {
+        "id": "lm-eval:scrolls_summscreenfd:zero-shot-chat",
+        "source": "tau/scrolls",
+        "evaluation_split": "validation",
+        "quality_semantics": "longbench_rouge_offline",
+        "task_reference_max_output_len": 1024,
+    },
+    "scrolls_qmsum": {
+        "id": "lm-eval:scrolls_qmsum:zero-shot-chat",
+        "source": "tau/scrolls",
+        "evaluation_split": "validation",
+        "quality_semantics": "longbench_rouge_offline",
+        "task_reference_max_output_len": 1024,
     },
     "humaneval": {
         "id": "lm-eval-0.4.9.1:humaneval-v1:zero-shot-raw",
@@ -764,6 +810,74 @@ def load_selection_dataset(dataset: str, limit: int) -> list[WorkloadItem]:
     return items
 
 
+def load_scrolls_summary(
+    dataset: str,
+    limit: int,
+    tokenizer: Any,
+    context_length: int,
+) -> list[WorkloadItem]:
+    """SCROLLS long-context summarisation from locally staged jsonl.
+
+    Rows whose prompt + reference output would exceed the model window are
+    DROPPED, not truncated (owner ruling A1, 2026-09-04): truncating would score
+    ROUGE against a summary of a document the model only half saw, making the
+    figure incomparable to any published SCROLLS number -- which is the reason
+    the axis uses SCROLLS validation splits at all. Filtering happens here
+    rather than in `render_workload_rows` because the reference output length is
+    a per-dataset constant, so both sides of the window test are known at load
+    time; doing it later would break that function's gap-free `index` contract.
+
+    Quality is NOT scored in-repo. The metric defers to the third-party harness
+    (lm-eval `longbench_gov_report` / `scrolls_*`), matching the `ifeval_offline`
+    precedent -- an in-repo ROUGE reimplementation would violate the standing
+    rule that quality comes only from third-party harnesses.
+    """
+
+    scrolls = _load_module("vp_scrolls_local", "scrolls_local.py")
+    protocol = DATASET_PROTOCOLS[dataset]
+    reference_output_len = int(scrolls.GENLEN[dataset])
+    items: list[WorkloadItem] = []
+    considered = 0
+    for record in scrolls.iter_records(dataset):
+        if len(items) >= limit:
+            break
+        considered += 1
+        prompt = scrolls.render_prompt(dataset, record)
+        prompt_tokens = len(tokenizer(prompt)["input_ids"])
+        if not scrolls.fits_window(prompt_tokens, dataset, context_length):
+            continue
+        items.append(
+            WorkloadItem(
+                dataset=dataset,
+                item_id=str(record["id"]),
+                phase="decode",
+                prompt=[{"role": "user", "content": prompt}],
+                prompt_kind="chat_messages",
+                reference_output_len=reference_output_len,
+                metric="rouge_offline",
+                gold=list(record["answers"]),
+                protocol_id=protocol["id"],
+                quality_semantics=protocol["quality_semantics"],
+                task_reference_max_output_len=protocol[
+                    "task_reference_max_output_len"
+                ],
+                stop=[],
+                evaluator_data={
+                    "source_split": protocol["evaluation_split"],
+                    "prompt_tokens": prompt_tokens,
+                    "window_filtered": True,
+                    "context_length": context_length,
+                },
+            )
+        )
+    if not items:
+        raise ValueError(
+            f"{dataset}: no staged row fits prompt + {reference_output_len} "
+            f"<= {context_length} (considered {considered})"
+        )
+    return items
+
+
 def load_longbench_summary(
     dataset: str, limit: int, tokenizer: Any, max_length: int = 7000
 ) -> list[WorkloadItem]:
@@ -805,7 +919,22 @@ def load_dataset_items(
     limit: int,
     tokenizer: Optional[Any] = None,
     include_train_pool: bool = False,
+    context_length: Optional[int] = None,
 ) -> list[WorkloadItem]:
+    if dataset in {
+        "scrolls_gov_report",
+        "scrolls_summ_screen_fd",
+        "scrolls_qmsum",
+    }:
+        if tokenizer is None:
+            raise ValueError(f"{dataset} requires a tokenizer for the window filter")
+        if context_length is None:
+            raise ValueError(
+                f"{dataset} requires context_length: the window filter is the "
+                "sealed alternative to truncation (ruling A1) and must not "
+                "silently default"
+            )
+        return load_scrolls_summary(dataset, limit, tokenizer, context_length)
     if dataset == "gsm8k":
         return load_gsm8k(limit, include_train_pool)
     if dataset == "gsm8k_cot":
@@ -1164,7 +1293,11 @@ def build_workload(
     per_dataset_limit = num_requests
     pools = {
         name: load_dataset_items(
-            name, per_dataset_limit, tokenizer, include_train_pool
+            name,
+            per_dataset_limit,
+            tokenizer,
+            include_train_pool,
+            context_length=context_length,
         )
         for name in datasets_selected
     }
@@ -1394,6 +1527,10 @@ def score_prediction(
     if metric == "ifeval_offline":
         # IFEval verdicts come only from the third-party harness offline;
         # serving-side scoring is intentionally not defined.
+        return None, "offline_third_party_scoring"
+    if metric == "rouge_offline":
+        # SCROLLS/LongBench ROUGE comes only from the third-party harness
+        # (lm-eval `metrics.get_rouge_score`); no in-repo reimplementation.
         return None, "offline_third_party_scoring"
     if metric == "numeric_exact_match":
         return numeric_exact_match(prediction, str(gold)), "scored"
