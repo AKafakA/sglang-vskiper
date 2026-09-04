@@ -22,12 +22,26 @@ Contents:
 
 Bodies are byte-identical to the frozen tree so route decisions -- and
 therefore route digests -- are unchanged by construction.
+
+EXCEPTION (2026-09-04, lane-2 stage 1): ``router_norm`` is now SGLang's fused
+``RMSNorm`` instead of the local ``FDRMSNorm``, to collapse ~6-8 elementwise
+launches per routed layer per step into one kernel. This forfeits the
+"byte-identical bodies" provenance argument for that one module, so route
+identity is no longer unchanged *by construction* and must be demonstrated
+EMPIRICALLY: ``test/vp/gates/route_digest_compare.py`` (route counters + output
+text sha256) plus a bit-exact ``route_weight``/``route_mask`` capture through
+``test/vp/compare_fd_parity_traces.py``. The arithmetic is chosen to be
+bit-exact -- ``cast_x_before_out_mul=True`` reproduces ``FDRMSNorm``'s
+weight-after-narrowing-cast order exactly (see the class docstring below) -- but
+"chosen to be" is not "shown to be", and the router feeds a 0.5 threshold where
+a single flipped bit changes a route.
 """
 
 from __future__ import annotations
 
 import triton.language as tl
 from typing import Any, Mapping, Optional
+from sglang.srt.layers.layernorm import RMSNorm
 from sglang.srt.vpipe.common import (
     _fdvp_router_graph_enabled,
     _fdvp_timing_enabled,
@@ -208,7 +222,18 @@ def _fdvp_router_graph_max_entries():
     except ValueError:
         return 4
 class FDRMSNorm(nn.Module):
-    """FlexiDepth/DDLlama RMSNorm: compute variance in fp32, return input dtype."""
+    """FlexiDepth/DDLlama RMSNorm: compute variance in fp32, return input dtype.
+
+    RETAINED AS THE BIT-EXACTNESS REFERENCE, not as a live body. Since
+    2026-09-04 ``FDRouter`` uses SGLang's fused ``RMSNorm`` instead (see the
+    construction site), which collapses these ~6-8 elementwise launches into
+    one. This class stays because it is what the fused path must reproduce
+    exactly: note the weight multiply happens AFTER the narrowing cast
+    (``self.weight * hidden_states.to(input_dtype)``), which is
+    ``cast_x_before_out_mul=True`` and NOT the fused default. Keep it for the
+    parity harness to diff against; do not reintroduce it as the live path
+    without re-measuring the launch count.
+    """
 
     def __init__(self, hidden_size, eps=1e-5):
         super().__init__()
@@ -228,7 +253,17 @@ class FDRouter(nn.Module):
         super().__init__()
         r = hidden_size // reduction
         self.router_enc = nn.Linear(hidden_size, r, bias=False)
-        self.router_norm = FDRMSNorm(r, eps=eps)
+        # Fused RMSNorm (lane-2 stage 1). `cast_x_before_out_mul=True` is the
+        # load-bearing argument: it selects `weight * x.to(orig_dtype)`
+        # (layers/layernorm.py:523-524), which is FDRMSNorm's exact order. The
+        # DEFAULT (False) multiplies the weight in fp32 and takes a different
+        # kernel -- different numerics, and this feeds a 0.5 route threshold.
+        # `eps` must stay explicit: RMSNorm defaults to 1e-6, FlexiDepth uses
+        # config.rms_norm_eps (1e-5), threaded from seam.py.
+        # The single-kernel JIT path additionally requires fp16/bf16 AND
+        # weight.dtype == x.dtype (layers/layernorm.py:284-285); otherwise it
+        # silently falls back to forward_native -- correct, but no launch win.
+        self.router_norm = RMSNorm(r, eps=eps, cast_x_before_out_mul=True)
         self.router_act = nn.Tanh()
         self.router_dec = nn.Linear(r, hidden_size, bias=False)
         self.router_head = nn.Linear(hidden_size, 1, bias=False)
