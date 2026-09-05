@@ -29,6 +29,13 @@ EXTENDED_DECODE_DATASETS = (
     # 110-token answers, D-420).
     "gsm8k_cot_zeroshot",
     "minerva_math",
+    # Long-context INSTRUCTION QA (owner 2026-09-05): LongBench v1 QA tasks, window-filtered.
+    "longbench_qasper",
+    "longbench_multifieldqa_en",
+    "longbench_hotpotqa",
+    "longbench_2wikimqa",
+    "longbench_musique",
+    "longbench_narrativeqa",
     "ifeval",
     "mmlu_pro",
     "mmlu_pro_cot",
@@ -60,6 +67,14 @@ WORKLOAD_DATASETS = {
         "scrolls_summ_screen_fd",
         "scrolls_qmsum",
     ),
+    # Long-context INSTRUCTION QA row: LongBench v1 QA tasks with >=29 window-fit
+    # survivors at 8192 (454 unique requests, ~2.3 M prompt tokens, p50 ~5k).
+    "longbench_qa": (
+        "longbench_qasper",
+        "longbench_2wikimqa",
+        "longbench_multifieldqa_en",
+        "longbench_hotpotqa",
+    ),
     "mixed_25": DECODE_DATASETS + PREFILL_DATASETS[:3],
     "mixed_50": DECODE_DATASETS + PREFILL_DATASETS[:3],
     "mixed_75": DECODE_DATASETS + PREFILL_DATASETS[:3],
@@ -74,6 +89,7 @@ WORKLOAD_PHASE = {
     "prefill_core": "prefill",
     "prefill_long": "prefill",
     "longctx_writing": "decode",
+    "longbench_qa": "decode",
     "mixed_25": "mixed",
     "mixed_50": "mixed",
     "mixed_75": "mixed",
@@ -89,6 +105,14 @@ DEFAULT_DECODE_WEIGHTS = {
     "gsm8k": 0.45,
     "coqa": 0.45,
     "humaneval": 0.10,
+    # longbench_qa row (owner 2026-09-05): proportional to the MEASURED window-fit
+    # survivors at context 8192 (qasper 186, 2wikimqa 147, multifieldqa_en 92,
+    # hotpotqa 29 of 200/200/150/200) so the four pools drain together;
+    # musique (3) and narrativeqa (7) survivors are too few for a row.
+    "longbench_qasper": 0.410,
+    "longbench_2wikimqa": 0.324,
+    "longbench_multifieldqa_en": 0.203,
+    "longbench_hotpotqa": 0.064,
 }
 DEFAULT_PREFILL_WEIGHTS = {
     "mmlu": 1.0 / 3.0,
@@ -149,6 +173,25 @@ DATASET_PROTOCOLS: dict[str, dict[str, Any]] = {
         "evaluation_split": "test",
         "quality_semantics": "minerva_math_offline",
         "task_reference_max_output_len": 256,
+    },
+    # LongBench (v1) QA rows — lm-eval 0.4.9.1 longbench_<task> (v3.0): official
+    # doc_to_text, official qa_f1_score (offline), max_gen_toks per task.
+    **{
+        f"longbench_{task}": {
+            "id": f"lm-eval-0.4.9.1:longbench_{task}-v3:zero-shot-chat",
+            "source": "zai-org/LongBench:data.zip",
+            "evaluation_split": "test",
+            "quality_semantics": "longbench_qa_f1_offline",
+            "task_reference_max_output_len": genlen,
+        }
+        for task, genlen in (
+            ("qasper", 128),
+            ("multifieldqa_en", 64),
+            ("hotpotqa", 32),
+            ("2wikimqa", 32),
+            ("musique", 32),
+            ("narrativeqa", 128),
+        )
     },
     "mmlu_pro": {
         "id": "lm-eval-0.4.9.1:mmlu_pro-native:5shot-letter-chat",
@@ -1163,6 +1206,162 @@ def load_scrolls_summary(
     return items
 
 
+# LongBench (v1) QA family via lm-eval 0.4.9.1 `longbench_<task>` tasks: doc_to_text
+# VERBATIM from lm_eval/tasks/longbench/<task>.yaml, quality = the harness's own
+# `metrics.get_qa_f1_score` (scored offline, third-party), max_gen_toks per task.
+# Owner 2026-09-05: "instruction means the current flexidepth with tulu finetuning
+# working, and the long context means we can show the win" — real documents,
+# instruction prompts, 4-8k tokens; rows that do not fit the window are DROPPED
+# (ruling A1: filter, never truncate).
+LONGBENCH_QA_TASKS: dict[str, dict[str, Any]] = {
+    "qasper": {
+        "template": (
+            "You are given a scientific article and a question. Answer the question as"
+            " concisely as you can, using a single phrase or sentence if possible. If"
+            " the question cannot be answered based on the information in the article,"
+            ' write "unanswerable". If the question is a yes/no question, answer "yes",'
+            ' "no", or "unanswerable". Do not provide any explanation.\n\nArticle:'
+            " {context}\n\n Answer the question based on the above article as concisely"
+            " as you can, using a single phrase or sentence if possible. If the question"
+            " cannot be answered based on the information in the article, write"
+            ' "unanswerable". If the question is a yes/no question, answer "yes", "no",'
+            ' or "unanswerable". Do not provide any explanation.\n\nQuestion:'
+            " {input}\n\nAnswer:"
+        ),
+        "max_gen_toks": 128,
+    },
+    "multifieldqa_en": {
+        "template": (
+            "Read the following text and answer briefly.\n\n{context}\n\nNow, answer"
+            " the following question based on the above text, only give me the answer"
+            " and do not output any other words.\n\nQuestion: {input}\nAnswer:"
+        ),
+        "max_gen_toks": 64,
+    },
+    "hotpotqa": {
+        "template": (
+            "Answer the question based on the given passages. Only give me the answer"
+            " and do not output any other words.\n\nThe following are given passages."
+            "\n{context}\n\nAnswer the question based on the given passages. Only give"
+            " me the answer and do not output any other words.\n\nQuestion:"
+            " {input}\nAnswer:"
+        ),
+        "max_gen_toks": 32,
+    },
+    "2wikimqa": {
+        "template": (
+            "Answer the question based on the given passages. Only give me the answer"
+            " and do not output any other words.\n\nThe following are given passages."
+            "\n{context}\n\nAnswer the question based on the given passages. Only give"
+            " me the answer and do not output any other words.\n\nQuestion:"
+            " {input}\nAnswer:"
+        ),
+        "max_gen_toks": 32,
+    },
+    "musique": {
+        "template": (
+            "Answer the question based on the given passages. Only give me the answer"
+            " and do not output any other words.\n\nThe following are given passages."
+            "\n{context}\n\nAnswer the question based on the given passages. Only give"
+            " me the answer and do not output any other words.\n\nQuestion:"
+            " {input}\nAnswer:"
+        ),
+        "max_gen_toks": 32,
+    },
+    "narrativeqa": {
+        "template": (
+            "You are given a story, which can be either a novel or a movie script, and"
+            " a question. Answer the question asconcisely as you can, using a single"
+            " phrase if possible. Do not provide any explanation.\n\nStory:"
+            " {context}\n\nNow, answer the question based on the story asconcisely as"
+            " you can, using a single phrase if possible. Do not provide any"
+            " explanation.\n\nQuestion: {input}\n\nAnswer:"
+        ),
+        "max_gen_toks": 128,
+    },
+}
+
+
+def _longbench_qa_prompt(task: str, record: dict[str, Any]) -> str:
+    # {{context}} / {{input}} substituted verbatim (no strip: the harness renders raw).
+    template = LONGBENCH_QA_TASKS[task]["template"]
+    return template.replace("{context}", record["context"]).replace(
+        "{input}", record["input"]
+    )
+
+
+def load_longbench_qa(
+    dataset: str, limit: int, tokenizer: Any, context_length: int
+) -> list[WorkloadItem]:
+    """LongBench QA row (`longbench_<task>`): instruction prompt over a real long
+    document, official lm-eval template, official F1 scored offline. Rows whose
+    chat-templated prompt + the task's max_gen_toks exceed the window are
+    dropped (ruling A1). Stable ids from the dataset's `_id`."""
+
+    import json as _json
+    import zipfile
+
+    from huggingface_hub import hf_hub_download
+
+    task = dataset[len("longbench_") :]
+    if task not in LONGBENCH_QA_TASKS:
+        raise ValueError(f"unsupported LongBench QA task {task!r}")
+    protocol = DATASET_PROTOCOLS[dataset]
+    genlen = int(LONGBENCH_QA_TASKS[task]["max_gen_toks"])
+    # The Hub repo ships a dataset SCRIPT (LongBench.py) + data.zip; `datasets`>=4
+    # refuses scripts, so read the jsonl member directly (same access path as
+    # longbench_eval.load_records; file order is the seal, `_id` is the stable id).
+    zip_path = hf_hub_download("zai-org/LongBench", "data.zip", repo_type="dataset")
+
+    def _rows():
+        with zipfile.ZipFile(zip_path) as zf, zf.open(f"data/{task}.jsonl") as f:
+            for line in f:
+                yield _json.loads(line.decode("utf-8"))
+
+    items: list[WorkloadItem] = []
+    considered = 0
+    for record in _rows():
+        if len(items) >= limit:
+            break
+        considered += 1
+        candidate = WorkloadItem(
+            dataset=dataset,
+            item_id=str(record["_id"]),
+            phase="decode",
+            prompt=[{"role": "user", "content": _longbench_qa_prompt(task, record)}],
+            prompt_kind="chat_messages",
+            reference_output_len=None,
+            metric="longbench_qa_f1_offline",
+            gold=list(record["answers"]),
+            protocol_id=protocol["id"],
+            quality_semantics=protocol["quality_semantics"],
+            task_reference_max_output_len=genlen,
+            stop=[],  # the task's generation until-list is empty
+            evaluator_data={},
+        )
+        prompt_tokens = len(_render_prompt_ids(tokenizer, candidate))
+        if prompt_tokens + genlen > context_length:
+            continue
+        items.append(
+            replace(
+                candidate,
+                evaluator_data={
+                    "source_split": "test",
+                    "prompt_tokens": prompt_tokens,
+                    "window_filtered": True,
+                    "context_length": context_length,
+                    "longbench_length_words": int(record["length"]),
+                },
+            )
+        )
+    if not items:
+        raise ValueError(
+            f"{dataset}: no row fits prompt + {genlen} <= {context_length} "
+            f"(considered {considered})"
+        )
+    return items
+
+
 def load_longbench_summary(
     dataset: str, limit: int, tokenizer: Any, max_length: int = 7000
 ) -> list[WorkloadItem]:
@@ -1228,6 +1427,16 @@ def load_dataset_items(
         return load_gsm8k_cot_zeroshot(limit, include_train_pool)
     if dataset == "minerva_math":
         return load_minerva_math(limit, include_train_pool)
+    if dataset.startswith("longbench_") and dataset[len("longbench_"):] in LONGBENCH_QA_TASKS:
+        if tokenizer is None:
+            raise ValueError(f"{dataset} requires a tokenizer for the window filter")
+        if context_length is None:
+            raise ValueError(
+                f"{dataset} requires context_length: the window filter is the "
+                "sealed alternative to truncation (ruling A1) and must not "
+                "silently default"
+            )
+        return load_longbench_qa(dataset, limit, tokenizer, context_length)
     if dataset == "ifeval":
         return load_ifeval(limit)
     if dataset == "mmlu_pro":
@@ -1818,6 +2027,9 @@ def score_prediction(
     if metric == "math_verify_offline":
         # MATH correctness (sympy is_equiv + math_verify) comes only from the
         # third-party harness offline; no in-repo reimplementation.
+        return None, "offline_third_party_scoring"
+    if metric == "longbench_qa_f1_offline":
+        # LongBench QA F1 comes only from lm-eval's longbench metrics offline.
         return None, "offline_third_party_scoring"
     if metric == "mmlu_pro_letter_match":
         return mmlu_pro_letter_match(prediction, str(gold)), "scored"
