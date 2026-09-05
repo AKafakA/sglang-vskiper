@@ -221,8 +221,8 @@ def _binary_cohort_mlp(
     rows ZERO (exactly one write per valid row). Per-op tuned configs
     load fail-closed from the committed per-device artifact; the config
     is selected per bucket-rows at first use (capture-frozen there-
-    after). PROJECT GEMMs currently reuse the nearest RUN-op configs
-    (declared; per-op proj tuning is follow-up polish).
+    after). PROJECT GEMMs use their own per-op keys (``projgd``,
+    ``projup``; Block 1B-2, D-419) — the artifact must carry them.
     """
 
     from sglang.srt.vpipe.kernel import (
@@ -314,6 +314,12 @@ def _binary_cohort_mlp(
     # (stats accumulation moved into build_route_maps_from_mask — Block 1B-1)
     config_gate_up = select_config(tuned, "gateup", int(rows))
     config_down = select_config(tuned, "down", int(rows))
+    # Lane-2 Block 1B-2 (D-419): the projector GEMMs (K=4096->N=2*bottleneck,
+    # K=bottleneck->N=4096) get their OWN tuned configs instead of reusing the
+    # gate_up/down tiles, which at N=1792 left ~28 active CTAs on an A100.
+    # Fail-closed: an artifact without the per-op keys is a configuration error.
+    config_proj_gate_down = select_config(tuned, "projgd", int(rows))
+    config_proj_up = select_config(tuned, "projup", int(rows))
 
     run_count = counts[0:1]
     pack_rows(hidden_states, run_map, run_count, scratch["compact"])
@@ -345,7 +351,7 @@ def _binary_cohort_mlp(
         proj_gate_down,
         project_count,
         gate_up_view,
-        **config_gate_up,
+        **config_proj_gate_down,
     )
     activated_view = scratch["activated"][:, :proj_bottleneck]
     count_silu_mul(gate_up_view, project_count, activated_view)
@@ -354,7 +360,7 @@ def _binary_cohort_mlp(
         proj.up_proj.weight,
         project_count,
         scratch["final"],
-        **config_down,
+        **config_proj_up,
     )
     weighted_scatter(
         scratch["final"], project_map, weights_flat, project_count, out,
