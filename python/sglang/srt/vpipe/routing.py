@@ -127,6 +127,53 @@ def _build_route_maps_kernel(
         rows,
         mask=valid & project_active,
     )
+
+
+@triton.jit
+def _build_route_maps_masked_kernel(
+    run_mask_ptr,
+    valid_ptr,
+    run_rows_ptr,
+    project_rows_ptr,
+    counts_ptr,
+    stats_ptr,
+    row_count: tl.constexpr,
+    block_rows: tl.constexpr,
+    has_valid: tl.constexpr,
+):
+    """Lane-2 Block 1B-1: the binary-cohort route maps from the RAW route mask.
+
+    Folds the three per-layer mask kernels (``run & valid``, ``~run``,
+    ``~run & valid``) and the three per-layer evidence kernels
+    (``stats[0] += 1``, ``counts.to(int64)``, ``stats[1:3] += counts``) into
+    the one launch that already builds the maps. Boolean logic and integer
+    atomics only, so maps, counts and stats are bit-identical to the
+    unfused path; slot order under atomics was never deterministic in
+    either version and every downstream consumer is row-wise independent.
+    """
+    rows = tl.program_id(0) * block_rows + tl.arange(0, block_rows)
+    in_range = rows < row_count
+    run_mask = tl.load(run_mask_ptr + rows, mask=in_range, other=0).to(tl.int32)
+    if has_valid:
+        valid = tl.load(valid_ptr + rows, mask=in_range, other=0).to(tl.int32)
+    else:
+        valid = in_range.to(tl.int32)
+    run_active = in_range & (valid != 0) & (run_mask != 0)
+    project_active = in_range & (valid != 0) & (run_mask == 0)
+    counter_lanes = tl.zeros((block_rows,), dtype=tl.int32)
+    run_slots = tl.atomic_add(counts_ptr + counter_lanes, 1, mask=run_active)
+    project_slots = tl.atomic_add(
+        counts_ptr + 1 + counter_lanes, 1, mask=project_active
+    )
+    tl.store(run_rows_ptr + run_slots, rows, mask=run_active)
+    tl.store(project_rows_ptr + project_slots, rows, mask=project_active)
+    # Evidence accumulator [calls, run_rows, project_rows] (int64): one
+    # program-level partial per launch, and exactly one call increment.
+    n_run = tl.sum(run_active.to(tl.int64), axis=0)
+    n_project = tl.sum(project_active.to(tl.int64), axis=0)
+    tl.atomic_add(stats_ptr + 1, n_run)
+    tl.atomic_add(stats_ptr + 2, n_project)
+    tl.atomic_add(stats_ptr, (tl.program_id(0) == 0).to(tl.int64))
 def fd_parity_trace_tensor(
     phase: str,
     tensor,
@@ -508,6 +555,48 @@ def build_route_maps(
         counts,
         row_count=rows,
         block_rows=block_rows,
+    )
+    return run_rows, project_rows, counts
+
+
+def build_route_maps_from_mask(
+    run_mask: torch.Tensor,
+    valid_rows: Optional[torch.Tensor],
+    stats: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Route maps + counts from the raw 1-D bool route mask (Block 1B-1).
+
+    Equivalent to ``build_route_maps(run_mask & valid, ~run_mask & valid)``
+    followed by ``stats[0] += 1; stats[1:3] += counts`` — in one launch.
+    ``stats`` is the per-device int64 ``[calls, run_rows, project_rows]``
+    accumulator the attestation reads.
+    """
+
+    if not run_mask.is_cuda or run_mask.ndim != 1 or run_mask.dtype != torch.bool:
+        raise ValueError("route mask must be a 1-D CUDA bool tensor")
+    if valid_rows is not None and (
+        valid_rows.shape != run_mask.shape or valid_rows.dtype != torch.bool
+    ):
+        raise ValueError("valid_rows must be a bool tensor aligned with the route mask")
+    if stats.dtype != torch.int64 or stats.numel() != 3 or stats.device != run_mask.device:
+        raise ValueError("stats must be the int64 [3] accumulator on the mask device")
+    run_mask = run_mask.contiguous()
+    rows = int(run_mask.numel())
+    counts = torch.zeros(2, dtype=torch.int32, device=run_mask.device)
+    run_rows = torch.empty(rows, dtype=torch.int32, device=run_mask.device)
+    project_rows = torch.empty_like(run_rows)
+    block_rows = 256
+    has_valid = valid_rows is not None
+    _build_route_maps_masked_kernel[(triton.cdiv(rows, block_rows),)](
+        run_mask,
+        valid_rows.contiguous() if has_valid else run_mask,
+        run_rows,
+        project_rows,
+        counts,
+        stats,
+        row_count=rows,
+        block_rows=block_rows,
+        has_valid=has_valid,
     )
     return run_rows, project_rows, counts
 def full_graph_forced_route(
