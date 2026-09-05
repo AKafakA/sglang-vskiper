@@ -234,7 +234,7 @@ def _binary_cohort_mlp(
         weighted_scatter,
     )
     from sglang.srt.vpipe.routing import (
-        build_route_maps,
+        build_route_maps_from_mask,
     )
 
     rows, hidden_size = hidden_states.shape
@@ -251,8 +251,7 @@ def _binary_cohort_mlp(
             "binary_cohort route_weights must be one scalar per row; "
             f"got shape {tuple(route_weights.shape)}"
         )
-    run_active = run_mask.reshape(rows)
-    project_active = ~run_active
+    valid_flat = None
     if valid_rows is not None:
         if valid_rows.numel() != rows or valid_rows.dtype != torch.bool:
             raise ValueError(
@@ -260,11 +259,14 @@ def _binary_cohort_mlp(
                 f"shape {tuple(valid_rows.shape)} dtype {valid_rows.dtype}"
             )
         valid_flat = valid_rows.reshape(rows)
-        run_active = run_active & valid_flat
-        project_active = project_active & valid_flat
     weights_flat = route_weights.reshape(rows)
-    run_map, project_map, counts = build_route_maps(
-        run_active, project_active
+    # Lane-2 Block 1B-1: mask algebra (run&valid, ~run&valid) and the
+    # evidence accumulation (calls, run rows, project rows) happen INSIDE
+    # the route-map kernel — 6 fewer launches per routed layer, bit-identical
+    # maps/counts/stats (boolean logic + integer atomics only).
+    stats = _binary_cohort_stats(hidden_states.device)
+    run_map, project_map, counts = build_route_maps_from_mask(
+        run_mask.reshape(rows), valid_flat, stats
     )
 
     mlp = layer.mlp
@@ -309,9 +311,7 @@ def _binary_cohort_mlp(
             json.dumps(tuned, sort_keys=True).encode()
         ).hexdigest()
     _BINARY_COHORT_LAYERS.add(int(getattr(layer, "layer_id", -1)))
-    stats = _binary_cohort_stats(hidden_states.device)
-    stats[0].add_(1)
-    stats[1:3].add_(counts.to(torch.int64))
+    # (stats accumulation moved into build_route_maps_from_mask — Block 1B-1)
     config_gate_up = select_config(tuned, "gateup", int(rows))
     config_down = select_config(tuned, "down", int(rows))
 
