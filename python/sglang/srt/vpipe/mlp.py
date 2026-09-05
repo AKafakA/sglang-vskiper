@@ -25,6 +25,7 @@ from sglang.srt.vpipe.common import (
 )
 from sglang.srt.vpipe.env import (
     _BINARY_COHORT_CONFIG_DIGEST,
+    _BINARY_COHORT_CUBLAS_PASSES,
     _BINARY_COHORT_LAYERS,
     _BINARY_COHORT_SCRATCH,
     _BINARY_COHORT_STATS,
@@ -212,6 +213,7 @@ def _binary_cohort_mlp(
     route_weights: torch.Tensor,
     run_mask: torch.Tensor,
     valid_rows: Optional[torch.Tensor],
+    prefill_cublas: bool = False,
 ) -> torch.Tensor:
     """Count-adaptive binary-cohort MLP (D-302/D-303; design v2.1).
 
@@ -322,6 +324,37 @@ def _binary_cohort_mlp(
     config_proj_up = select_config(tuned, "projup", int(rows))
 
     run_count = counts[0:1]
+    project_count = counts[1:2]
+    if prefill_cublas and not torch.cuda.is_current_stream_capturing():
+        # P3: eager pass (multi-request prefill; graph capture never enters
+        # here) -> read the two counts to the host ONCE per layer and run the
+        # branch GEMMs through cuBLAS on exactly the packed rows. Same pack /
+        # weighted-scatter epilogue and the production SiluAndMul kernel, so
+        # RUN rows are computed exactly as production computes them.
+        n_run, n_project = (int(value) for value in counts[0:2].tolist())
+        act_fn = mlp.act_fn
+        if n_run:
+            pack_rows(hidden_states, run_map, run_count, scratch["compact"])
+            gate_up = torch.nn.functional.linear(
+                scratch["compact"][:n_run], mlp.gate_up_proj.weight
+            )
+            final = torch.nn.functional.linear(act_fn(gate_up), mlp.down_proj.weight)
+            weighted_scatter(
+                final, run_map, weights_flat, run_count, out, invert_weight=False
+            )
+        if n_project:
+            pack_rows(hidden_states, project_map, project_count, scratch["compact"])
+            gate_down = torch.nn.functional.linear(
+                scratch["compact"][:n_project], proj_gate_down
+            )
+            final = torch.nn.functional.linear(act_fn(gate_down), proj.up_proj.weight)
+            weighted_scatter(
+                final, project_map, weights_flat, project_count, out, invert_weight=True
+            )
+        key = str(hidden_states.device)
+        passes, rows_seen = _BINARY_COHORT_CUBLAS_PASSES.get(key, (0, 0))
+        _BINARY_COHORT_CUBLAS_PASSES[key] = (passes + 1, rows_seen + int(rows))
+        return out
     pack_rows(hidden_states, run_map, run_count, scratch["compact"])
     count_matmul_gridexit(
         scratch["compact"],
@@ -343,7 +376,6 @@ def _binary_cohort_mlp(
         invert_weight=False,
     )
 
-    project_count = counts[1:2]
     pack_rows(hidden_states, project_map, project_count, scratch["compact"])
     gate_up_view = scratch["gate_up"][:, : 2 * proj_bottleneck]
     count_matmul_gridexit(
@@ -380,6 +412,7 @@ def fd_conditional_mlp_full_graph(
     prefill_grouped_enabled: bool = False,
     force_dense_all_run: Optional[bool] = None,
     force_filtered_all_run: bool = False,
+    prefill_cublas_enabled: bool = False,
 ) -> torch.Tensor:
     """Fixed-topology conditional MLP with device-resident complementary routes."""
 
@@ -478,7 +511,13 @@ def fd_conditional_mlp_full_graph(
                 "remove one (fail-closed, v2.1 item 5)"
             )
         return _binary_cohort_mlp(
-            layer, proj, hidden_states, route_weights, run_mask, valid_rows
+            layer,
+            proj,
+            hidden_states,
+            route_weights,
+            run_mask,
+            valid_rows,
+            prefill_cublas=prefill_cublas_enabled,
         )
 
     if prefill_grouped_enabled:

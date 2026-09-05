@@ -77,6 +77,7 @@ from sglang.srt.vpipe.config import (
     full_graph_forced_all_run_production_attention_enabled,
     full_graph_mapped_decode_attention_enabled,
     full_graph_masked_decode_attention_enabled,
+    full_graph_prefill_cublas_enabled,
     full_graph_prefill_grouped_mlp_enabled,
 )
 
@@ -228,6 +229,10 @@ def fd_execute_prepared_layer_route_full_graph(
         ),
         force_dense_all_run=force_dense_all_run,
         force_filtered_all_run=force_filtered_all_run,
+        prefill_cublas_enabled=(
+            full_graph_prefill_cublas_enabled()
+            and full_graph_prefill_enabled(forward_batch)
+        ),
     )
     if parity_context is not None:
         from sglang.srt.vpipe.cohort import (
