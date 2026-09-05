@@ -74,8 +74,9 @@ def test_cublas_branch_matches_triton_and_reference(monkeypatch, rows, run_frac)
         triton = vp_mlp._binary_cohort_mlp(layer, proj, h, w, run_mask, None).clone()
         assert dict(vp_mlp._BINARY_COHORT_CUBLAS_PASSES) == before, "Triton path must not count cuBLAS passes"
         cublas = vp_mlp._binary_cohort_mlp(layer, proj, h, w, run_mask, None, prefill_cublas=True).clone()
-    after = vp_mlp._BINARY_COHORT_CUBLAS_PASSES[str(dev)]
-    assert after[0] == before.get(str(dev), (0, 0))[0] + 1 and after[1] == before.get(str(dev), (0, 0))[1] + rows
+    key = str(h.device)  # tensor device string ("cuda:0"), the attestation key
+    after = vp_mlp._BINARY_COHORT_CUBLAS_PASSES[key]
+    assert after[0] == before.get(key, (0, 0))[0] + 1 and after[1] == before.get(key, (0, 0))[1] + rows
     scale = ref.float().abs().max().item()
     tol = 4e-3 * scale + 1e-3  # a few fp16 ulps at the output magnitude (accumulation order differs per GEMM)
     assert (cublas.float() - ref.float()).abs().max().item() <= tol
