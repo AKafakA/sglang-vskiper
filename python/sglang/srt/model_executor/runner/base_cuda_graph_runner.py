@@ -65,6 +65,9 @@ def get_batch_sizes_to_capture(
     """
 
     server_args = model_runner.server_args
+    # P5 coverage-as-code keys on the ORIGINAL argument (1 = the decode runner);
+    # the two-batch-overlap branch below rewrites num_tokens_per_bs.
+    requested_tokens_per_bs = int(num_tokens_per_bs)
     capture_bs = list(server_args.cuda_graph_config.decode.bs)
     num_max_requests = model_runner.req_to_token_pool.size
 
@@ -94,7 +97,7 @@ def get_batch_sizes_to_capture(
     # decode buckets must reach the scheduler admission cap, otherwise every
     # decode batch above the CLI default max_bs falls to the eager path (the
     # D-414/D-416 T1-vs-T2 gap). Decode runner only (one token per row).
-    if num_tokens_per_bs == 1:
+    if requested_tokens_per_bs == 1:
         from sglang.srt.vpipe.common import (
             coverage_capture_bs,
             vp_decode_coverage_target,
@@ -103,14 +106,28 @@ def get_batch_sizes_to_capture(
 
         target = vp_decode_coverage_target(model_runner)
         if target is not None:
+            # Aligned endpoint at or above the admission cap, never above the
+            # pool (num_max_requests is already a multiple of mul_base).
             target = min(int(target), int(num_max_requests))
+            target = (target + mul_base - 1) // mul_base * mul_base
             configured_max = max(capture_bs)
-            capture_bs, added = coverage_capture_bs(
+            extended, _ = coverage_capture_bs(
                 capture_bs,
                 target,
                 server_args._generate_decode_cuda_graph_batch_sizes,
             )
-            capture_bs = [bs for bs in capture_bs if bs * num_tokens_per_bs % mul_base == 0]
+            extended = [
+                bs for bs in extended if bs * num_tokens_per_bs % mul_base == 0
+            ]
+            if target not in extended:
+                extended = sorted(set(extended) | {int(target)})
+            added = len(set(extended) - set(capture_bs))
+            capture_bs = list(sorted(set(extended)))
+            if max(capture_bs) < target:
+                raise RuntimeError(
+                    "decode coverage: captured max_bs "
+                    f"{max(capture_bs)} is below the admission cap {target}"
+                )
             _VP_DECODE_COVERAGE[str(model_runner.device)] = {
                 "target": int(target),
                 "configured_max_bs": int(configured_max),
