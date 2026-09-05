@@ -28,6 +28,13 @@ def test_weighted_scatter_rejects_strided_route_weights():
         vp_kernel.weighted_scatter(
             compact, index, strided, count, output, invert_weight=False
         )
+    # a broadcast (stride-0) weight is equally wrong for dst > 0
+    expanded = torch.tensor([0.5]).expand(rows)
+    assert expanded.stride(0) == 0
+    with pytest.raises(ValueError, match="stride 1"):
+        vp_kernel.weighted_scatter(
+            compact, index, expanded, count, output, invert_weight=True
+        )
 
 
 def test_run_base_body_zeroes_padded_rows(monkeypatch):
