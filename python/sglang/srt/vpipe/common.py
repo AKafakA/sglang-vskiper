@@ -39,6 +39,8 @@ from sglang.srt.vpipe.env import (
     FD_ROUTED_QKV_MIN_ROWS_ENV,
     FD_COMPACT_PHASES_ENV,
     FD_PREFILL_CUBLAS_ENV,
+    VP_DECODE_COVERAGE_ENV,
+    _VP_DECODE_COVERAGE,
     FD_COMPACT_Q_PROJ_ENV,
     FD_LOW_ROW_MAX_ROWS_ENV,
     FD_GATE_MODE_ENV,
@@ -519,6 +521,51 @@ def full_graph_prefill_cublas_enabled(
     if value not in ("0", "1"):
         raise ValueError(f"{FD_PREFILL_CUBLAS_ENV} must be 0 or 1; got {value!r}")
     return value == "1"
+def vp_decode_coverage_enabled(
+    environ: Optional[Mapping[str, str]] = None,
+) -> bool:
+    """P5 coverage-as-code switch (default ON). Only consulted when FlexiDepth
+    full_graph serving is active; production (no routed layers) never sees it."""
+
+    values = os.environ if environ is None else environ
+    value = str(values.get(VP_DECODE_COVERAGE_ENV, "1") or "1").strip().lower()
+    if value not in ("0", "1"):
+        raise ValueError(f"{VP_DECODE_COVERAGE_ENV} must be 0 or 1; got {value!r}")
+    return value == "1"
+def coverage_capture_bs(
+    capture_bs: list[int], target: int, generate
+) -> tuple[list[int], int]:
+    """Extend a decode capture list so its largest bucket reaches ``target``
+    (the scheduler admission cap), using the SAME bucket generator as the stock
+    CLI (``ServerArgs._generate_decode_cuda_graph_batch_sizes``) so the added
+    buckets have the stock spacing. Returns (new_list, buckets_added)."""
+
+    if target <= 0:
+        raise ValueError(f"coverage target must be positive; got {target}")
+    current_max = max(capture_bs)
+    if current_max >= target:
+        return list(capture_bs), 0
+    extra = sorted({int(bs) for bs in generate(int(target)) if int(bs) > current_max})
+    if not extra or extra[-1] != target:
+        extra = [bs for bs in extra if bs < target] + [int(target)]
+    return sorted(set(capture_bs) | set(extra)), len(extra)
+def vp_decode_coverage_target(model_runner) -> Optional[int]:
+    """The admission cap the decode graphs must cover, or None when the
+    coverage rule does not apply (not FlexiDepth full_graph serving, no routed
+    weights, or explicitly disabled). Reads model_runner.max_running_requests
+    (set by the KV-pool configurator before graph capture; fails loudly if
+    absent — never a silent default)."""
+
+    if not vp_decode_coverage_enabled():
+        return None
+    if flexidepth_execution_mode() != FD_EXECUTION_FULL_GRAPH:
+        return None
+    if not str(os.environ.get("SGLANG_FD_WEIGHTS", "")).strip():
+        return None
+    target = int(model_runner.max_running_requests)
+    if target <= 0:
+        raise ValueError(f"decode coverage: max_running_requests={target}")
+    return target
 def _route_tape_request_slots(
     forward_batch: Any, row_ids: torch.Tensor
 ) -> torch.Tensor:

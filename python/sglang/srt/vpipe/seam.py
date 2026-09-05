@@ -598,6 +598,11 @@ def vp_runtime_attestation(lm) -> dict:
         # never instantiate that backend, so the counters were invisible
         # exactly where the executor runs.
         flexidepth_state["binary_cohort"] = binary_cohort_attestation()
+        from sglang.srt.vpipe.env import _VP_DECODE_COVERAGE
+
+        flexidepth_state["decode_coverage"] = {
+            device: dict(entry) for device, entry in _VP_DECODE_COVERAGE.items()
+        }
         flexidepth_state["route_accounting_enabled"] = (
             full_graph_route_accounting_enabled()
         )

@@ -90,6 +90,33 @@ def get_batch_sizes_to_capture(
     capture_bs = [bs for bs in capture_bs if bs * num_tokens_per_bs % mul_base == 0]
     capture_bs = [bs for bs in capture_bs if bs <= num_max_requests]
     capture_bs = list(sorted(set(capture_bs)))
+    # P5 coverage-as-code (vPipe): with FlexiDepth full_graph serving active, the
+    # decode buckets must reach the scheduler admission cap, otherwise every
+    # decode batch above the CLI default max_bs falls to the eager path (the
+    # D-414/D-416 T1-vs-T2 gap). Decode runner only (one token per row).
+    if num_tokens_per_bs == 1:
+        from sglang.srt.vpipe.common import (
+            coverage_capture_bs,
+            vp_decode_coverage_target,
+        )
+        from sglang.srt.vpipe.env import _VP_DECODE_COVERAGE
+
+        target = vp_decode_coverage_target(model_runner)
+        if target is not None:
+            target = min(int(target), int(num_max_requests))
+            configured_max = max(capture_bs)
+            capture_bs, added = coverage_capture_bs(
+                capture_bs,
+                target,
+                server_args._generate_decode_cuda_graph_batch_sizes,
+            )
+            capture_bs = [bs for bs in capture_bs if bs * num_tokens_per_bs % mul_base == 0]
+            _VP_DECODE_COVERAGE[str(model_runner.device)] = {
+                "target": int(target),
+                "configured_max_bs": int(configured_max),
+                "captured_max_bs": int(max(capture_bs)),
+                "buckets_added": int(added),
+            }
 
     assert len(capture_bs) > 0 and capture_bs[0] > 0, f"{capture_bs=}"
     compile_bs = (

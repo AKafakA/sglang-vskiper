@@ -49,6 +49,9 @@ FD_COMPACT_PHASES_ENV = "SGLANG_FD_FULL_GRAPH_COMPACT_PHASES"
 # P3 (2026-09-05): binary_cohort branch GEMMs through cuBLAS on EAGER prefill
 # passes (host-known counts); captured passes keep the count-GEMMs.
 FD_PREFILL_CUBLAS_ENV = "SGLANG_FD_FULL_GRAPH_PREFILL_CUBLAS"
+# P5 coverage-as-code (2026-09-05): decode CUDA-graph buckets cover the
+# scheduler admission cap when FlexiDepth full_graph serving is active.
+VP_DECODE_COVERAGE_ENV = "SGLANG_VP_DECODE_COVERAGE"
 FD_COMPACT_MIN_ROWS_ENV = "SGLANG_FD_FULL_GRAPH_COMPACT_MIN_ROWS"
 FD_DUAL_COMPACT_MIN_ROWS_ENV = "SGLANG_FD_FULL_GRAPH_DUAL_COMPACT_MIN_ROWS"
 FD_COMPACT_CAPACITY_FRACTION_ENV = (
@@ -206,6 +209,8 @@ _BINARY_COHORT_LAYERS: set = set()
 # P3 attestation: eager prefill passes that took the cuBLAS branch, per device
 # (executed evidence, never a flag): device -> (passes, rows).
 _BINARY_COHORT_CUBLAS_PASSES: dict[str, tuple[int, int]] = {}
+# P5 attestation: decode graph coverage decision per device (executed evidence).
+_VP_DECODE_COVERAGE: dict[str, dict] = {}
 _BINARY_COHORT_CONFIG_DIGEST: dict = {}
 DETERMINISTIC_MOCK_FULL_GRAPH_SKIPPER = "deterministic_mock"
 FLEXIDEPTH_FULL_GRAPH_SKIPPER = "flexidepth"
