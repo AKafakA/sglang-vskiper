@@ -23,6 +23,12 @@ DECODE_DATASETS = ("gsm8k", "coqa", "humaneval")
 # contracts stay byte-stable.
 EXTENDED_DECODE_DATASETS = (
     "gsm8k_cot",
+    # Owner ruling 2026-09-05 (D-421): the two long-OUTPUT math rows, served
+    # UNCAPPED in the perf lane (the lm-eval 256-token cap is a quality-lane
+    # constant only); the 8-shot gsm8k_cot row is cancelled (short shots gave
+    # 110-token answers, D-420).
+    "gsm8k_cot_zeroshot",
+    "minerva_math",
     "ifeval",
     "mmlu_pro",
     "mmlu_pro_cot",
@@ -118,6 +124,30 @@ DATASET_PROTOCOLS: dict[str, dict[str, Any]] = {
         "source": "openai/gsm8k:main",
         "evaluation_split": "test",
         "quality_semantics": "paper_exact",
+        "task_reference_max_output_len": 256,
+    },
+    "gsm8k_cot_zeroshot": {
+        # lm_eval/tasks/gsm8k/gsm8k-cot-zeroshot.yaml (v3): doc_to_text
+        # "Q: {{question}}\nA: Let's think step by step.", 0-shot, until
+        # ["Q:", "</s>", "<|im_end|>"], strict-match "The answer is (...)."
+        # max_gen_toks is the harness default (256) -- quality lane only.
+        "id": "lm-eval-0.4.9.1:gsm8k_cot_zeroshot-v3:0shot-chat",
+        "source": "openai/gsm8k:main",
+        "evaluation_split": "test",
+        "quality_semantics": "paper_exact",
+        "task_reference_max_output_len": 256,
+    },
+    "minerva_math": {
+        # lm_eval/tasks/minerva_math/*.yaml (v2.0, 7 subjects): 4 FIXED
+        # Minerva shots (utils.list_fewshot_samples, sampler first_n),
+        # doc_to_text "Problem:\n{problem}\n\nSolution:", until ["Problem:"],
+        # metrics exact_match (sympy is_equiv) + math_verify -- both scored
+        # ONLY by the third-party harness offline. max_gen_toks = harness
+        # default (256), quality lane only.
+        "id": "lm-eval-0.4.9.1:minerva_math-v2:4shot-fixed-multiturn",
+        "source": "EleutherAI/hendrycks_math:7-subjects",
+        "evaluation_split": "test",
+        "quality_semantics": "minerva_math_offline",
         "task_reference_max_output_len": 256,
     },
     "mmlu_pro": {
@@ -453,6 +483,216 @@ def load_gsm8k_cot(limit: int, include_train_pool: bool = False) -> list[Workloa
         # Perf/throughput lane only: train questions join the SERVING load (same
         # 8 fixed shots). The quality lane scores the test split only, so no leak.
         _emit("train", datasets.load_dataset("openai/gsm8k", "main", split="train"))
+    return items
+
+
+def load_gsm8k_cot_zeroshot(
+    limit: int, include_train_pool: bool = False
+) -> list[WorkloadItem]:
+    """lm-eval `gsm8k_cot_zeroshot` (v3) under the chat template: ONE user turn
+    "Q: {question}\\nA: Let's think step by step." (doc_to_text verbatim), no
+    shots, stop on the yaml's `until` list; strict-match answer regex."""
+
+    import datasets
+
+    test = datasets.load_dataset("openai/gsm8k", "main", split="test")
+    protocol = DATASET_PROTOCOLS["gsm8k_cot_zeroshot"]
+    items: list[WorkloadItem] = []
+
+    def _emit(split_name: str, rows: Any) -> None:
+        # test first and unchanged (same contract as load_gsm8k / load_gsm8k_cot).
+        for index, row in enumerate(rows):
+            if len(items) >= limit:
+                return
+            prompt = f"Q: {row['question'].strip()}\nA: Let's think step by step."
+            items.append(
+                WorkloadItem(
+                    dataset="gsm8k_cot_zeroshot",
+                    item_id=f"{split_name}:{index}",
+                    phase="decode",
+                    prompt=[{"role": "user", "content": prompt}],
+                    prompt_kind="chat_messages",
+                    reference_output_len=None,
+                    metric="gsm8k_cot_zeroshot_strict_match",
+                    gold=_gsm8k_answer(row["answer"]),
+                    protocol_id=protocol["id"],
+                    quality_semantics=protocol["quality_semantics"],
+                    task_reference_max_output_len=protocol[
+                        "task_reference_max_output_len"
+                    ],
+                    stop=["Q:", "</s>", "<|im_end|>"],
+                    evaluator_data={"source_split": split_name, "fewshot": "none"},
+                )
+            )
+
+    _emit("test", test)
+    if include_train_pool:
+        # Perf/throughput lane only; the quality lane scores the test split.
+        _emit("train", datasets.load_dataset("openai/gsm8k", "main", split="train"))
+    return items
+
+
+# The 4 fixed Minerva exemplars from lm-eval 0.4.9.1
+# lm_eval/tasks/minerva_math/utils.py:list_fewshot_samples (sampler first_n),
+# reproduced VERBATIM (including the stray "}" closing the first problem).
+MINERVA_MATH_FEWSHOT: tuple[tuple[str, str], ...] = (
+    (
+        "Find the domain of the expression  $\\frac{\\sqrt{x-2}}{\\sqrt{5-x}}$.}",
+        "The expressions inside each square root must be non-negative. "
+        "Therefore, $x-2 \\ge 0$, so $x\\ge2$, and $5 - x \\ge 0$, so $x \\le 5$. "
+        "Also, the denominator cannot be equal to zero, so $5-x>0$, which gives "
+        "$x<5$. Therefore, the domain of the expression is $\\boxed{[2,5)}$.\n"
+        "Final Answer: The final answer is $[2,5)$. I hope it is correct.",
+    ),
+    (
+        "If $\\det \\mathbf{A} = 2$ and $\\det \\mathbf{B} = 12,$ then find "
+        "$\\det (\\mathbf{A} \\mathbf{B}).$",
+        "We have that $\\det (\\mathbf{A} \\mathbf{B}) = (\\det \\mathbf{A})"
+        "(\\det \\mathbf{B}) = (2)(12) = \\boxed{24}.$\n"
+        "Final Answer: The final answer is $24$. I hope it is correct.",
+    ),
+    (
+        "Terrell usually lifts two 20-pound weights 12 times. If he uses two "
+        "15-pound weights instead, how many times must Terrell lift them in order "
+        "to lift the same total weight?",
+        "If Terrell lifts two 20-pound weights 12 times, he lifts a total of "
+        "$2\\cdot 12\\cdot20=480$ pounds of weight.  If he lifts two 15-pound "
+        "weights instead for $n$ times, he will lift a total of $2\\cdot15\\cdot "
+        "n=30n$ pounds of weight.  Equating this to 480 pounds, we can solve for "
+        "$n$:\n\\begin{align*}\n30n&=480\\\n\\Rightarrow\\qquad n&=480/30="
+        "\\boxed{16}\n\\end{align*}\n"
+        "Final Answer: The final answer is $16$. I hope it is correct.",
+    ),
+    (
+        "If the system of equations\n\n\\begin{align*}\n6x-4y&=a,\\\n6y-9x &=b."
+        "\n\\end{align*}has a solution $(x, y)$ where $x$ and $y$ are both "
+        "nonzero,\nfind $\\frac{a}{b},$ assuming $b$ is nonzero.",
+        "If we multiply the first equation by $-\\frac{3}{2}$, we obtain\n\n"
+        "$$6y-9x=-\\frac{3}{2}a.$$Since we also know that $6y-9x=b$, we have\n\n"
+        "$$-\\frac{3}{2}a=b\\Rightarrow\\frac{a}{b}=\\boxed{-\\frac{2}{3}}.$$\n"
+        "Final Answer: The final answer is $-\\frac{2}{3}$. I hope it is correct.",
+    ),
+)
+MINERVA_MATH_SUBJECTS: tuple[str, ...] = (
+    "algebra",
+    "counting_and_probability",
+    "geometry",
+    "intermediate_algebra",
+    "number_theory",
+    "prealgebra",
+    "precalculus",
+)
+
+
+def _minerva_math_problem(problem: str) -> str:
+    # doc_to_text of minerva_math/utils.py: "Problem:" + "\n" + problem + "\n\n" + "Solution:"
+    return "Problem:" + "\n" + problem + "\n\n" + "Solution:"
+
+
+def _minerva_last_boxed_only_string(string: str) -> Optional[str]:
+    # lm_eval/tasks/minerva_math/utils.py:last_boxed_only_string, verbatim.
+    idx = string.rfind("\\boxed")
+    if "\\boxed " in string:
+        return "\\boxed " + string.split("\\boxed ")[-1].split("$")[0]
+    if idx < 0:
+        idx = string.rfind("\\fbox")
+        if idx < 0:
+            return None
+    i = idx
+    right_brace_idx = None
+    num_left_braces_open = 0
+    while i < len(string):
+        if string[i] == "{":
+            num_left_braces_open += 1
+        if string[i] == "}":
+            num_left_braces_open -= 1
+            if num_left_braces_open == 0:
+                right_brace_idx = i
+                break
+        i += 1
+    if right_brace_idx is None:
+        return None
+    return string[idx : right_brace_idx + 1]
+
+
+def _minerva_remove_boxed(s: str) -> str:
+    # lm_eval/tasks/minerva_math/utils.py:remove_boxed, verbatim.
+    if "\\boxed " in s:
+        left = "\\boxed "
+        assert s[: len(left)] == left
+        return s[len(left) :]
+    left = "\\boxed{"
+    assert s[: len(left)] == left
+    assert s[-1] == "}"
+    return s[len(left) : -1]
+
+
+def load_minerva_math(limit: int, include_train_pool: bool = False) -> list[WorkloadItem]:
+    """lm-eval `minerva_math` (v2.0, 7 subjects) under the chat template: the 4
+    fixed Minerva shots as user/assistant turns, then the problem. Quality is
+    scored ONLY by the third-party harness (sympy `is_equiv` + `math_verify`);
+    the gold here is the raw boxed answer string kept for the audit trail."""
+
+    import datasets
+
+    protocol = DATASET_PROTOCOLS["minerva_math"]
+    shot_messages = []
+    for shot_problem, shot_solution in MINERVA_MATH_FEWSHOT:
+        shot_messages.extend(
+            [
+                {"role": "user", "content": _minerva_math_problem(shot_problem)},
+                {"role": "assistant", "content": shot_solution},
+            ]
+        )
+    items: list[WorkloadItem] = []
+
+    def _emit(split_name: str) -> None:
+        # test first (subjects in the harness's fixed order), then the train pool.
+        for subject in MINERVA_MATH_SUBJECTS:
+            rows = datasets.load_dataset(
+                "EleutherAI/hendrycks_math", subject, split=split_name
+            )
+            for index, row in enumerate(rows):
+                if len(items) >= limit:
+                    return
+                boxed = _minerva_last_boxed_only_string(row["solution"])
+                if boxed is None:
+                    # the harness would fail on such a row; none exist in the
+                    # released splits, but never emit an item without a gold.
+                    continue
+                messages = [
+                    *shot_messages,
+                    {"role": "user", "content": _minerva_math_problem(row["problem"])},
+                ]
+                items.append(
+                    WorkloadItem(
+                        dataset="minerva_math",
+                        item_id=f"{split_name}:{subject}:{index}",
+                        phase="decode",
+                        prompt=messages,
+                        prompt_kind="chat_messages",
+                        reference_output_len=None,
+                        metric="math_verify_offline",
+                        gold=_minerva_remove_boxed(boxed),
+                        protocol_id=protocol["id"],
+                        quality_semantics=protocol["quality_semantics"],
+                        task_reference_max_output_len=protocol[
+                            "task_reference_max_output_len"
+                        ],
+                        stop=["Problem:", "</s>", "<|im_end|>"],
+                        evaluator_data={
+                            "source_split": split_name,
+                            "subject": subject,
+                            "level": row["level"],
+                            "fewshot": "minerva_math_v2_first4_fixed",
+                        },
+                    )
+                )
+
+    _emit("test")
+    if include_train_pool:
+        # Perf/throughput lane only (7,500 train problems); quality = test split.
+        _emit("train")
     return items
 
 
@@ -971,6 +1211,10 @@ def load_dataset_items(
         return load_gsm8k(limit, include_train_pool)
     if dataset == "gsm8k_cot":
         return load_gsm8k_cot(limit, include_train_pool)
+    if dataset == "gsm8k_cot_zeroshot":
+        return load_gsm8k_cot_zeroshot(limit, include_train_pool)
+    if dataset == "minerva_math":
+        return load_minerva_math(limit, include_train_pool)
     if dataset == "ifeval":
         return load_ifeval(limit)
     if dataset == "mmlu_pro":
@@ -1554,6 +1798,14 @@ def score_prediction(
         return gsm8k_strict_match(prediction, str(gold)), "scored"
     if metric == "gsm8k_cot_strict_match":
         return gsm8k_cot_strict_match(prediction, str(gold)), "scored"
+    if metric == "gsm8k_cot_zeroshot_strict_match":
+        # gsm8k-cot-zeroshot.yaml carries the SAME strict-match filter and
+        # regexes_to_ignore as gsm8k-cot.yaml; distinct name for traceability.
+        return gsm8k_cot_strict_match(prediction, str(gold)), "scored"
+    if metric == "math_verify_offline":
+        # MATH correctness (sympy is_equiv + math_verify) comes only from the
+        # third-party harness offline; no in-repo reimplementation.
+        return None, "offline_third_party_scoring"
     if metric == "mmlu_pro_letter_match":
         return mmlu_pro_letter_match(prediction, str(gold)), "scored"
     if metric == "ifeval_offline":
