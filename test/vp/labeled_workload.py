@@ -394,47 +394,65 @@ def _gsm8k_cot_question(question: str) -> str:
     return f"Q: {question.strip()}\n\nA:"
 
 
-def load_gsm8k_cot(limit: int) -> list[WorkloadItem]:
+def load_gsm8k_cot(limit: int, include_train_pool: bool = False) -> list[WorkloadItem]:
     import datasets
 
     test = datasets.load_dataset("openai/gsm8k", "main", split="test")
     protocol = DATASET_PROTOCOLS["gsm8k_cot"]
     shot_messages = []
+    shot_questions: set[str] = set()
     for shot_question, shot_target in GSM8K_COT_FEWSHOT:
+        shot_questions.add(shot_question.strip())
         shot_messages.extend(
             [
                 {"role": "user", "content": _gsm8k_cot_question(shot_question)},
                 {"role": "assistant", "content": shot_target},
             ]
         )
-    items = []
-    for index, row in enumerate(test.select(range(min(limit, len(test))))):
-        messages = [
-            *shot_messages,
-            {"role": "user", "content": _gsm8k_cot_question(row["question"])},
-        ]
-        items.append(
-            WorkloadItem(
-                dataset="gsm8k_cot",
-                item_id=f"test:{index}",
-                phase="decode",
-                prompt=messages,
-                prompt_kind="chat_messages",
-                reference_output_len=None,
-                metric="gsm8k_cot_strict_match",
-                gold=_gsm8k_answer(row["answer"]),
-                protocol_id=protocol["id"],
-                quality_semantics=protocol["quality_semantics"],
-                task_reference_max_output_len=protocol[
-                    "task_reference_max_output_len"
-                ],
-                stop=["Q:", "</s>", "<|im_end|>"],
-                evaluator_data={
-                    "source_split": "test",
-                    "fewshot": "gsm8k_cot_v3_first8_fixed",
-                },
+    items: list[WorkloadItem] = []
+
+    def _emit(split_name: str, rows: Any) -> None:
+        # test is emitted first and unchanged, so eval-split items stay byte-identical
+        # when include_train_pool is False (same contract as load_gsm8k / load_coqa).
+        for index, row in enumerate(rows):
+            if len(items) >= limit:
+                return
+            if split_name == "train" and row["question"].strip() in shot_questions:
+                # a train row that IS one of the eight fixed CoT shots would put
+                # its own solution in its prompt; skip it (perf lane only).
+                continue
+            messages = [
+                *shot_messages,
+                {"role": "user", "content": _gsm8k_cot_question(row["question"])},
+            ]
+            items.append(
+                WorkloadItem(
+                    dataset="gsm8k_cot",
+                    item_id=f"{split_name}:{index}",
+                    phase="decode",
+                    prompt=messages,
+                    prompt_kind="chat_messages",
+                    reference_output_len=None,
+                    metric="gsm8k_cot_strict_match",
+                    gold=_gsm8k_answer(row["answer"]),
+                    protocol_id=protocol["id"],
+                    quality_semantics=protocol["quality_semantics"],
+                    task_reference_max_output_len=protocol[
+                        "task_reference_max_output_len"
+                    ],
+                    stop=["Q:", "</s>", "<|im_end|>"],
+                    evaluator_data={
+                        "source_split": split_name,
+                        "fewshot": "gsm8k_cot_v3_first8_fixed",
+                    },
+                )
             )
-        )
+
+    _emit("test", test)
+    if include_train_pool:
+        # Perf/throughput lane only: train questions join the SERVING load (same
+        # 8 fixed shots). The quality lane scores the test split only, so no leak.
+        _emit("train", datasets.load_dataset("openai/gsm8k", "main", split="train"))
     return items
 
 
@@ -952,7 +970,7 @@ def load_dataset_items(
     if dataset == "gsm8k":
         return load_gsm8k(limit, include_train_pool)
     if dataset == "gsm8k_cot":
-        return load_gsm8k_cot(limit)
+        return load_gsm8k_cot(limit, include_train_pool)
     if dataset == "ifeval":
         return load_ifeval(limit)
     if dataset == "mmlu_pro":
