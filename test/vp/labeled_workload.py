@@ -119,6 +119,9 @@ DEFAULT_DECODE_WEIGHTS = {
     "longbench_2wikimqa": 0.324,
     "longbench_multifieldqa_en": 0.203,
     "longbench_hotpotqa": 0.064,
+    # longbench_code row: ∝ measured window-fit survivors at 8192 (lcc 478/500, repobench-p 217/500).
+    "longbench_lcc": 0.688,
+    "longbench_repobench-p": 0.312,
 }
 DEFAULT_PREFILL_WEIGHTS = {
     "mmlu": 1.0 / 3.0,
