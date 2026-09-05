@@ -504,7 +504,9 @@ def load_gsm8k_cot_zeroshot(
         for index, row in enumerate(rows):
             if len(items) >= limit:
                 return
-            prompt = f"Q: {row['question'].strip()}\nA: Let's think step by step."
+            # doc_to_text verbatim: the question is NOT stripped (byte parity with
+            # the harness, which renders {{question}} raw).
+            prompt = f"Q: {row['question']}\nA: Let's think step by step."
             items.append(
                 WorkloadItem(
                     dataset="gsm8k_cot_zeroshot",
@@ -660,6 +662,14 @@ def load_minerva_math(limit: int, include_train_pool: bool = False) -> list[Work
                     # the harness would fail on such a row; none exist in the
                     # released splits, but never emit an item without a gold.
                     continue
+                try:
+                    gold = _minerva_remove_boxed(boxed)
+                except AssertionError:
+                    # a `\fbox{...}` answer (or a malformed box): lm-eval's own
+                    # process_docs asserts on exactly this, so such a row cannot
+                    # be in a split the harness evaluates; skip rather than abort
+                    # the whole suite build (Codex review, D-421).
+                    continue
                 messages = [
                     *shot_messages,
                     {"role": "user", "content": _minerva_math_problem(row["problem"])},
@@ -673,13 +683,15 @@ def load_minerva_math(limit: int, include_train_pool: bool = False) -> list[Work
                         prompt_kind="chat_messages",
                         reference_output_len=None,
                         metric="math_verify_offline",
-                        gold=_minerva_remove_boxed(boxed),
+                        gold=gold,
                         protocol_id=protocol["id"],
                         quality_semantics=protocol["quality_semantics"],
                         task_reference_max_output_len=protocol[
                             "task_reference_max_output_len"
                         ],
-                        stop=["Problem:", "</s>", "<|im_end|>"],
+                        # exact parity with minerva_math's generation until-list
+                        # (["Problem:"] only; the chat template's own EOS ends turns)
+                        stop=["Problem:"],
                         evaluator_data={
                             "source_split": split_name,
                             "subject": subject,
@@ -690,8 +702,9 @@ def load_minerva_math(limit: int, include_train_pool: bool = False) -> list[Work
                 )
 
     _emit("test")
-    if include_train_pool:
+    if include_train_pool and len(items) < limit:
         # Perf/throughput lane only (7,500 train problems); quality = test split.
+        # Guarded so a limit already met by the test split loads no train shard.
         _emit("train")
     return items
 
