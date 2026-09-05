@@ -195,6 +195,14 @@ def weighted_scatter(
         raise ValueError("weighted_scatter rows must be contiguous")
     if route_weights.dim() != 1:
         raise ValueError("route_weights must be 1-D per-token")
+    if route_weights.numel() > 1 and route_weights.stride(0) != 1:
+        # The kernel indexes weights_ptr + dst with no stride argument; a
+        # strided view (e.g. one column of a (rows, k) tensor reshaped to 1-D)
+        # would be read silently wrong. Assert the invariant, don't absorb it.
+        raise ValueError(
+            "weighted_scatter route_weights must be contiguous (stride 1); got "
+            f"stride {route_weights.stride(0)}"
+        )
     num_programs = _num_programs(compact.device)
     _row_kernels()[1][(num_programs,)](
         compact,

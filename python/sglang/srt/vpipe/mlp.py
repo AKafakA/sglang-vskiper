@@ -686,13 +686,22 @@ def _mapped_run_base_mlp(
     capacity: int,
     valid_rows: Optional[torch.Tensor] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Run a full dense base and overwrite exact compact PROJECT rows."""
+    """Run a full dense base and overwrite exact compact PROJECT rows.
 
+    Invalid (padded) rows are zeroed like every other body (full_dual at
+    fd_conditional_mlp_full_graph, binary_cohort by construction): without
+    this the dense base left mlp(h_pad) * w_pad on padded rows, the one body
+    whose padded rows differed.
+    """
+
+    padded_rows = valid_rows
     if valid_rows is None:
         valid_rows = torch.ones(
             hidden_states.shape[0], dtype=torch.bool, device=hidden_states.device
         )
     output = layer.mlp(hidden_states) * route_weights
+    if padded_rows is not None:
+        output.masked_fill_(~padded_rows.view(-1, 1), 0)
     project_active = (~run_mask.squeeze(-1)) & valid_rows
     overflow = _mapped_single_compact_branch(
         proj,
