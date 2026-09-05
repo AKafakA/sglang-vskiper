@@ -176,9 +176,14 @@ DATASET_PROTOCOLS: dict[str, dict[str, Any]] = {
     },
     # LongBench (v1) QA rows — lm-eval 0.4.9.1 longbench_<task> (v3.0): official
     # doc_to_text, official qa_f1_score (offline), max_gen_toks per task.
+    # DECLARED DEVIATION ("newlines-real"): the harness yamls are single-quoted
+    # YAML, so lm-eval renders "\n" as the two characters backslash+n; the
+    # LongBench authors' prompts use real line breaks, which is what we render
+    # (verified 2026-09-05: templates are otherwise byte-identical). Both arms
+    # see the same prompt; the F1 scorer is unaffected.
     **{
         f"longbench_{task}": {
-            "id": f"lm-eval-0.4.9.1:longbench_{task}-v3:zero-shot-chat",
+            "id": f"lm-eval-0.4.9.1:longbench_{task}-v3:zero-shot-chat:newlines-real",
             "source": "zai-org/LongBench:data.zip",
             "evaluation_split": "test",
             "quality_semantics": "longbench_qa_f1_offline",
