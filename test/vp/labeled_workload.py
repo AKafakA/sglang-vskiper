@@ -36,6 +36,9 @@ EXTENDED_DECODE_DATASETS = (
     "longbench_2wikimqa",
     "longbench_musique",
     "longbench_narrativeqa",
+    # Long-context CODING row (owner 2026-09-05): LongBench repo-level completion.
+    "longbench_lcc",
+    "longbench_repobench-p",
     "ifeval",
     "mmlu_pro",
     "mmlu_pro_cot",
@@ -75,6 +78,8 @@ WORKLOAD_DATASETS = {
         "longbench_multifieldqa_en",
         "longbench_hotpotqa",
     ),
+    # Long-context CODING row: lcc + repobench-p (weights ∝ window-fit survivors, set after measurement).
+    "longbench_code": ("longbench_lcc", "longbench_repobench-p"),
     "mixed_25": DECODE_DATASETS + PREFILL_DATASETS[:3],
     "mixed_50": DECODE_DATASETS + PREFILL_DATASETS[:3],
     "mixed_75": DECODE_DATASETS + PREFILL_DATASETS[:3],
@@ -90,6 +95,7 @@ WORKLOAD_PHASE = {
     "prefill_long": "prefill",
     "longctx_writing": "decode",
     "longbench_qa": "decode",
+    "longbench_code": "decode",
     "mixed_25": "mixed",
     "mixed_50": "mixed",
     "mixed_75": "mixed",
@@ -197,6 +203,16 @@ DATASET_PROTOCOLS: dict[str, dict[str, Any]] = {
             ("musique", 32),
             ("narrativeqa", 128),
         )
+    },
+    **{
+        f"longbench_{task}": {
+            "id": f"lm-eval-0.4.9.1:longbench_{task}-v3:zero-shot-chat:newlines-real",
+            "source": "zai-org/LongBench:data.zip",
+            "evaluation_split": "test",
+            "quality_semantics": "longbench_code_sim_offline",
+            "task_reference_max_output_len": 64,
+        }
+        for task in ("lcc", "repobench-p")
     },
     "mmlu_pro": {
         "id": "lm-eval-0.4.9.1:mmlu_pro-native:5shot-letter-chat",
@@ -1284,6 +1300,19 @@ LONGBENCH_QA_TASKS: dict[str, dict[str, Any]] = {
         ),
         "max_gen_toks": 128,
     },
+    # Coding row (owner 2026-09-05, D-440/D-441): LongBench repo-level code completion,
+    # lm-eval `longbench_lcc` / `longbench_repobench-p` (doc_to_text verbatim, until [],
+    # max_gen_toks 64), quality = LongBench `code_sim_score` (edit similarity, offline).
+    "lcc": {
+        "template": "Please complete the code given below. \n{context}Next line of code:\n",
+        "max_gen_toks": 64,
+        "metric": "longbench_code_sim_offline",
+    },
+    "repobench-p": {
+        "template": "Please complete the code given below. \n{context}{input}Next line of code:\n",
+        "max_gen_toks": 64,
+        "metric": "longbench_code_sim_offline",
+    },
 }
 
 
@@ -1338,7 +1367,7 @@ def load_longbench_qa(
             prompt=[{"role": "user", "content": _longbench_qa_prompt(task, record)}],
             prompt_kind="chat_messages",
             reference_output_len=None,
-            metric="longbench_qa_f1_offline",
+            metric=LONGBENCH_QA_TASKS[task].get("metric", "longbench_qa_f1_offline"),
             gold=list(record["answers"]),
             protocol_id=protocol["id"],
             quality_semantics=protocol["quality_semantics"],
@@ -2035,8 +2064,9 @@ def score_prediction(
         # MATH correctness (sympy is_equiv + math_verify) comes only from the
         # third-party harness offline; no in-repo reimplementation.
         return None, "offline_third_party_scoring"
-    if metric == "longbench_qa_f1_offline":
-        # LongBench QA F1 comes only from lm-eval's longbench metrics offline.
+    if metric in ("longbench_qa_f1_offline", "longbench_code_sim_offline"):
+        # LongBench QA F1 / code edit-similarity come only from lm-eval's longbench
+        # metrics offline (score_longbench_offline.py).
         return None, "offline_third_party_scoring"
     if metric == "mmlu_pro_letter_match":
         return mmlu_pro_letter_match(prediction, str(gold)), "scored"
