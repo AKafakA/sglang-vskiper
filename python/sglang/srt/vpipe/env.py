@@ -52,6 +52,8 @@ FD_PREFILL_CUBLAS_ENV = "SGLANG_FD_FULL_GRAPH_PREFILL_CUBLAS"
 # P5 coverage-as-code (2026-09-05): decode CUDA-graph buckets cover the
 # scheduler admission cap when FlexiDepth full_graph serving is active.
 VP_DECODE_COVERAGE_ENV = "SGLANG_VP_DECODE_COVERAGE"
+# Optional explicit ceiling for the coverage endpoint (capture memory is finite).
+VP_DECODE_COVERAGE_MAX_BS_ENV = "SGLANG_VP_DECODE_COVERAGE_MAX_BS"
 FD_COMPACT_MIN_ROWS_ENV = "SGLANG_FD_FULL_GRAPH_COMPACT_MIN_ROWS"
 FD_DUAL_COMPACT_MIN_ROWS_ENV = "SGLANG_FD_FULL_GRAPH_DUAL_COMPACT_MIN_ROWS"
 FD_COMPACT_CAPACITY_FRACTION_ENV = (

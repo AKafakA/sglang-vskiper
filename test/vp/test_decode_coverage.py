@@ -45,3 +45,12 @@ def test_env_switch():
     assert vp_decode_coverage_enabled({"SGLANG_VP_DECODE_COVERAGE": "0"}) is False
     with pytest.raises(ValueError):
         vp_decode_coverage_enabled({"SGLANG_VP_DECODE_COVERAGE": "maybe"})
+
+
+def test_max_bs_env():
+    from sglang.srt.vpipe.common import vp_decode_coverage_max_bs
+
+    assert vp_decode_coverage_max_bs({}) is None
+    assert vp_decode_coverage_max_bs({"SGLANG_VP_DECODE_COVERAGE_MAX_BS": "320"}) == 320
+    with pytest.raises(ValueError):
+        vp_decode_coverage_max_bs({"SGLANG_VP_DECODE_COVERAGE_MAX_BS": "0"})
