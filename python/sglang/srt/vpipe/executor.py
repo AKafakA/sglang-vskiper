@@ -69,6 +69,9 @@ from sglang.srt.vpipe.routing import (
 from sglang.srt.vpipe.env import (
     RUN_PROJECT_EXECUTION,
 )
+from sglang.srt.vpipe.common import (
+    full_graph_prefill_cublas_enabled,
+)
 from sglang.srt.vpipe.config import (
     full_graph_compact_config,
     full_graph_compact_o_proj_config,
@@ -77,7 +80,6 @@ from sglang.srt.vpipe.config import (
     full_graph_forced_all_run_production_attention_enabled,
     full_graph_mapped_decode_attention_enabled,
     full_graph_masked_decode_attention_enabled,
-    full_graph_prefill_cublas_enabled,
     full_graph_prefill_grouped_mlp_enabled,
 )
 
