@@ -40,6 +40,7 @@ from sglang.srt.vpipe.env import (
     FD_COMPACT_PHASES_ENV,
     FD_PREFILL_CUBLAS_ENV,
     VP_DECODE_COVERAGE_ENV,
+    VP_DECODE_COVERAGE_MAX_BS_ENV,
     _VP_DECODE_COVERAGE,
     FD_COMPACT_Q_PROJ_ENV,
     FD_LOW_ROW_MAX_ROWS_ENV,
@@ -532,6 +533,25 @@ def vp_decode_coverage_enabled(
     if value not in ("0", "1"):
         raise ValueError(f"{VP_DECODE_COVERAGE_ENV} must be 0 or 1; got {value!r}")
     return value == "1"
+def vp_decode_coverage_max_bs(
+    environ: Optional[Mapping[str, str]] = None,
+) -> Optional[int]:
+    """Explicit ceiling for the coverage endpoint (None = the built-in bound of
+    4x the CLI-configured decode max_bs, the largest capture the A100 T2
+    emulation proved). Capture memory is finite: the RTX 8000 box OOM'd at
+    its full admission cap (2026-09-05)."""
+
+    values = os.environ if environ is None else environ
+    raw = str(values.get(VP_DECODE_COVERAGE_MAX_BS_ENV, "") or "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError as error:
+        raise ValueError(f"{VP_DECODE_COVERAGE_MAX_BS_ENV} must be an integer") from error
+    if value <= 0:
+        raise ValueError(f"{VP_DECODE_COVERAGE_MAX_BS_ENV} must be positive")
+    return value
 def coverage_capture_bs(
     capture_bs: list[int], target: int, generate
 ) -> tuple[list[int], int]:

@@ -100,17 +100,24 @@ def get_batch_sizes_to_capture(
     if requested_tokens_per_bs == 1:
         from sglang.srt.vpipe.common import (
             coverage_capture_bs,
+            vp_decode_coverage_max_bs,
             vp_decode_coverage_target,
         )
         from sglang.srt.vpipe.env import _VP_DECODE_COVERAGE
 
         target = vp_decode_coverage_target(model_runner)
         if target is not None:
-            # Aligned endpoint at or above the admission cap, never above the
-            # pool (num_max_requests is already a multiple of mul_base).
-            target = min(int(target), int(num_max_requests))
-            target = (target + mul_base - 1) // mul_base * mul_base
             configured_max = max(capture_bs)
+            admission_cap = int(target)
+            # Capture memory is finite: bound the endpoint by 4x the configured
+            # max (the A100 T2 emulation's proven 1024) or the explicit env cap,
+            # and never above the pool. Aligned to mul_base (num_max_requests
+            # already is).
+            bound = vp_decode_coverage_max_bs()
+            if bound is None:
+                bound = 4 * int(configured_max)
+            target = min(admission_cap, int(num_max_requests), int(bound))
+            target = (target + mul_base - 1) // mul_base * mul_base
             extended, _ = coverage_capture_bs(
                 capture_bs,
                 target,
@@ -129,10 +136,13 @@ def get_batch_sizes_to_capture(
                     f"{max(capture_bs)} is below the admission cap {target}"
                 )
             _VP_DECODE_COVERAGE[str(model_runner.device)] = {
+                "admission_cap": int(admission_cap),
+                "bound": int(bound),
                 "target": int(target),
                 "configured_max_bs": int(configured_max),
                 "captured_max_bs": int(max(capture_bs)),
                 "buckets_added": int(added),
+                "covers_admission_cap": bool(max(capture_bs) >= admission_cap),
             }
 
     assert len(capture_bs) > 0 and capture_bs[0] > 0, f"{capture_bs=}"
