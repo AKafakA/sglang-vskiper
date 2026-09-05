@@ -1288,10 +1288,12 @@ LONGBENCH_QA_TASKS: dict[str, dict[str, Any]] = {
 
 
 def _longbench_qa_prompt(task: str, record: dict[str, Any]) -> str:
-    # {{context}} / {{input}} substituted verbatim (no strip: the harness renders raw).
+    # {{context}} / {{input}} substituted verbatim (no strip: the harness renders
+    # raw) in ONE pass, so a document that itself contains the literal text
+    # "{input}" cannot be rewritten by a second replacement (Codex review).
     template = LONGBENCH_QA_TASKS[task]["template"]
-    return template.replace("{context}", record["context"]).replace(
-        "{input}", record["input"]
+    return re.sub(
+        r"\{(context|input)\}", lambda m: record[m.group(1)], template
     )
 
 
