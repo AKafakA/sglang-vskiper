@@ -32,6 +32,7 @@ from sglang.srt.vpipe.env import (
     FULL_GRAPH_CAPTURE_SYNTHETIC_RID_BASE,
     _VALUE_TYPED_CONFLICT_ENVS,
     _BINARY_COHORT_CONFIG_DIGEST,
+    _BINARY_COHORT_CUBLAS_PASSES,
     _BINARY_COHORT_LAYERS,
     _BINARY_COHORT_STATS,
     _MASKED_DECODE_REQUIRED_BACKEND,
@@ -435,6 +436,10 @@ def binary_cohort_attestation() -> dict:
         "layers": sorted(_BINARY_COHORT_LAYERS),
         "config_artifacts": dict(_BINARY_COHORT_CONFIG_DIGEST),
         "realized": realized,
+        "prefill_cublas": {
+            device: {"passes": passes, "rows": rows}
+            for device, (passes, rows) in _BINARY_COHORT_CUBLAS_PASSES.items()
+        },
     }
 def _conflicting_env_enabled(name: str, value: Optional[str]) -> bool:
     if value is None:

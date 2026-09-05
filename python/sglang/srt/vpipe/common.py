@@ -38,6 +38,7 @@ from sglang.srt.vpipe.env import (
     FD_ROUTED_QKV_CAPACITY_MULTIPLE_ENV,
     FD_ROUTED_QKV_MIN_ROWS_ENV,
     FD_COMPACT_PHASES_ENV,
+    FD_PREFILL_CUBLAS_ENV,
     FD_COMPACT_Q_PROJ_ENV,
     FD_LOW_ROW_MAX_ROWS_ENV,
     FD_GATE_MODE_ENV,
@@ -506,6 +507,18 @@ class FullGraphDeviceRouteTape:
                 f"expected {len(self.layer_order)} layers, "
                 f"recorded {self.kv_recorded_layers}"
             )
+def full_graph_prefill_cublas_enabled(
+    environ: Optional[Mapping[str, str]] = None,
+) -> bool:
+    """P3: run the binary_cohort branch GEMMs through cuBLAS on eager prefill
+    passes (RUN/PROJECT counts read to the host once per layer). Captured
+    passes (single-request prefill graphs, decode graphs) are untouched."""
+
+    values = os.environ if environ is None else environ
+    value = str(values.get(FD_PREFILL_CUBLAS_ENV, "0") or "0").strip().lower()
+    if value not in ("0", "1"):
+        raise ValueError(f"{FD_PREFILL_CUBLAS_ENV} must be 0 or 1; got {value!r}")
+    return value == "1"
 def _route_tape_request_slots(
     forward_batch: Any, row_ids: torch.Tensor
 ) -> torch.Tensor:
