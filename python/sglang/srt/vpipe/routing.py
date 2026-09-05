@@ -578,18 +578,32 @@ def build_route_maps_from_mask(
         valid_rows.shape != run_mask.shape or valid_rows.dtype != torch.bool
     ):
         raise ValueError("valid_rows must be a bool tensor aligned with the route mask")
-    if stats.dtype != torch.int64 or stats.numel() != 3 or stats.device != run_mask.device:
-        raise ValueError("stats must be the int64 [3] accumulator on the mask device")
-    run_mask = run_mask.contiguous()
+    if (
+        stats.dtype != torch.int64
+        or stats.numel() != 3
+        or stats.device != run_mask.device
+        or not stats.is_contiguous()
+    ):
+        raise ValueError("stats must be the contiguous int64 [3] accumulator on the mask device")
+    # Fail closed on strided inputs instead of copying: a hidden `.contiguous()`
+    # copy would add the launch this kernel exists to remove, and the unfused
+    # kernel read its masks with unit-stride offsets too (Codex review, 2026-09-05).
+    if not run_mask.is_contiguous() or (valid_rows is not None and not valid_rows.is_contiguous()):
+        raise ValueError("route mask and valid_rows must be contiguous")
     rows = int(run_mask.numel())
     counts = torch.zeros(2, dtype=torch.int32, device=run_mask.device)
     run_rows = torch.empty(rows, dtype=torch.int32, device=run_mask.device)
     project_rows = torch.empty_like(run_rows)
+    if rows == 0:
+        # An empty batch launches no program, so the call counter would not
+        # advance inside the kernel; keep the old semantics (one call, no rows).
+        stats[0].add_(1)
+        return run_rows, project_rows, counts
     block_rows = 256
     has_valid = valid_rows is not None
     _build_route_maps_masked_kernel[(triton.cdiv(rows, block_rows),)](
         run_mask,
-        valid_rows.contiguous() if has_valid else run_mask,
+        valid_rows if has_valid else run_mask,
         run_rows,
         project_rows,
         counts,

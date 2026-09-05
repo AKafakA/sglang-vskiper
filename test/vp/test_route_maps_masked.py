@@ -71,6 +71,45 @@ def test_calls_counter_increments_once_per_call():
     assert stats.tolist() == [5, 5 * 2048, 5 * 2048]
 
 
+@pytest.mark.parametrize("rows", [300, 4096])
+@pytest.mark.parametrize("pattern", ["all_run", "all_project", "all_invalid"])
+def test_degenerate_multi_block_patterns(rows, pattern):
+    from sglang.srt.vpipe.routing import build_route_maps_from_mask
+
+    run_mask = torch.full((rows,), pattern == "all_run", dtype=torch.bool, device="cuda")
+    valid_rows = torch.full((rows,), pattern != "all_invalid", dtype=torch.bool, device="cuda")
+    stats_ref = torch.zeros(3, dtype=torch.int64, device="cuda")
+    stats_new = torch.zeros(3, dtype=torch.int64, device="cuda")
+    ref = _reference(run_mask, valid_rows, stats_ref)
+    new = build_route_maps_from_mask(run_mask, valid_rows, stats_new)
+    assert torch.equal(ref[2], new[2]) and _as_sets(*ref) == _as_sets(*new)
+    assert torch.equal(stats_ref, stats_new)
+
+
+def test_zero_rows_counts_one_call():
+    from sglang.srt.vpipe.routing import build_route_maps_from_mask
+
+    stats = torch.zeros(3, dtype=torch.int64, device="cuda")
+    run_rows, project_rows, counts = build_route_maps_from_mask(
+        torch.zeros(0, dtype=torch.bool, device="cuda"), None, stats
+    )
+    assert run_rows.numel() == 0 and project_rows.numel() == 0
+    assert counts.tolist() == [0, 0] and stats.tolist() == [1, 0, 0]
+
+
+def test_rejects_strided_inputs():
+    from sglang.srt.vpipe.routing import build_route_maps_from_mask
+
+    stats = torch.zeros(3, dtype=torch.int64, device="cuda")
+    base = torch.zeros(64, dtype=torch.bool, device="cuda")
+    with pytest.raises(ValueError):
+        build_route_maps_from_mask(base[::2], None, stats)
+    with pytest.raises(ValueError):
+        build_route_maps_from_mask(base[:32], base[::2], stats)
+    with pytest.raises(ValueError):
+        build_route_maps_from_mask(base[:32], None, torch.zeros(6, dtype=torch.int64, device="cuda")[::2])
+
+
 def test_rejects_wrong_dtypes():
     from sglang.srt.vpipe.routing import build_route_maps_from_mask
 
