@@ -118,5 +118,195 @@
    4,
    2
   ]
+ },
+ "projgd@205": {
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "prev_config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "bk_fixed": 32,
+  "identical_to_prev": true,
+  "tuner": "copied from gateup (box = feasibility only, D-421/rtx8000-feasibility-only)"
+ },
+ "projgd@512": {
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "prev_config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "bk_fixed": 32,
+  "identical_to_prev": true,
+  "tuner": "copied from gateup (box = feasibility only, D-421/rtx8000-feasibility-only)"
+ },
+ "projgd@1024": {
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "prev_config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "bk_fixed": 32,
+  "identical_to_prev": true,
+  "tuner": "copied from gateup (box = feasibility only, D-421/rtx8000-feasibility-only)"
+ },
+ "projgd@2048": {
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "prev_config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "bk_fixed": 32,
+  "identical_to_prev": true,
+  "tuner": "copied from gateup (box = feasibility only, D-421/rtx8000-feasibility-only)"
+ },
+ "projgd@4096": {
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "prev_config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "bk_fixed": 32,
+  "identical_to_prev": true,
+  "tuner": "copied from gateup (box = feasibility only, D-421/rtx8000-feasibility-only)"
+ },
+ "projup@205": {
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "prev_config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "bk_fixed": 32,
+  "identical_to_prev": true,
+  "tuner": "copied from down (box = feasibility only)"
+ },
+ "projup@512": {
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "prev_config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "bk_fixed": 32,
+  "identical_to_prev": true,
+  "tuner": "copied from down (box = feasibility only)"
+ },
+ "projup@1024": {
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "prev_config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "bk_fixed": 32,
+  "identical_to_prev": true,
+  "tuner": "copied from down (box = feasibility only)"
+ },
+ "projup@2048": {
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "prev_config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "bk_fixed": 32,
+  "identical_to_prev": true,
+  "tuner": "copied from down (box = feasibility only)"
+ },
+ "projup@4096": {
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "prev_config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "bk_fixed": 32,
+  "identical_to_prev": true,
+  "tuner": "copied from down (box = feasibility only)"
  }
 }
