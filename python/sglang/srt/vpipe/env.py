@@ -51,8 +51,9 @@ FD_COMPACT_PHASES_ENV = "SGLANG_FD_FULL_GRAPH_COMPACT_PHASES"
 FD_PREFILL_CUBLAS_ENV = "SGLANG_FD_FULL_GRAPH_PREFILL_CUBLAS"
 # D-508 (2026-09-06): per-layer break-even fallback on EAGER prefill passes.
 # Value = minimum PROJECT share (fraction of valid rows, in (0, 1]) below which
-# a routed layer runs the exact dense full-dual body instead of a compaction
-# body; unset = off. The share is read to the host once per routed layer
+# a routed layer runs the dense-filtered-project body (production's dense MLP
+# on every row + the projector on the PROJECT rows only) instead of a
+# compaction body; unset = off. The share is read to the host once per routed layer
 # (eager passes only; captured passes keep their captured variant). The
 # default value used in serving is the ladder's measured break-even (D-490:
 # 22 % PROJECT = parity, 8 % = -4.4 %, ~37 % = -4..-6 %), never a per-dataset

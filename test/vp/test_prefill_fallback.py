@@ -93,8 +93,12 @@ def test_low_project_share_falls_back_to_full_dual(monkeypatch, rows, run_frac):
     valid[-7:] = False
     key = str(h.device)
     with torch.no_grad():
-        ref = vp_mlp._full_dual_mlp(layer, proj, h, w, run_mask)
+        # the fallback body is dense-filtered-project (dense MLP every row + projector on PROJECT rows only);
+        # it must be bit-identical to that body and agree with the full-dual reference to fp16 rounding
+        ref = vp_mlp._dense_filtered_project_mlp(layer, proj, h, w, run_mask)
         ref = torch.where(valid.view(-1, 1), ref, torch.zeros_like(ref))
+        dual = vp_mlp._full_dual_mlp(layer, proj, h, w, run_mask)
+        dual = torch.where(valid.view(-1, 1), dual, torch.zeros_like(dual))
         before = vp_mlp._PREFILL_FALLBACK.get(key, (0, 0))
         out = vp_mlp.fd_conditional_mlp_full_graph(
             layer,
@@ -109,7 +113,10 @@ def test_low_project_share_falls_back_to_full_dual(monkeypatch, rows, run_frac):
         )
     after = vp_mlp._PREFILL_FALLBACK[key]
     assert after == (before[0] + 1, before[1] + 1)
-    assert torch.equal(out, ref), "fallback must be the exact full-dual body"
+    assert torch.equal(out, ref), "fallback must be the dense-filtered-project body"
+    scale = dual.float().abs().max().item()
+    tol = 4e-3 * scale + 1e-3  # a few fp16 ulps: the filtered projector accumulates in a different order
+    assert (out.float() - dual.float()).abs().max().item() <= tol, "fallback must agree with the full-dual reference"
     assert not out[-7:].any(), "padded rows must be zero"
 
 
