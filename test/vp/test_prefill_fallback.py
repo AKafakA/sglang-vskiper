@@ -126,6 +126,10 @@ def test_high_project_share_does_not_fall_back(monkeypatch):
     with torch.no_grad():
         cohort = vp_mlp._binary_cohort_mlp(layer, proj, h, w, run_mask, None).clone()
         before = vp_mlp._PREFILL_FALLBACK.get(key, (0, 0))
+        # body selection is asserted through the binary_cohort evidence counter
+        # (executor calls), not only through output equality: the bodies agree
+        # on outputs by design, so equality alone cannot prove which one ran.
+        calls_before = int(vp_mlp._BINARY_COHORT_STATS[h.device][0].item())
         out = vp_mlp.fd_conditional_mlp_full_graph(
             layer,
             proj,
@@ -140,6 +144,8 @@ def test_high_project_share_does_not_fall_back(monkeypatch):
     after = vp_mlp._PREFILL_FALLBACK[key]
     assert after == (before[0] + 1, before[1]), "checked but not fallen"
     assert torch.equal(out, cohort), "above the threshold the configured body runs unchanged"
+    calls_after = int(vp_mlp._BINARY_COHORT_STATS[h.device][0].item())
+    assert calls_after == calls_before + 1, "the binary_cohort body must have executed once"
 
 
 @cuda

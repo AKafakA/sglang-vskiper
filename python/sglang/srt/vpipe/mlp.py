@@ -502,7 +502,13 @@ def fd_conditional_mlp_full_graph(
     # this layer's PROJECT share to the host once (eager passes tolerate the
     # D2H exactly as the P3 branch did) and run the exact dense full-dual body
     # when the share is below the threshold. Captured passes never enter here
-    # (their dense/routed variant is selected per pass at replay).
+    # (their dense/routed variant is selected per pass at replay). Gate mode:
+    # `_full_dual_mlp` implements both `released` and `hard_mask`; the
+    # compaction bodies below implement `released` only, and validation
+    # already forces `native_dense` (full_dual everywhere) under `hard_mask`,
+    # so this branch can only ever swap released-for-released. Mixed
+    # prefill+decode batches never get a threshold (the executor passes None
+    # unless the forward phase is exactly "prefill").
     if (
         prefill_fallback_min_project is not None
         and not torch.cuda.is_current_stream_capturing()
