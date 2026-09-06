@@ -117,7 +117,42 @@ def test_low_project_share_falls_back_to_full_dual(monkeypatch, rows, run_frac):
     scale = dual.float().abs().max().item()
     tol = 4e-3 * scale + 1e-3  # a few fp16 ulps: the filtered projector accumulates in a different order
     assert (out.float() - dual.float()).abs().max().item() <= tol, "fallback must agree with the full-dual reference"
+    # PROJECT rows checked on their own scale (Codex review: a global RUN-row scale could hide projector errors)
+    proj_rows = (~run_mask.view(-1)) & valid
+    if proj_rows.any():
+        pscale = dual[proj_rows].float().abs().max().item()
+        perr = (out[proj_rows].float() - dual[proj_rows].float()).abs().max().item()
+        assert perr <= 4e-3 * pscale + 1e-3, f"PROJECT rows differ from the full-dual projector beyond fp16 rounding ({perr} vs scale {pscale})"
     assert not out[-7:].any(), "padded rows must be zero"
+
+
+@cuda
+def test_all_run_pass_falls_back_without_project_rows(monkeypatch):
+    """Share 0 (< threshold): the filtered projector runs with an EMPTY expert; output must equal w*MLP on every row."""
+    import sglang.srt.server_args as sa
+    from sglang.srt.vpipe import mlp as vp_mlp
+
+    monkeypatch.setattr(sa, "get_global_server_args", lambda: _SA())
+    layer, proj, h, w, _ = _fixture(771, 1.0, 5)
+    run_mask = torch.ones(771, 1, dtype=torch.bool, device=h.device)
+    key = str(h.device)
+    with torch.no_grad():
+        ref = layer.mlp(h) * w
+        before = vp_mlp._PREFILL_FALLBACK.get(key, (0, 0))
+        out = vp_mlp.fd_conditional_mlp_full_graph(
+            layer,
+            proj,
+            h,
+            w,
+            run_mask,
+            valid_rows=None,
+            compact_phase_enabled=True,
+            force_dense_all_run=False,
+            prefill_fallback_min_project=0.22,
+        )
+    assert vp_mlp._PREFILL_FALLBACK[key] == (before[0] + 1, before[1] + 1)
+    assert torch.isfinite(out.float()).all(), "empty PROJECT expert must not produce NaN/inf"
+    assert torch.equal(out, ref), "all-RUN pass must be exactly w*MLP"
 
 
 @cuda
