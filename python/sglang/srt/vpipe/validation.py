@@ -28,6 +28,7 @@ from sglang.srt.vpipe.common import (
     full_graph_contiguous_routed_qkv_config,
     full_graph_compact_phases,
     full_graph_prefill_cublas_enabled,
+    full_graph_prefill_fallback_min_project,
     full_graph_compact_q_proj_enabled,
     full_graph_gate_mode,
     full_graph_low_row_policy,
@@ -66,6 +67,7 @@ from sglang.srt.vpipe.env import (
     FD_COMPACT_O_PROJ_LAYERS_ENV,
     FD_COMPACT_PHASES_ENV,
     FD_PREFILL_CUBLAS_ENV,
+    FD_PREFILL_FALLBACK_ENV,
     FD_COMPACT_Q_PROJ_ENV,
     FD_CONDITIONAL_BRANCH_COUNTERS_ENV,
     FD_CONDITIONAL_GRAPH_ENV,
@@ -516,6 +518,21 @@ def validate_full_graph_model_configuration(
     fused_evidence = full_graph_fused_evidence_enabled(values)
     masked_decode_attention = full_graph_masked_decode_attention_enabled(values)
     compact_o_proj, compact_o_layers = full_graph_compact_o_proj_config(values)
+    if full_graph_prefill_fallback_min_project(values) is not None:
+        # D-508 fails closed: the per-layer fallback decides between a
+        # compaction body and the dense full-dual body on prefill passes, so
+        # it needs compaction on prefill and prefill among the active phases;
+        # otherwise the value could never execute.
+        if "prefill" not in full_graph_compact_phases(values):
+            raise ValueError(
+                f"{FD_PREFILL_FALLBACK_ENV} requires {FD_COMPACT_PHASES_ENV} to "
+                "include prefill (both) — it can only execute on prefill passes"
+            )
+        if "prefill" not in flexidepth_active_phases(values):
+            raise ValueError(
+                f"{FD_PREFILL_FALLBACK_ENV} requires prefill among the active "
+                "FlexiDepth phases"
+            )
     if full_graph_prefill_cublas_enabled(values):
         # P3 fails closed: the cuBLAS branch lives inside the binary_cohort body
         # on prefill passes, so it needs compaction on prefill and at least one
