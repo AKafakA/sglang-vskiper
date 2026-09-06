@@ -71,6 +71,7 @@ from sglang.srt.vpipe.env import (
 )
 from sglang.srt.vpipe.common import (
     full_graph_prefill_cublas_enabled,
+    full_graph_prefill_fallback_min_project,
 )
 from sglang.srt.vpipe.config import (
     full_graph_compact_config,
@@ -234,6 +235,11 @@ def fd_execute_prepared_layer_route_full_graph(
         prefill_cublas_enabled=(
             full_graph_prefill_cublas_enabled()
             and full_graph_prefill_enabled(forward_batch)
+        ),
+        prefill_fallback_min_project=(
+            full_graph_prefill_fallback_min_project()
+            if full_graph_prefill_enabled(forward_batch)
+            else None
         ),
     )
     if parity_context is not None:

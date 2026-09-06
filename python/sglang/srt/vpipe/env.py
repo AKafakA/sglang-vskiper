@@ -49,6 +49,15 @@ FD_COMPACT_PHASES_ENV = "SGLANG_FD_FULL_GRAPH_COMPACT_PHASES"
 # P3 (2026-09-05): binary_cohort branch GEMMs through cuBLAS on EAGER prefill
 # passes (host-known counts); captured passes keep the count-GEMMs.
 FD_PREFILL_CUBLAS_ENV = "SGLANG_FD_FULL_GRAPH_PREFILL_CUBLAS"
+# D-508 (2026-09-06): per-layer break-even fallback on EAGER prefill passes.
+# Value = minimum PROJECT share (fraction of valid rows, in (0, 1]) below which
+# a routed layer runs the exact dense full-dual body instead of a compaction
+# body; unset = off. The share is read to the host once per routed layer
+# (eager passes only; captured passes keep their captured variant). The
+# default value used in serving is the ladder's measured break-even (D-490:
+# 22 % PROJECT = parity, 8 % = -4.4 %, ~37 % = -4..-6 %), never a per-dataset
+# tuning.
+FD_PREFILL_FALLBACK_ENV = "SGLANG_FD_FULL_GRAPH_PREFILL_FALLBACK_MIN_PROJECT"
 # P5 coverage-as-code (2026-09-05): decode CUDA-graph buckets cover the
 # scheduler admission cap when FlexiDepth full_graph serving is active.
 VP_DECODE_COVERAGE_ENV = "SGLANG_VP_DECODE_COVERAGE"
@@ -211,6 +220,10 @@ _BINARY_COHORT_LAYERS: set = set()
 # P3 attestation: eager prefill passes that took the cuBLAS branch, per device
 # (executed evidence, never a flag): device -> (passes, rows).
 _BINARY_COHORT_CUBLAS_PASSES: dict[str, tuple[int, int]] = {}
+# D-508 attestation: per-layer prefill break-even decisions on eager passes,
+# per device: device -> (layers_checked, layers_fallen_back_to_full_dual).
+# Executed evidence; lives under binary_cohort.realized (identity-stripped).
+_PREFILL_FALLBACK: dict[str, tuple[int, int]] = {}
 # P5 attestation: decode graph coverage decision per device (executed evidence).
 _VP_DECODE_COVERAGE: dict[str, dict] = {}
 _BINARY_COHORT_CONFIG_DIGEST: dict = {}

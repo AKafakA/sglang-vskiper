@@ -29,6 +29,7 @@ from sglang.srt.vpipe.env import (
     _BINARY_COHORT_LAYERS,
     _BINARY_COHORT_SCRATCH,
     _BINARY_COHORT_STATS,
+    _PREFILL_FALLBACK,
 )
 from sglang.srt.vpipe.mlp_compact import (
     _compact_capacity,
@@ -413,6 +414,7 @@ def fd_conditional_mlp_full_graph(
     force_dense_all_run: Optional[bool] = None,
     force_filtered_all_run: bool = False,
     prefill_cublas_enabled: bool = False,
+    prefill_fallback_min_project: Optional[float] = None,
 ) -> torch.Tensor:
     """Fixed-topology conditional MLP with device-resident complementary routes."""
 
@@ -491,6 +493,45 @@ def fd_conditional_mlp_full_graph(
                 valid_rows.view(-1, 1), output, torch.zeros_like(output)
             )
         return output
+
+    # D-508 (2026-09-06): per-layer break-even fallback on EAGER prefill
+    # passes. The compaction bodies only pay off when enough rows PROJECT
+    # (ladder D-490 / cells D-491, D-496, D-507: 8 % PROJECT costs -4.4 %,
+    # 22 % is parity, ~37 % gains 4-6 %); below the break-even the routing
+    # and count-GEMM machinery is a pure TTFT tax. With the mask known, read
+    # this layer's PROJECT share to the host once (eager passes tolerate the
+    # D2H exactly as the P3 branch did) and run the exact dense full-dual body
+    # when the share is below the threshold. Captured passes never enter here
+    # (their dense/routed variant is selected per pass at replay).
+    if (
+        prefill_fallback_min_project is not None
+        and not torch.cuda.is_current_stream_capturing()
+    ):
+        run_flat = run_mask.reshape(rows)
+        if valid_rows is not None:
+            valid_flat = valid_rows.reshape(rows)
+            n_valid, n_project = (
+                int(value)
+                for value in torch.stack(
+                    [valid_flat.sum(), ((~run_flat) & valid_flat).sum()]
+                ).tolist()
+            )
+        else:
+            n_valid = rows
+            n_project = int((~run_flat).sum().item())
+        key = str(hidden_states.device)
+        checked, fallen = _PREFILL_FALLBACK.get(key, (0, 0))
+        if n_valid > 0 and n_project < prefill_fallback_min_project * n_valid:
+            _PREFILL_FALLBACK[key] = (checked + 1, fallen + 1)
+            output = _full_dual_mlp(
+                layer, proj, hidden_states, route_weights, run_mask
+            )
+            if valid_rows is not None:
+                output = torch.where(
+                    valid_rows.view(-1, 1), output, torch.zeros_like(output)
+                )
+            return output
+        _PREFILL_FALLBACK[key] = (checked + 1, fallen)
 
     # binary_cohort resolves BEFORE the grouped and compact gates
     # (kernel design v2.1 item 5) and fail-closes on conflicts.

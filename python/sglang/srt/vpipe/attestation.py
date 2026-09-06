@@ -33,6 +33,7 @@ from sglang.srt.vpipe.env import (
     _VALUE_TYPED_CONFLICT_ENVS,
     _BINARY_COHORT_CONFIG_DIGEST,
     _BINARY_COHORT_CUBLAS_PASSES,
+    _PREFILL_FALLBACK,
     _BINARY_COHORT_LAYERS,
     _BINARY_COHORT_STATS,
     _MASKED_DECODE_REQUIRED_BACKEND,
@@ -431,6 +432,20 @@ def binary_cohort_attestation() -> dict:
             "project_rows": project_rows,
             "engagement": (project_rows / total) if total else None,
         }
+    # D-508: per-layer prefill break-even decisions (eager passes) are realized
+    # counters too, so they live under `realized` (stripped from the identity).
+    for device, (checked, fallen) in _PREFILL_FALLBACK.items():
+        block = realized.setdefault(
+            str(device),
+            {
+                "executor_calls": 0,
+                "run_rows": 0,
+                "project_rows": 0,
+                "engagement": None,
+            },
+        )
+        block["prefill_fallback_layers_checked"] = int(checked)
+        block["prefill_fallback_layers_fallen"] = int(fallen)
     return {
         "enabled": bool(_BINARY_COHORT_LAYERS),
         "layers": sorted(_BINARY_COHORT_LAYERS),

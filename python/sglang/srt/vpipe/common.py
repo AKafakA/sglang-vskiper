@@ -39,6 +39,7 @@ from sglang.srt.vpipe.env import (
     FD_ROUTED_QKV_MIN_ROWS_ENV,
     FD_COMPACT_PHASES_ENV,
     FD_PREFILL_CUBLAS_ENV,
+    FD_PREFILL_FALLBACK_ENV,
     VP_DECODE_COVERAGE_ENV,
     VP_DECODE_COVERAGE_MAX_BS_ENV,
     _VP_DECODE_COVERAGE,
@@ -522,6 +523,29 @@ def full_graph_prefill_cublas_enabled(
     if value not in ("0", "1"):
         raise ValueError(f"{FD_PREFILL_CUBLAS_ENV} must be 0 or 1; got {value!r}")
     return value == "1"
+def full_graph_prefill_fallback_min_project(
+    environ: Optional[Mapping[str, str]] = None,
+) -> Optional[float]:
+    """D-508: minimum PROJECT share (fraction of valid rows) below which a
+    routed layer on an EAGER prefill pass runs the exact dense full-dual body
+    instead of a compaction body. None = off. Must lie in (0, 1]; fail closed
+    on anything else (a typo must not silently disable the fallback)."""
+
+    values = os.environ if environ is None else environ
+    raw = str(values.get(FD_PREFILL_FALLBACK_ENV, "") or "").strip()
+    if not raw:
+        return None
+    try:
+        share = float(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"{FD_PREFILL_FALLBACK_ENV} must be a float share in (0, 1]; got {raw!r}"
+        ) from exc
+    if not (0.0 < share <= 1.0):
+        raise ValueError(
+            f"{FD_PREFILL_FALLBACK_ENV} must lie in (0, 1]; got {raw!r}"
+        )
+    return share
 def vp_decode_coverage_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
