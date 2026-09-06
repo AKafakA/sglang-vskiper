@@ -500,15 +500,19 @@ def fd_conditional_mlp_full_graph(
     # 22 % is parity, ~37 % gains 4-6 %); below the break-even the routing
     # and count-GEMM machinery is a pure TTFT tax. With the mask known, read
     # this layer's PROJECT share to the host once (eager passes tolerate the
-    # D2H exactly as the P3 branch did) and run the exact dense full-dual body
-    # when the share is below the threshold. Captured passes never enter here
-    # (their dense/routed variant is selected per pass at replay). Gate mode:
-    # `_full_dual_mlp` implements both `released` and `hard_mask`; the
-    # compaction bodies below implement `released` only, and validation
-    # already forces `native_dense` (full_dual everywhere) under `hard_mask`,
-    # so this branch can only ever swap released-for-released. Mixed
-    # prefill+decode batches never get a threshold (the executor passes None
-    # unless the forward phase is exactly "prefill").
+    # D2H exactly as the P3 branch did) and, when the share is below the
+    # threshold, run the DENSE-FILTERED-PROJECT body: production's dense MLP
+    # on every row (w-weighted) plus the projector on the few PROJECT rows
+    # only (one filtered expert). NOT full_dual: measured on the QA no-escape
+    # cell (2026-09-06, 94 % of layer-passes fallen back) full_dual still cost
+    # −4.2 % TPS / +35 % TTFT because it runs the projector on every row —
+    # ≈25 % extra GEMM FLOPs on each routed layer. Captured passes never enter
+    # here (their dense/routed variant is selected per pass at replay). Gate
+    # mode: the bodies here implement `released` only, and validation already
+    # forces `native_dense` (full_dual everywhere) under `hard_mask`, so this
+    # branch can only ever swap released-for-released. Mixed prefill+decode
+    # batches never get a threshold (the executor passes None unless the
+    # forward phase is exactly "prefill").
     if (
         prefill_fallback_min_project is not None
         and not torch.cuda.is_current_stream_capturing()
@@ -529,7 +533,7 @@ def fd_conditional_mlp_full_graph(
         checked, fallen = _PREFILL_FALLBACK.get(key, (0, 0))
         if n_valid > 0 and n_project < prefill_fallback_min_project * n_valid:
             _PREFILL_FALLBACK[key] = (checked + 1, fallen + 1)
-            output = _full_dual_mlp(
+            output = _dense_filtered_project_mlp(
                 layer, proj, hidden_states, route_weights, run_mask
             )
             if valid_rows is not None:
