@@ -242,11 +242,13 @@ class PrefillEngagementTracker:
         """Record the counters as they stand at this point of the stream."""
         import torch
 
+        # One reading = one (slot, event) pair PER DEVICE: CUDA events are
+        # device-bound, so each device's copy gets its own event recorded on
+        # that device's current stream (Codex review 2026-09-07, MAJOR).
         items = []
-        event = None
         for device, stats in list(stats_by_device.items()):
             if not stats.is_cuda:
-                items.append((None, stats.detach().to("cpu").clone()))
+                items.append((None, stats.detach().to("cpu").clone(), None))
                 continue
             ring = self._slots.get(device)
             if ring is None:
@@ -259,17 +261,16 @@ class PrefillEngagementTracker:
             idx = self._slot_next[device]
             self._slot_next[device] = (idx + 1) % len(ring)
             slot = ring[idx]
-            if any(slot is s for pend, _ in self._pending for s, _ in pend):
+            if any(slot is s for pend in self._pending for s, _, _ in pend):
                 # The ring wrapped onto an unfolded reading: fold everything
                 # first (never happens with one pass in flight; correctness only).
                 self.sync_all()
             slot.copy_(stats.detach(), non_blocking=True)
-            if event is None:
-                event = torch.cuda.Event()
+            event = torch.cuda.Event()
             event.record(torch.cuda.current_stream(device))
-            items.append((slot, None))
-        self._pending.append((items, event))
-        if event is None:
+            items.append((slot, None, event))
+        self._pending.append(items)
+        if all(event is None for _, _, event in items):
             self.fold_ready()
 
     # -- host-side ---------------------------------------------------------
@@ -284,7 +285,7 @@ class PrefillEngagementTracker:
     def _totals(self, items) -> tuple:
         run = 0
         project = 0
-        for slot, cpu_values in items:
+        for slot, cpu_values, _ in items:
             values = (cpu_values if slot is None else slot).tolist()
             run += int(values[1])
             project += int(values[2])
@@ -306,8 +307,8 @@ class PrefillEngagementTracker:
     def fold_ready(self) -> None:
         """Fold every reading whose copy has completed, in stream order."""
         while self._pending:
-            items, event = self._pending[0]
-            if event is not None and not event.query():
+            items = self._pending[0]
+            if any(event is not None and not event.query() for _, _, event in items):
                 return
             self._pending.pop(0)
             self._fold(self._totals(items))
@@ -317,9 +318,10 @@ class PrefillEngagementTracker:
             return
         self.syncs += 1
         while self._pending:
-            items, event = self._pending.pop(0)
-            if event is not None:
-                event.synchronize()
+            items = self._pending.pop(0)
+            for _, _, event in items:
+                if event is not None:
+                    event.synchronize()
             self._fold(self._totals(items))
 
     def demote(self, engagement_min: Optional[float]) -> bool:
