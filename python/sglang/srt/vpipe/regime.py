@@ -300,7 +300,10 @@ class PrefillEngagementTracker:
             if d_total > 0:
                 sample = d_project / d_total
                 ema = self.ema
-                self.ema = sample if ema is None else self.DECAY * ema + (1.0 - self.DECAY) * sample
+                # Literal coefficients, exactly as the synchronous reader wrote
+                # them: `(1.0 - 0.8)` is not `0.2` in float and shifted the
+                # EMA by one ulp on the box (pytest 2026-09-07 20:41Z).
+                self.ema = sample if ema is None else 0.8 * ema + 0.2 * sample
                 self.samples += 1
         self._baseline = totals
 
@@ -338,8 +341,8 @@ class PrefillEngagementTracker:
                 lo = self.ema
                 hi = self.ema
                 for _ in range(len(self._pending)):
-                    lo = self.DECAY * lo + (1.0 - self.DECAY) * 0.0
-                    hi = self.DECAY * hi + (1.0 - self.DECAY) * 1.0
+                    lo = 0.8 * lo + 0.2 * 0.0
+                    hi = 0.8 * hi + 0.2 * 1.0
                 if hi < engagement_min:
                     return True
                 if lo >= engagement_min:
