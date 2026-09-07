@@ -61,9 +61,41 @@ def _cpu_tracker_with_scripted_events():
         cpu = torch.tensor(values, dtype=torch.int64)
         ev = _FakeEvent(ready)
         events.append(ev)
-        t._pending.append(([(None, cpu)], ev))
+        t._pending.append([(None, cpu, ev)])
 
     return t, snapshot, events
+
+
+def test_exact_boundary_cases():
+    # lo_k == floor -> decided False without a sync; hi_k == floor -> straddle (strict <) -> sync
+    t, snapshot, events = _cpu_tracker_with_scripted_events()
+    t._baseline = (0, 0)
+    t.ema = 0.35 / 0.8  # lo_1 = 0.8 * ema + 0.0 == 0.35 exactly (up to float) -> lo >= floor -> False, no sync
+    snapshot([10, 5, 5], ready=False)
+    lo = 0.8 * t.ema + 0.2 * 0.0
+    assert lo >= 0.35
+    assert t.demote(0.35) is False and t.syncs == 0
+    t2, snapshot2, _ = _cpu_tracker_with_scripted_events()
+    t2._baseline = (0, 0)
+    t2.ema = (0.35 - 0.2) / 0.8  # hi_1 = 0.8 * ema + 0.2 == 0.35 -> hi < floor is False, lo < floor -> straddle -> sync
+    snapshot2([10, 10, 0], ready=False)  # sample 0 -> exact ema = 0.8 * ema < 0.35 -> True
+    assert t2.demote(0.35) is True and t2.syncs == 1
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+def test_gpu_ring_wrap_synchronises_before_reuse():
+    dev = torch.device("cuda")
+    stats = torch.zeros(3, dtype=torch.int64, device=dev)
+    t = PrefillEngagementTracker()
+    # three snapshots without any fold in between: the third wraps onto slot 0 -> sync_all() first, values exact
+    t.snapshot({dev: stats})
+    stats += torch.tensor([1, 50, 50], dtype=torch.int64, device=dev)
+    t.snapshot({dev: stats})
+    stats += torch.tensor([1, 0, 100], dtype=torch.int64, device=dev)
+    t.snapshot({dev: stats})
+    assert t.syncs == 1 and t.pending == 1  # first two folded at the wrap, third pending
+    t.sync_all()
+    assert t.samples == 2 and abs(t.ema - (0.8 * 0.5 + 0.2 * 1.0)) < 1e-12 and t._baseline == (50, 150)
 
 
 @pytest.mark.parametrize("seed", range(12))
