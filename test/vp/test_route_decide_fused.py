@@ -113,3 +113,8 @@ def test_fails_closed_on_strided_or_misaligned():
         route_decide_and_maps(w, 0.5, None, torch.empty(63, dtype=torch.bool, device="cuda"), None)
     with pytest.raises(ValueError):
         route_decide_and_maps(w, 0.5, torch.ones(63, dtype=torch.bool, device="cuda"), mask, None)
+    # Codex review (2026-09-07, MAJOR): optional operands on another device must fail closed
+    with pytest.raises(ValueError):
+        route_decide_and_maps(w, 0.5, torch.ones(64, dtype=torch.bool), mask, None)
+    with pytest.raises(ValueError):
+        route_decide_and_maps(w, 0.5, None, mask, torch.empty(64))
