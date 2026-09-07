@@ -215,6 +215,7 @@ def _binary_cohort_mlp(
     run_mask: torch.Tensor,
     valid_rows: Optional[torch.Tensor],
     prefill_cublas: bool = False,
+    route_maps: Optional[tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = None,
 ) -> torch.Tensor:
     """Count-adaptive binary-cohort MLP (D-302/D-303; design v2.1).
 
@@ -237,6 +238,7 @@ def _binary_cohort_mlp(
         weighted_scatter,
     )
     from sglang.srt.vpipe.routing import (
+        accumulate_route_counts,
         build_route_maps_from_mask,
     )
 
@@ -268,9 +270,17 @@ def _binary_cohort_mlp(
     # the route-map kernel — 6 fewer launches per routed layer, bit-identical
     # maps/counts/stats (boolean logic + integer atomics only).
     stats = _binary_cohort_stats(hidden_states.device)
-    run_map, project_map, counts = build_route_maps_from_mask(
-        run_mask.reshape(rows), valid_flat, stats
-    )
+    if route_maps is not None:
+        # Lane-2 Track B / F1: maps + counts were built by the fused route
+        # decision in prepare (bit-identical to build_route_maps_from_mask);
+        # only the stats accumulation is owed here, so `realized` keeps
+        # counting the bodies that actually ran.
+        run_map, project_map, counts = route_maps
+        accumulate_route_counts(counts, stats)
+    else:
+        run_map, project_map, counts = build_route_maps_from_mask(
+            run_mask.reshape(rows), valid_flat, stats
+        )
 
     mlp = layer.mlp
     gate_up_width = int(mlp.gate_up_proj.weight.shape[0])
@@ -415,6 +425,7 @@ def fd_conditional_mlp_full_graph(
     force_filtered_all_run: bool = False,
     prefill_cublas_enabled: bool = False,
     prefill_fallback_min_project: Optional[float] = None,
+    route_maps: Optional[tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = None,
 ) -> torch.Tensor:
     """Fixed-topology conditional MLP with device-resident complementary routes."""
 
@@ -569,6 +580,7 @@ def fd_conditional_mlp_full_graph(
             run_mask,
             valid_rows,
             prefill_cublas=prefill_cublas_enabled,
+            route_maps=route_maps,
         )
 
     if prefill_grouped_enabled:

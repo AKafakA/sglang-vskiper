@@ -241,6 +241,11 @@ def fd_execute_prepared_layer_route_full_graph(
             if full_graph_prefill_enabled(forward_batch)
             else None
         ),
+        route_maps=(
+            (prepared.run_row_map, prepared.project_row_map, prepared.route_counts)
+            if prepared.route_counts is not None
+            else None
+        ),
     )
     if parity_context is not None:
         from sglang.srt.vpipe.cohort import (

@@ -36,6 +36,7 @@ from sglang.srt.vpipe.env import (
     _PREFILL_FALLBACK,
     _BINARY_COHORT_LAYERS,
     _BINARY_COHORT_STATS,
+    _ROUTE_DECIDE_STATS,
     _MASKED_DECODE_REQUIRED_BACKEND,
     _VALID_DEFER_PROJECT_KV_DIAGNOSTIC_STAGES,
 )
@@ -446,6 +447,21 @@ def binary_cohort_attestation() -> dict:
         )
         block["prefill_fallback_layers_checked"] = int(checked)
         block["prefill_fallback_layers_fallen"] = int(fallen)
+    # Lane-2 Track B / F1: fused route decisions EXECUTED (device counter
+    # incremented inside the kernel, so graph replays are counted) -- realized
+    # evidence, never a flag. Zero here with routed layers active means the
+    # unfused path ran (forced/explicit routes or no device tape).
+    for device, stats in _ROUTE_DECIDE_STATS.items():
+        block = realized.setdefault(
+            str(device),
+            {
+                "executor_calls": 0,
+                "run_rows": 0,
+                "project_rows": 0,
+                "engagement": None,
+            },
+        )
+        block["route_decide_fused_calls"] = int(stats.detach().cpu().item())
     return {
         "enabled": bool(_BINARY_COHORT_LAYERS),
         "layers": sorted(_BINARY_COHORT_LAYERS),

@@ -70,6 +70,7 @@ from sglang.srt.vpipe.types import (
     FULL_GRAPH_ACTION_CONTRACT,
     FullGraphSkipperAdapter,
     LogicalAction,
+    RUN_PROJECT_EXECUTION,
     _LOGICAL_ACTION_CODES,
 )
 from sglang.srt.vpipe.skipper import (
@@ -446,6 +447,67 @@ class FullGraphDeviceRouteTape:
         action_batch.write_run_storage(out=target)
         self.recorded_layers += 1
         return target
+
+    def action_mask_fused(
+        self,
+        layer_id: int,
+        action_batch: FullGraphActionBatch,
+        valid_rows: Optional[torch.Tensor],
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+        """`action_mask` for a router-driven RUN/PROJECT batch, fused (F1).
+
+        Same checks and the same tape writes as `action_mask` (branch-weight
+        row copy + `branch_weights > threshold` into the bool action row), in
+        one launch that also returns the Block 1B-1 route maps and counts for
+        the executing body. Fails closed on forced or explicit-mask batches --
+        those keep `action_mask`.
+        """
+
+        from sglang.srt.vpipe.routing import route_decide_and_maps
+
+        if action_batch.execution_kind != RUN_PROJECT_EXECUTION:
+            raise RuntimeError("fused route decision needs a RUN/PROJECT action batch")
+        if action_batch.forced_action is not None or action_batch.explicit_run_mask is not None:
+            raise RuntimeError(
+                "fused route decision is only for router-driven batches"
+            )
+        if self.recorded_layers >= len(self.layer_order):
+            raise RuntimeError("full-graph device route tape overflow")
+        if action_batch.adapter_name != self.adapter_name:
+            raise RuntimeError(
+                "full-graph skipper adapter changed inside a captured batch: "
+                f"expected {self.adapter_name}, observed {action_batch.adapter_name}"
+            )
+        expected_layer = self.layer_order[self.recorded_layers]
+        if layer_id != expected_layer:
+            raise RuntimeError(
+                "full-graph device route tape layer order changed: "
+                f"expected {expected_layer}, observed {layer_id}"
+            )
+        route_index = self.recorded_layers
+        target = self.actions[route_index].view(-1, 1)
+        branch_weights = action_batch.branch_weights
+        if branch_weights.shape != target.shape:
+            raise RuntimeError(
+                "full-graph action weights do not match the route-tape rows"
+            )
+        weight_target = None
+        if self.branch_weights is not None:
+            weight_target = self.branch_weights[route_index].view(-1, 1)
+            if weight_target.shape != branch_weights.shape:
+                raise RuntimeError(
+                    "full-graph branch-weight tape does not match action rows"
+                )
+            weight_target = weight_target.reshape(-1)
+        maps = route_decide_and_maps(
+            branch_weights.reshape(-1),
+            float(action_batch.threshold),
+            valid_rows,
+            target.reshape(-1),
+            weight_target,
+        )
+        self.recorded_layers += 1
+        return target, maps
 
     def require_complete(self) -> None:
         if self.recorded_layers != len(self.layer_order):
