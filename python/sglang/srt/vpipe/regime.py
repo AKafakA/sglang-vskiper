@@ -201,6 +201,155 @@ def prefill_regime_decision(
     if effective_tokens >= threshold:
         return PREFILL_BODY_FD
     return PREFILL_BODY_DENSE
+class PrefillEngagementTracker:
+    """[R2, lane-2 tax-removal track, 2026-09-07] The prefill escape gate's
+    engagement EMA, fed from the binary-cohort device counters WITHOUT a
+    host stall.
+
+    Today's read (``stats.cpu().tolist()`` at the start of the pass after a
+    routed pass) waits for the previous pass's kernels — under the overlap
+    scheduler that is a full-pass stall on the forward thread (served coqa
+    profile: 13 x ~182 ms in one 80-step window). This tracker takes the same
+    readings at the same stream positions as non-blocking copies into pinned
+    slots with a CUDA event each, folds them into the EMA when their events
+    have completed, and only synchronises when the pending samples could
+    change the ONE predicate the EMA feeds (``ema < engagement_min``): a
+    sample s in [0, 1] moves the EMA monotonically (``0.8*ema + 0.2*s``), so
+    with k unfolded samples the EMA lies inside [lo_k, hi_k] computed with
+    the same float ops; if the whole interval sits on one side of the floor
+    the decision is already known. Every decision, every served body and
+    every counter is therefore identical to the synchronous reader; the
+    stall survives only on passes where the reader would have needed the
+    value (the descent to demotion, the boot pass, at most one per probe).
+
+    CPU stats tensors (unit tests, non-CUDA devices) are read synchronously —
+    byte-identical to the old path.
+    """
+
+    DECAY = 0.8
+
+    def __init__(self) -> None:
+        self.ema: Optional[float] = None
+        self.samples = 0
+        self.syncs = 0
+        self._baseline: Optional[tuple] = None
+        self._pending: list = []  # [(per_device_slots, event)] in stream order
+        self._slots: dict = {}  # device -> [pinned int64[3], pinned int64[3]]
+        self._slot_next: dict = {}
+
+    # -- stream-side -------------------------------------------------------
+    def snapshot(self, stats_by_device) -> None:
+        """Record the counters as they stand at this point of the stream."""
+        import torch
+
+        items = []
+        event = None
+        for device, stats in list(stats_by_device.items()):
+            if not stats.is_cuda:
+                items.append((None, stats.detach().to("cpu").clone()))
+                continue
+            ring = self._slots.get(device)
+            if ring is None:
+                ring = [
+                    torch.empty(3, dtype=torch.int64, pin_memory=True)
+                    for _ in range(2)
+                ]
+                self._slots[device] = ring
+                self._slot_next[device] = 0
+            idx = self._slot_next[device]
+            self._slot_next[device] = (idx + 1) % len(ring)
+            slot = ring[idx]
+            if any(slot is s for pend, _ in self._pending for s, _ in pend):
+                # The ring wrapped onto an unfolded reading: fold everything
+                # first (never happens with one pass in flight; correctness only).
+                self.sync_all()
+            slot.copy_(stats.detach(), non_blocking=True)
+            if event is None:
+                event = torch.cuda.Event()
+            event.record(torch.cuda.current_stream(device))
+            items.append((slot, None))
+        self._pending.append((items, event))
+        if event is None:
+            self.fold_ready()
+
+    # -- host-side ---------------------------------------------------------
+    @property
+    def pending(self) -> int:
+        return len(self._pending)
+
+    @property
+    def baseline_missing(self) -> bool:
+        return self._baseline is None and not self._pending
+
+    def _totals(self, items) -> tuple:
+        run = 0
+        project = 0
+        for slot, cpu_values in items:
+            values = (cpu_values if slot is None else slot).tolist()
+            run += int(values[1])
+            project += int(values[2])
+        return (run, project)
+
+    def _fold(self, totals: tuple) -> None:
+        base = self._baseline
+        if base is not None:
+            d_run = totals[0] - base[0]
+            d_project = totals[1] - base[1]
+            d_total = d_run + d_project
+            if d_total > 0:
+                sample = d_project / d_total
+                ema = self.ema
+                self.ema = sample if ema is None else self.DECAY * ema + (1.0 - self.DECAY) * sample
+                self.samples += 1
+        self._baseline = totals
+
+    def fold_ready(self) -> None:
+        """Fold every reading whose copy has completed, in stream order."""
+        while self._pending:
+            items, event = self._pending[0]
+            if event is not None and not event.query():
+                return
+            self._pending.pop(0)
+            self._fold(self._totals(items))
+
+    def sync_all(self) -> None:
+        if not self._pending:
+            return
+        self.syncs += 1
+        while self._pending:
+            items, event = self._pending.pop(0)
+            if event is not None:
+                event.synchronize()
+            self._fold(self._totals(items))
+
+    def demote(self, engagement_min: Optional[float]) -> bool:
+        """Exactly ``ema is not None and ema < engagement_min`` as the
+        synchronous reader would compute it, synchronising only when the
+        pending readings could change the answer."""
+        if engagement_min is None:
+            return False
+        self.fold_ready()
+        if self._pending:
+            if self.ema is None:
+                self.sync_all()
+            else:
+                lo = self.ema
+                hi = self.ema
+                for _ in range(len(self._pending)):
+                    lo = self.DECAY * lo + (1.0 - self.DECAY) * 0.0
+                    hi = self.DECAY * hi + (1.0 - self.DECAY) * 1.0
+                if hi < engagement_min:
+                    return True
+                if lo >= engagement_min:
+                    return False
+                self.sync_all()
+        return self.ema is not None and self.ema < engagement_min
+
+    def realized(self) -> dict:
+        self.sync_all()
+        return {"ema": self.ema, "samples": int(self.samples), "syncs": int(self.syncs)}
+
+
 def regime_switch_zero_counters() -> dict[str, dict[str, int]]:
     """Per-phase-by-body pass counters, zeroed.
 

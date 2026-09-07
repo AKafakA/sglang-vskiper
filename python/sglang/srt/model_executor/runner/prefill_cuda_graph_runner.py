@@ -71,22 +71,15 @@ from sglang.srt.vpipe.env import FD_EXECUTION_FULL_GRAPH
 from sglang.srt.vpipe.regime import (
     PREFILL_BODY_DENSE,
     PREFILL_BODY_FD,
+    PrefillEngagementTracker,
     prefill_regime_decision,
 )
 from sglang.srt.vpipe.attestation import _BINARY_COHORT_STATS
 from sglang.srt.vpipe.seam import _vp_regime_prefill_mixed_running_bs
-
-
-def _vp_cohort_totals() -> tuple:
-    """Summed (run_rows, project_rows) across the binary-cohort device
-    counters — the engagement source for the P8 v2 escape (D-339)."""
-    run = 0
-    project = 0
-    for stats in _BINARY_COHORT_STATS.values():
-        values = stats.detach().cpu().tolist()
-        run += int(values[1])
-        project += int(values[2])
-    return (run, project)
+# [R2, 2026-09-07] `_vp_cohort_totals()` (a synchronous `.cpu()` of the
+# binary-cohort counters at the start of every pass after a routed pass) is
+# retired: the same readings are taken by PrefillEngagementTracker as
+# non-blocking copies at the same stream positions.
 from sglang.srt.model_executor.runner_backend.breakable_cuda_graph_backend import (
     BreakableCudaGraphBackend,
 )
@@ -226,8 +219,12 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
         # delta after each routed pass (read at the NEXT decision — one
         # small D2H on a >100ms pass). None = no routed pass observed yet
         # (optimistic: route until measured otherwise).
-        self._vp_prefill_engagement_ema: Optional[float] = None
-        self._vp_prefill_cohort_baseline: Optional[tuple] = None
+        # [R2, 2026-09-07] The EMA lives in a tracker that takes the same
+        # readings as non-blocking copies + events and synchronises only when
+        # a pending reading could flip `ema < engagement_min` (see
+        # vpipe/regime.py:PrefillEngagementTracker). Decisions are identical
+        # to the synchronous reader; the per-pass host stall is gone.
+        self._vp_prefill_engagement = PrefillEngagementTracker()
         self._vp_prefill_last_variant: Optional[str] = None
         self._vp_prefill_dense_streak = 0
 
@@ -602,6 +599,15 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
         if self._vp_prefill_variant_cfg is None:
             return None
         return dict(self._vp_prefill_variant_counts)
+
+    def vp_regime_switch_prefill_engagement(self) -> Optional[dict]:
+        """[R2] Realized engagement evidence: the EMA the escape gate acts
+        on, the number of folded samples and how many times a pending
+        reading had to be synchronised (None when the variant machinery is
+        off). Runtime evidence, identity-stripped."""
+        if self._vp_prefill_variant_cfg is None:
+            return None
+        return self._vp_prefill_engagement.realized()
 
     def can_run_graph(self, forward_batch: ForwardBatch) -> bool:
         if forward_batch.input_embeds is not None:
@@ -1066,19 +1072,9 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
                 cfg.prefill.engagement_min is not None
                 and self._vp_prefill_last_variant == PREFILL_BODY_FD
             ):
-                totals = _vp_cohort_totals()
-                base = self._vp_prefill_cohort_baseline
-                if base is not None:
-                    d_run = totals[0] - base[0]
-                    d_project = totals[1] - base[1]
-                    d_total = d_run + d_project
-                    if d_total > 0:
-                        sample = d_project / d_total
-                        ema = self._vp_prefill_engagement_ema
-                        self._vp_prefill_engagement_ema = (
-                            sample if ema is None else 0.8 * ema + 0.2 * sample
-                        )
-                self._vp_prefill_cohort_baseline = totals
+                # [R2] same reading, same stream position, no host stall:
+                # a non-blocking snapshot folded when its event completes.
+                self._vp_prefill_engagement.snapshot(_BINARY_COHORT_STATS)
             is_mixed = forward_batch.forward_mode.is_mixed()
             if is_mixed and not cfg.prefill.include_mixed:
                 # Mixed switching disabled: FD body unchanged (W1 contract).
@@ -1103,8 +1099,7 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
             if (
                 variant == PREFILL_BODY_FD
                 and cfg.prefill.engagement_min is not None
-                and self._vp_prefill_engagement_ema is not None
-                and self._vp_prefill_engagement_ema < cfg.prefill.engagement_min
+                and self._vp_prefill_engagement.demote(cfg.prefill.engagement_min)
             ):
                 if (
                     self._vp_prefill_dense_streak
@@ -1116,12 +1111,16 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
                     self._vp_prefill_dense_streak = 0
             elif variant == PREFILL_BODY_FD:
                 self._vp_prefill_dense_streak = 0
-            if variant == PREFILL_BODY_FD and (
-                self._vp_prefill_cohort_baseline is None
+            if (
+                variant == PREFILL_BODY_FD
+                and cfg.prefill.engagement_min is not None
+                and self._vp_prefill_engagement.baseline_missing
             ):
                 # First routed pass: capture the counter baseline so the
-                # next decision can fold in this pass's engagement.
-                self._vp_prefill_cohort_baseline = _vp_cohort_totals()
+                # next decision can fold in this pass's engagement ([R2]: a
+                # non-blocking snapshot; `baseline_missing` is false while a
+                # baseline reading is still pending, so it is taken once).
+                self._vp_prefill_engagement.snapshot(_BINARY_COHORT_STATS)
             self._vp_prefill_last_variant = variant
             self._vp_prefill_variant_counts[variant] += 1
         with self.backend.replay_session():
