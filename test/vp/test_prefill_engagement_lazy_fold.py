@@ -160,10 +160,11 @@ def test_gpu_snapshot_does_not_drain_and_folds_exactly():
     t.fold_ready()
     assert t._baseline == (0, 0) and t.pending == 0
     a = torch.randn(8192, 8192, device=dev, dtype=torch.float16)
+    inc = torch.tensor([1, 30, 70], dtype=torch.int64, device=dev)  # built BEFORE the queue: a pageable H2D drains it
     torch.cuda.synchronize()
     for _ in range(60):
         a = a @ a * 1e-4
-    stats += torch.tensor([1, 30, 70], dtype=torch.int64, device=dev)  # behind the queued work
+    stats += inc  # enqueued behind the matmuls, no host sync
     t0 = time.perf_counter()
     t.snapshot({dev: stats})
     t.ema = 0.9
@@ -185,13 +186,19 @@ def test_gpu_straddle_synchronises_and_matches_reference():
     stats = torch.zeros(3, dtype=torch.int64, device=dev)
     t = PrefillEngagementTracker()
     t.snapshot({dev: stats}); torch.cuda.synchronize(); t.fold_ready()
-    a = torch.randn(4096, 4096, device=dev, dtype=torch.float16)
-    for _ in range(30):
+    a = torch.randn(8192, 8192, device=dev, dtype=torch.float16)
+    inc = torch.tensor([1, 90, 10], dtype=torch.int64, device=dev)  # share 0.1; built before the queue
+    torch.cuda.synchronize()
+    for _ in range(60):
         a = a @ a * 1e-4
-    stats += torch.tensor([1, 90, 10], dtype=torch.int64, device=dev)  # share 0.1
+    stats += inc
     t.snapshot({dev: stats})
     t.ema = 0.3  # straddles 0.35 with one pending sample -> must synchronise and use the exact value
-    assert t.demote(0.35) is True and t.syncs == 1 and t.pending == 0
+    pending_before = t.pending
+    decided = t.demote(0.35)
+    assert pending_before == 1 and decided is True and t.pending == 0
+    # the reading was still in flight behind ~hundreds of ms of matmuls, so the straddle forced exactly one sync
+    assert t.syncs == 1
     assert abs(t.ema - (0.8 * 0.3 + 0.2 * 0.1)) < 1e-12
 
 
