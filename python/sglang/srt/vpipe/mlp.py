@@ -366,12 +366,16 @@ def _binary_cohort_mlp(
         passes, rows_seen = _BINARY_COHORT_CUBLAS_PASSES.get(key, (0, 0))
         _BINARY_COHORT_CUBLAS_PASSES[key] = (passes + 1, rows_seen + int(rows))
         return out
-    pack_rows(hidden_states, run_map, run_count, scratch["compact"])
+    # Lane-2 tax-removal track / F4 (2026-09-07): the pack (gather) is folded
+    # into the first count-GEMM's A-load and the route-weighted scatter into
+    # the last count-GEMM's epilogue -- 4 launches and two full row copies per
+    # routed layer fewer, bit-identical per row (test_count_gemm_fused_io.py).
     count_matmul_gridexit(
-        scratch["compact"],
+        hidden_states,
         mlp.gate_up_proj.weight,
         run_count,
         scratch["gate_up"],
+        gather_index=run_map,
         **config_gate_up,
     )
     count_silu_mul(scratch["gate_up"], run_count, scratch["activated"])
@@ -379,21 +383,20 @@ def _binary_cohort_mlp(
         scratch["activated"],
         mlp.down_proj.weight,
         run_count,
-        scratch["final"],
+        out,
+        scatter_index=run_map,
+        scatter_weights=weights_flat,
+        scatter_invert=False,
         **config_down,
     )
-    weighted_scatter(
-        scratch["final"], run_map, weights_flat, run_count, out,
-        invert_weight=False,
-    )
 
-    pack_rows(hidden_states, project_map, project_count, scratch["compact"])
     gate_up_view = scratch["gate_up"][:, : 2 * proj_bottleneck]
     count_matmul_gridexit(
-        scratch["compact"],
+        hidden_states,
         proj_gate_down,
         project_count,
         gate_up_view,
+        gather_index=project_map,
         **config_proj_gate_down,
     )
     activated_view = scratch["activated"][:, :proj_bottleneck]
@@ -402,12 +405,11 @@ def _binary_cohort_mlp(
         activated_view,
         proj.up_proj.weight,
         project_count,
-        scratch["final"],
+        out,
+        scatter_index=project_map,
+        scatter_weights=weights_flat,
+        scatter_invert=True,
         **config_proj_up,
-    )
-    weighted_scatter(
-        scratch["final"], project_map, weights_flat, project_count, out,
-        invert_weight=True,
     )
     return out
 def fd_conditional_mlp_full_graph(

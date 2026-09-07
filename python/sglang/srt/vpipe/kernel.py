@@ -34,6 +34,8 @@ the frozen tree so route digests and numerics are unchanged.
 from __future__ import annotations
 
 import functools
+from typing import Optional
+
 import torch
 
 
@@ -228,6 +230,8 @@ def _grid_kernel():
         w_ptr,
         c_ptr,
         count_ptr,
+        idx_ptr,
+        weights_ptr,
         K: tl.constexpr,
         N: tl.constexpr,
         stride_am: tl.constexpr,
@@ -237,9 +241,19 @@ def _grid_kernel():
         BK: tl.constexpr,
         GROUP_M: tl.constexpr,
         EVEN_K: tl.constexpr,
+        GATHER_A: tl.constexpr,
+        SCATTER_C: tl.constexpr,
+        INVERT_W: tl.constexpr,
     ):
-        # Diagnostic variant: capacity-sized 2-D grid with early exit —
-        # isolates whether the persistent while-loop defeats pipelining.
+        # Capacity-sized 2-D grid with early exit (D-302/D-303). Lane-2
+        # tax-removal track / F4 (2026-09-07): the optional GATHER_A reads
+        # row ``idx[m]`` of the FULL activation instead of a pre-packed row
+        # (folds ``pack_rows``), and the optional SCATTER_C writes tile row m
+        # to row ``idx[m]`` of the FULL output scaled by ``w`` or ``1-w``
+        # (folds ``weighted_scatter``). The tile arithmetic is untouched, so
+        # every row's result is bit-identical to the packed path; the scatter
+        # epilogue repeats weighted_scatter's exact rounding sequence
+        # (narrow to the output dtype, widen, multiply in fp32, narrow).
         pid = tl.program_id(0)
         count = tl.load(count_ptr)
         num_m_cap = tl.num_programs(0) // tl.cdiv(N, BN)
@@ -256,7 +270,11 @@ def _grid_kernel():
         offs_n = pid_n * BN + tl.arange(0, BN)
         m_live = offs_m[:, None] < count
         acc = tl.zeros((BM, BN), dtype=tl.float32)
-        a_ptrs = a_ptr + offs_m[:, None] * stride_am + tl.arange(0, BK)[None, :]
+        if GATHER_A:
+            src_rows = tl.load(idx_ptr + offs_m, mask=offs_m < count, other=0)
+            a_ptrs = a_ptr + src_rows[:, None] * stride_am + tl.arange(0, BK)[None, :]
+        else:
+            a_ptrs = a_ptr + offs_m[:, None] * stride_am + tl.arange(0, BK)[None, :]
         w_ptrs = w_ptr + offs_n[None, :] * K + tl.arange(0, BK)[:, None]
         for k0 in range(0, K, BK):
             if EVEN_K:
@@ -276,11 +294,23 @@ def _grid_kernel():
             a_ptrs += BK
             w_ptrs += BK
         store_mask = m_live & (offs_n[None, :] < N)
-        tl.store(
-            c_ptr + offs_m[:, None] * stride_cm + offs_n[None, :],
-            acc.to(c_ptr.dtype.element_ty),
-            mask=store_mask,
-        )
+        if SCATTER_C:
+            dst_rows = tl.load(idx_ptr + offs_m, mask=offs_m < count, other=0)
+            wgt = tl.load(weights_ptr + dst_rows, mask=offs_m < count, other=0.0).to(tl.float32)
+            if INVERT_W:
+                wgt = 1.0 - wgt
+            narrowed = acc.to(c_ptr.dtype.element_ty).to(tl.float32)
+            tl.store(
+                c_ptr + dst_rows[:, None] * stride_cm + offs_n[None, :],
+                (narrowed * wgt[:, None]).to(c_ptr.dtype.element_ty),
+                mask=store_mask,
+            )
+        else:
+            tl.store(
+                c_ptr + offs_m[:, None] * stride_cm + offs_n[None, :],
+                acc.to(c_ptr.dtype.element_ty),
+                mask=store_mask,
+            )
 
     return gridexit_count_matmul
 def count_matmul_gridexit(
@@ -295,23 +325,54 @@ def count_matmul_gridexit(
     group_m: int = 8,
     num_warps: int = 8,
     num_stages: int = 2,
+    gather_index: Optional[torch.Tensor] = None,
+    scatter_index: Optional[torch.Tensor] = None,
+    scatter_weights: Optional[torch.Tensor] = None,
+    scatter_invert: bool = False,
 ) -> None:
     """Production launcher: capacity grid + per-tile early exit.
 
     Promoted by D-302/D-303 over the persistent-while ``count_matmul`` (which
     lost 2.4-2.7x on A100); it is what the binary-cohort MLP path calls.
+
+    F4 (lane-2 tax-removal track): ``gather_index`` makes the kernel read row
+    ``gather_index[m]`` of ``compact_a`` (then the FULL activation) for compact
+    row ``m`` -- ``pack_rows`` folded in; ``scatter_index`` + ``scatter_weights``
+    make it write compact row ``m`` to row ``scatter_index[m]`` of ``output``
+    (then the FULL output) scaled by ``w`` or ``1-w`` -- ``weighted_scatter``
+    folded in. Indices are the device-resident route maps; only rows below
+    ``count`` are touched, exactly as before.
     """
 
     cap, k_dim = compact_a.shape
     n_dim = weight.shape[0]
     import triton as _triton
 
+    gather = gather_index is not None
+    scatter = scatter_index is not None
+    if scatter != (scatter_weights is not None):
+        raise ValueError("scatter_index and scatter_weights must be given together")
+    for name, index in (("gather_index", gather_index), ("scatter_index", scatter_index)):
+        if index is not None and (
+            index.dtype != torch.int32 or index.dim() != 1 or not index.is_contiguous()
+            or index.device != compact_a.device
+        ):
+            raise ValueError(f"{name} must be a contiguous 1-D int32 device index")
+    if scatter and (
+        scatter_weights.dim() != 1 or not scatter_weights.is_contiguous()
+        or scatter_weights.device != compact_a.device
+    ):
+        raise ValueError("scatter_weights must be a contiguous 1-D device tensor")
+    if compact_a.stride(1) != 1 or output.stride(1) != 1:
+        raise ValueError("count_matmul_gridexit rows must be contiguous")
     grid = (_triton.cdiv(cap, block_m) * _triton.cdiv(n_dim, block_n),)
     _grid_kernel()[grid](
         compact_a,
         weight,
         output,
         count,
+        gather_index if gather else (scatter_index if scatter else count),
+        scatter_weights if scatter else count,
         k_dim,
         n_dim,
         compact_a.stride(0),
@@ -321,6 +382,9 @@ def count_matmul_gridexit(
         block_k,
         group_m,
         k_dim % block_k == 0,
+        gather,
+        scatter,
+        bool(scatter_invert),
         num_warps=num_warps,
         num_stages=num_stages,
     )
