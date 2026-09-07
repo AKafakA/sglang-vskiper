@@ -85,6 +85,7 @@ from sglang.srt.vpipe.env import (
 )
 from sglang.srt.vpipe.types import (
     FullGraphActionBatch,
+    RUN_PROJECT_EXECUTION,
 )
 from sglang.srt.vpipe.common import (
     _FD_PARITY_EPOCHS,
@@ -613,6 +614,169 @@ def build_route_maps_from_mask(
         has_valid=has_valid,
     )
     return run_rows, project_rows, counts
+@triton.jit
+def _route_decide_maps_kernel(
+    weights_ptr,
+    threshold,
+    valid_ptr,
+    run_mask_out_ptr,
+    weight_tape_ptr,
+    run_rows_ptr,
+    project_rows_ptr,
+    counts_ptr,
+    decide_stats_ptr,
+    row_count: tl.constexpr,
+    block_rows: tl.constexpr,
+    has_valid: tl.constexpr,
+    has_weight_tape: tl.constexpr,
+):
+    """Lane-2 Track B / F1: route DECISION + tape writes + route maps, one launch.
+
+    Fuses, per routed layer, ``torch.gt(branch_weights, threshold, out=tape_row)``
+    (the RUN mask), the branch-weight tape copy, and the Block 1B-1 route
+    maps/counts (``_build_route_maps_masked_kernel`` minus the stats accumulation,
+    which stays in the executing body -- ``accumulate_route_counts`` -- so the
+    ``binary_cohort.realized`` evidence keeps its meaning: bodies that ran).
+    The compare is the same elementwise ``w > threshold`` on the same values
+    (PyTorch compares fp16/bf16 in fp32 opmath; the threshold is exactly
+    representable), the tape writes are exact copies, and the maps are the same
+    boolean logic + integer atomics -- so mask, tape, maps and counts are
+    bit-identical to the unfused sequence. Slot order under atomics is
+    unspecified in both, as before.
+    """
+    rows = tl.program_id(0) * block_rows + tl.arange(0, block_rows)
+    in_range = rows < row_count
+    w = tl.load(weights_ptr + rows, mask=in_range, other=0.0)
+    run = w.to(tl.float32) > threshold
+    tl.store(run_mask_out_ptr + rows, run.to(tl.uint8), mask=in_range)
+    if has_weight_tape:
+        tl.store(
+            weight_tape_ptr + rows,
+            w.to(weight_tape_ptr.dtype.element_ty),
+            mask=in_range,
+        )
+    run_mask = run.to(tl.int32)
+    if has_valid:
+        valid = tl.load(valid_ptr + rows, mask=in_range, other=0).to(tl.int32)
+    else:
+        valid = in_range.to(tl.int32)
+    run_active = in_range & (valid != 0) & (run_mask != 0)
+    project_active = in_range & (valid != 0) & (run_mask == 0)
+    counter_lanes = tl.zeros((block_rows,), dtype=tl.int32)
+    run_slots = tl.atomic_add(counts_ptr + counter_lanes, 1, mask=run_active)
+    project_slots = tl.atomic_add(
+        counts_ptr + 1 + counter_lanes, 1, mask=project_active
+    )
+    tl.store(run_rows_ptr + run_slots, rows, mask=run_active)
+    tl.store(project_rows_ptr + project_slots, rows, mask=project_active)
+    tl.atomic_add(decide_stats_ptr, (tl.program_id(0) == 0).to(tl.int64))
+@triton.jit
+def _accumulate_counts_kernel(counts_ptr, stats_ptr):
+    """``stats[0] += 1; stats[1] += counts[0]; stats[2] += counts[1]`` (one program)."""
+    tl.store(stats_ptr, tl.load(stats_ptr) + 1)
+    tl.store(stats_ptr + 1, tl.load(stats_ptr + 1) + tl.load(counts_ptr).to(tl.int64))
+    tl.store(stats_ptr + 2, tl.load(stats_ptr + 2) + tl.load(counts_ptr + 1).to(tl.int64))
+@triton.jit
+def _predicate_from_counts_kernel(counts_ptr, predicate_ptr):
+    """all-valid-rows-RUN <=> the PROJECT count (valid & ~run) is zero."""
+    tl.store(predicate_ptr, (tl.load(counts_ptr + 1) == 0).to(tl.int32))
+def _route_decide_stats(device: torch.device) -> torch.Tensor:
+    from sglang.srt.vpipe.env import _ROUTE_DECIDE_STATS
+
+    stats = _ROUTE_DECIDE_STATS.get(device)
+    if stats is None:
+        stats = torch.zeros(1, dtype=torch.int64, device=device)
+        _ROUTE_DECIDE_STATS[device] = stats
+    return stats
+def route_decide_and_maps(
+    branch_weights: torch.Tensor,
+    threshold: float,
+    valid_rows: Optional[torch.Tensor],
+    run_mask_out: torch.Tensor,
+    weight_tape_out: Optional[torch.Tensor],
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Fused route decision (F1): writes ``run_mask_out`` (= ``branch_weights >
+    threshold``) and ``weight_tape_out`` (= a copy of ``branch_weights``), and
+    returns the Block 1B-1 route maps ``(run_rows, project_rows, counts)`` for
+    the executing body. Stats are NOT accumulated here (see
+    ``accumulate_route_counts``). Every operand is 1-D, contiguous, on one CUDA
+    device; anything else fails closed instead of copying.
+    """
+
+    if not branch_weights.is_cuda or branch_weights.ndim != 1:
+        raise ValueError("route decision needs 1-D CUDA branch weights")
+    if branch_weights.dtype not in (torch.float16, torch.bfloat16, torch.float32):
+        raise ValueError("route decision needs float branch weights")
+    rows = int(branch_weights.numel())
+    if run_mask_out.dtype != torch.bool or run_mask_out.ndim != 1 or run_mask_out.numel() != rows:
+        raise ValueError("route decision needs a 1-D bool run-mask target aligned with the weights")
+    if run_mask_out.device != branch_weights.device:
+        raise ValueError("route decision operands must share a device")
+    if valid_rows is not None and (
+        valid_rows.shape != branch_weights.shape or valid_rows.dtype != torch.bool
+    ):
+        raise ValueError("valid_rows must be a bool tensor aligned with the branch weights")
+    if weight_tape_out is not None and (
+        weight_tape_out.ndim != 1 or weight_tape_out.numel() != rows
+    ):
+        raise ValueError("weight tape target must be 1-D and aligned with the branch weights")
+    for name, tensor in (
+        ("branch_weights", branch_weights),
+        ("run_mask_out", run_mask_out),
+        ("valid_rows", valid_rows),
+        ("weight_tape_out", weight_tape_out),
+    ):
+        if tensor is not None and not tensor.is_contiguous():
+            raise ValueError(f"route decision operand {name} must be contiguous")
+    device = branch_weights.device
+    counts = torch.zeros(2, dtype=torch.int32, device=device)
+    run_rows = torch.empty(rows, dtype=torch.int32, device=device)
+    project_rows = torch.empty_like(run_rows)
+    if rows == 0:
+        return run_rows, project_rows, counts
+    block_rows = 256
+    has_valid = valid_rows is not None
+    has_weight_tape = weight_tape_out is not None
+    _route_decide_maps_kernel[(triton.cdiv(rows, block_rows),)](
+        branch_weights,
+        float(threshold),
+        valid_rows if has_valid else branch_weights,
+        run_mask_out.view(torch.uint8),
+        weight_tape_out if has_weight_tape else branch_weights,
+        run_rows,
+        project_rows,
+        counts,
+        _route_decide_stats(device),
+        row_count=rows,
+        block_rows=block_rows,
+        has_valid=has_valid,
+        has_weight_tape=has_weight_tape,
+    )
+    return run_rows, project_rows, counts
+def accumulate_route_counts(counts: torch.Tensor, stats: torch.Tensor) -> None:
+    """``stats += [1, counts[0], counts[1]]`` on device, one launch (the 1B-1
+    stats semantics, kept in the executing body)."""
+
+    if counts.dtype != torch.int32 or counts.numel() != 2 or not counts.is_contiguous():
+        raise ValueError("route counts must be the contiguous int32 [2] tensor")
+    if stats.dtype != torch.int64 or stats.numel() != 3 or not stats.is_contiguous():
+        raise ValueError("stats must be the contiguous int64 [3] accumulator")
+    if stats.device != counts.device:
+        raise ValueError("route counts and stats must share a device")
+    _accumulate_counts_kernel[(1,)](counts, stats)
+def all_run_predicate_from_counts(
+    counts: torch.Tensor, predicate_out: torch.Tensor
+) -> None:
+    """Write the conditional-graph predicate (int32 scalar, 1 = every valid
+    row RUNs) from the fused route counts: ``predicate = counts[1] == 0``."""
+
+    if counts.dtype != torch.int32 or counts.numel() != 2 or not counts.is_contiguous():
+        raise ValueError("route counts must be the contiguous int32 [2] tensor")
+    if predicate_out.dtype != torch.int32 or predicate_out.numel() != 1:
+        raise ValueError("predicate target must be one int32 element")
+    if predicate_out.device != counts.device:
+        raise ValueError("route counts and predicate must share a device")
+    _predicate_from_counts_kernel[(1,)](counts, predicate_out)
 def full_graph_forced_route(
     environ: Optional[Mapping[str, str]] = None,
 ) -> Optional[bool]:
@@ -713,7 +877,23 @@ def fd_prepare_layer_route_full_graph(
         forward_batch, "fd_full_graph_device_route_tape", None
     )
     route_weights = action_batch.route_weights
-    if device_tape is not None:
+    fused_maps = None
+    if (
+        device_tape is not None
+        and action_batch.execution_kind == RUN_PROJECT_EXECUTION
+        and action_batch.forced_action is None
+        and action_batch.explicit_run_mask is None
+    ):
+        # Lane-2 Track B / F1: the router-driven decision, the tape writes and
+        # the route maps in ONE launch (bit-identical to the unfused sequence;
+        # see `_route_decide_maps_kernel`). Sealed/forced or explicit-mask
+        # skippers keep the unfused path below.
+        run_mask, fused_maps = device_tape.action_mask_fused(
+            int(layer.layer_id),
+            action_batch,
+            forward_batch.fd_full_graph_valid_rows,
+        )
+    elif device_tape is not None:
         run_mask = device_tape.action_mask(
             int(layer.layer_id),
             action_batch,
@@ -742,6 +922,8 @@ def fd_prepare_layer_route_full_graph(
     run_row_map = None
     project_row_map = None
     route_counts = None
+    if fused_maps is not None:
+        run_row_map, project_row_map, route_counts = fused_maps
     if full_graph_compact_routed_qkv_enabled():
         valid_rows = forward_batch.fd_full_graph_valid_rows
         run_rows = run_mask.squeeze(-1)
@@ -749,11 +931,15 @@ def fd_prepare_layer_route_full_graph(
             raise RuntimeError(
                 "compact routed QKV requires aligned graph-valid rows"
             )
-
-        run_row_map, project_row_map, route_counts = build_route_maps(
-            run_rows & valid_rows,
-            (~run_rows) & valid_rows,
-        )
+        if fused_maps is None:
+            # Unfused route (forced / explicit-mask skipper): build the maps
+            # the compact-QKV path needs. The fused route already carries the
+            # same maps (build_route_maps_from_mask is equivalent to
+            # build_route_maps(run & valid, ~run & valid), Block 1B-1).
+            run_row_map, project_row_map, route_counts = build_route_maps(
+                run_rows & valid_rows,
+                (~run_rows) & valid_rows,
+            )
     return FullGraphPreparedLayerRoute(
         layer_id=layer_id,
         hidden_states=hidden_states,

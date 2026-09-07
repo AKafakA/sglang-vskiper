@@ -218,6 +218,9 @@ FULL_GRAPH_CAPTURE_SYNTHETIC_RID_BASE = -(1 << 62)
 _BINARY_COHORT_SCRATCH: dict = {}
 _BINARY_COHORT_STATS: dict = {}
 _BINARY_COHORT_LAYERS: set = set()
+# Lane-2 Track B / F1: device -> int64 [calls] counter incremented INSIDE the fused
+# route-decide kernel, so graph replays are counted (executed evidence, never a flag).
+_ROUTE_DECIDE_STATS: dict = {}
 # P3 attestation: eager prefill passes that took the cuBLAS branch, per device
 # (executed evidence, never a flag): device -> (passes, rows).
 _BINARY_COHORT_CUBLAS_PASSES: dict[str, tuple[int, int]] = {}

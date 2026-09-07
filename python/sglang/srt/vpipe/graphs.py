@@ -28,6 +28,7 @@ from sglang.srt.vpipe.executor import (
     fd_execute_prepared_layer_route_full_graph,
 )
 from sglang.srt.vpipe.routing import (
+    all_run_predicate_from_counts,
     fd_prepare_layer_route_full_graph,
 )
 from sglang.srt.vpipe.attestation import (
@@ -1192,12 +1193,19 @@ def capture_llama_flexidepth_conditional_graph(
                         (~prepared.run_mask.squeeze(-1))
                         & forward_batch.fd_full_graph_valid_rows
                     )
-                predicate.copy_(
-                    fd_all_valid_rows_run_predicate(
-                        prepared,
-                        forward_batch.fd_full_graph_valid_rows,
+                if prepared.route_counts is not None:
+                    # Lane-2 Track B / F1: the fused route decision already
+                    # counted the PROJECT rows (valid & ~run); all-valid-rows-RUN
+                    # is exactly "that count is zero" -- one launch instead of the
+                    # or / not / all / cast / copy sequence.
+                    all_run_predicate_from_counts(prepared.route_counts, predicate)
+                else:
+                    predicate.copy_(
+                        fd_all_valid_rows_run_predicate(
+                            prepared,
+                            forward_batch.fd_full_graph_valid_rows,
+                        )
                     )
-                )
                 prepared_holder[:] = [prepared]
 
             route_prefix = capture_raw_graph(
