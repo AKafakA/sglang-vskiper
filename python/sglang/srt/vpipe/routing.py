@@ -280,6 +280,44 @@ def _fdvp_router_graph_max_entries():
         )
     except ValueError:
         return 4
+@triton.jit
+def _fd_rmsnorm_square_kernel(x_ptr, sq_ptr, n_elements, BLOCK: tl.constexpr):
+    """sq = x.to(fp32) * x.to(fp32) -- the fp32 tensor PyTorch's `.pow(2)` produces."""
+    offs = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
+    m = offs < n_elements
+    x = tl.load(x_ptr + offs, mask=m, other=0.0).to(tl.float32)
+    tl.store(sq_ptr + offs, x * x, mask=m)
+@triton.jit
+def _fd_rmsnorm_scale_kernel(
+    x_ptr, var_ptr, w_ptr, out_ptr, eps, H: tl.constexpr, BLOCK_H: tl.constexpr
+):
+    """out[row] = weight * ((x32 * rsqrt(var[row] + eps)).to(x.dtype)) -- FDRMSNorm's order."""
+    row = tl.program_id(0)
+    offs = tl.arange(0, BLOCK_H)
+    m = offs < H
+    x = tl.load(x_ptr + row * H + offs, mask=m, other=0.0).to(tl.float32)
+    var = tl.load(var_ptr + row)
+    r = tl.rsqrt(var + eps)
+    h = (x * r).to(x_ptr.dtype.element_ty)
+    w = tl.load(w_ptr + offs, mask=m, other=0.0)
+    y = (w.to(tl.float32) * h.to(tl.float32)).to(out_ptr.dtype.element_ty)
+    tl.store(out_ptr + row * H + offs, y, mask=m)
+def fd_rmsnorm_fused(x: torch.Tensor, weight: torch.Tensor, eps: float) -> torch.Tensor:
+    """FDRMSNorm in 3 launches: square (Triton) -> mean (PyTorch, reference order) -> scale (Triton)."""
+
+    rows, hidden = x.shape
+    sq = torch.empty(x.shape, dtype=torch.float32, device=x.device)
+    n = rows * hidden
+    if n:
+        block = 1024
+        _fd_rmsnorm_square_kernel[(triton.cdiv(n, block),)](x, sq, n, BLOCK=block)
+    variance = sq.mean(-1, keepdim=True)  # the reference reduction, unchanged
+    out = torch.empty(x.shape, dtype=torch.result_type(weight, x), device=x.device)
+    if rows:
+        _fd_rmsnorm_scale_kernel[(rows,)](
+            x, variance, weight, out, eps, H=hidden, BLOCK_H=triton.next_power_of_2(hidden)
+        )
+    return out
 class FDRMSNorm(nn.Module):
     """FlexiDepth/DDLlama RMSNorm: compute variance in fp32, return input dtype.
 
@@ -299,12 +337,35 @@ class FDRMSNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(hidden_size))
         self.variance_epsilon = eps
 
-    def forward(self, hidden_states):
+    def reference_forward(self, hidden_states):
+        """The released FlexiDepth body, kernel for kernel (8 launches). Kept as
+        the bit-exactness reference for `forward`."""
         input_dtype = hidden_states.dtype
         hidden_states = hidden_states.to(torch.float32)
         variance = hidden_states.pow(2).mean(-1, keepdim=True)
         hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
         return self.weight * hidden_states.to(input_dtype)
+
+    def forward(self, hidden_states):
+        # Lane-2 tax-removal track / F2 (2026-09-07): the SAME arithmetic in 3
+        # launches instead of 8. The only reduction -- `.mean(-1)` -- stays
+        # PyTorch's own kernel on an fp32 `x*x` tensor that the first Triton
+        # kernel produces bit-identically (pow(2) IS x*x in fp32), so the
+        # variance is reduced in exactly the reference order. The second Triton
+        # kernel fuses the elementwise tail `(x32 * rsqrt(var + eps)).to(dtype)`
+        # then `weight * h` (product formed in fp32 and rounded once, which is
+        # PyTorch's opmath for a half/bfloat16 multiply). `rsqrt` is the CUDA
+        # `rsqrtf` on both sides. Exactness is asserted by
+        # test/vp/test_fd_rmsnorm_fused.py against `reference_forward`; any
+        # non-CUDA / non-contiguous input takes the reference body.
+        if (
+            not hidden_states.is_cuda
+            or hidden_states.dim() != 2
+            or not hidden_states.is_contiguous()
+            or hidden_states.dtype not in (torch.float16, torch.bfloat16, torch.float32)
+        ):
+            return self.reference_forward(hidden_states)
+        return fd_rmsnorm_fused(hidden_states, self.weight, float(self.variance_epsilon))
 class FDRouter(nn.Module):
     """DDLlamaRouter: bottleneck MLP -> scalar skip logit per token (no bias)."""
 
