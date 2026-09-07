@@ -1634,16 +1634,38 @@ else:
     clamp_position = _clamp_position_native
 
 
+def _host_ints_to_device(values: List[int], device: torch.device) -> torch.Tensor:
+    """Upload a small int64 host list WITHOUT draining the stream.
+
+    Lane-2 tax-removal track, runtime tax R1 (2026-09-07): the vSkipper arm
+    takes the request-identity branch of ``ForwardBatch.init_new`` on EVERY
+    batch (production only does with the K/V canary), and
+    ``torch.tensor(values, device=cuda)`` is a synchronous pageable
+    cudaMemcpy — it waits for all prior work on the stream, so the forward
+    thread stalled for one whole preceding forward per batch (served coqa
+    profile: 128 blocking copies = 28.8 s in one window; ≈ 2 ms per 14-ms
+    decode step, the measured +15.6 % TPOT with nothing skipped). Staging
+    through pinned memory and copying ``non_blocking=True`` keeps the values,
+    dtype and device identical; the copy is stream-ordered before the forward
+    that reads the tensor, and the pinned block is recycled by PyTorch's
+    caching host allocator only after its copy event completes.
+    """
+    host = torch.tensor(values, dtype=torch.int64)
+    if device.type != "cuda":
+        return host.to(device)
+    return host.pin_memory().to(device, non_blocking=True)
+
+
 def _hash_rids_to_tensor(*, rids: List[str], device: torch.device) -> torch.Tensor:
     values: List[int] = [_stable_hash_str_to_i64(rid) for rid in rids]
-    return torch.tensor(values, dtype=torch.int64, device=device)
+    return _host_ints_to_device(values, device)
 
 
 def _bootstrap_rooms_to_tensor(
     *, bootstrap_rooms: List[Optional[int]], device: torch.device
 ) -> torch.Tensor:
     values: List[int] = [room if room is not None else -1 for room in bootstrap_rooms]
-    return torch.tensor(values, dtype=torch.int64, device=device)
+    return _host_ints_to_device(values, device)
 
 
 @lru_cache(maxsize=65_536)
