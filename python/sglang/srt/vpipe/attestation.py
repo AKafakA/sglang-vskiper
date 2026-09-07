@@ -281,6 +281,16 @@ def scheduler_runtime_attestation(scheduler: Any) -> dict[str, Any]:
         if prefill_counts is not None:
             for body, count in prefill_counts.items():
                 regime_counters["prefill"][body] += count
+    # [R2] Realized engagement evidence of the prefill escape gate (EMA,
+    # folded samples, forced synchronisations) — runtime evidence inside the
+    # identity-stripped counters block, so gates can compare it across trees.
+    prefill_engagement = getattr(
+        prefill_graph_runner, "vp_regime_switch_prefill_engagement", None
+    )
+    if regime_counters is not None and callable(prefill_engagement):
+        engagement = prefill_engagement()
+        if engagement is not None:
+            regime_counters["prefill_engagement"] = engagement
 
     result = {
         "schema_version": 1,
