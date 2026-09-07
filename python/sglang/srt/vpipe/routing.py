@@ -720,6 +720,13 @@ def route_decide_and_maps(
         weight_tape_out.ndim != 1 or weight_tape_out.numel() != rows
     ):
         raise ValueError("weight tape target must be 1-D and aligned with the branch weights")
+    # Codex review (2026-09-07, MAJOR): the optional operands are dereferenced by
+    # the Triton launch, so a CPU or other-device tensor must fail closed here.
+    for name, tensor in (("valid_rows", valid_rows), ("weight_tape_out", weight_tape_out)):
+        if tensor is not None and tensor.device != branch_weights.device:
+            raise ValueError(
+                f"route decision operand {name} must live on {branch_weights.device}"
+            )
     for name, tensor in (
         ("branch_weights", branch_weights),
         ("run_mask_out", run_mask_out),
