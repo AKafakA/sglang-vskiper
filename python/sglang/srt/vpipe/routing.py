@@ -363,6 +363,12 @@ class FDRMSNorm(nn.Module):
             or hidden_states.dim() != 2
             or not hidden_states.is_contiguous()
             or hidden_states.dtype not in (torch.float16, torch.bfloat16, torch.float32)
+            # Codex review (2026-09-07, MAJOR): the fused tail forms the product
+            # in fp32, which is only PyTorch's opmath when the weight is one of
+            # these dtypes too; any other weight dtype (float64, complex, ...)
+            # takes the reference body so result_type and rounding are untouched.
+            or self.weight.dtype not in (torch.float16, torch.bfloat16, torch.float32)
+            or not self.weight.is_contiguous()
         ):
             return self.reference_forward(hidden_states)
         return fd_rmsnorm_fused(hidden_states, self.weight, float(self.variance_epsilon))

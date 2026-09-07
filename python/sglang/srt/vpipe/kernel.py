@@ -352,6 +352,11 @@ def count_matmul_gridexit(
     scatter = scatter_index is not None
     if scatter != (scatter_weights is not None):
         raise ValueError("scatter_index and scatter_weights must be given together")
+    if gather and scatter:
+        # Codex review (2026-09-07, MINOR): the kernel takes ONE index pointer,
+        # so gather and scatter in the same launch would silently share it.
+        # The binary-cohort body never needs both; fail closed instead.
+        raise ValueError("count_matmul_gridexit: gather_index and scatter_index cannot be combined in one launch")
     for name, index in (("gather_index", gather_index), ("scatter_index", scatter_index)):
         if index is not None and (
             index.dtype != torch.int32 or index.dim() != 1 or not index.is_contiguous()
