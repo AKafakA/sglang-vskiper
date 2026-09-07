@@ -1650,10 +1650,14 @@ def _host_ints_to_device(values: List[int], device: torch.device) -> torch.Tenso
     that reads the tensor, and the pinned block is recycled by PyTorch's
     caching host allocator only after its copy event completes.
     """
+    # `model_runner.device` is a plain string ("cuda", "cuda:0") on the served
+    # path (box gate 2026-09-07: `'str' object has no attribute 'type'`);
+    # accept both spellings.
+    dev = device if isinstance(device, torch.device) else torch.device(device)
     host = torch.tensor(values, dtype=torch.int64)
-    if device.type != "cuda":
-        return host.to(device)
-    return host.pin_memory().to(device, non_blocking=True)
+    if dev.type != "cuda":
+        return host.to(dev)
+    return host.pin_memory().to(dev, non_blocking=True)
 
 
 def _hash_rids_to_tensor(*, rids: List[str], device: torch.device) -> torch.Tensor:
