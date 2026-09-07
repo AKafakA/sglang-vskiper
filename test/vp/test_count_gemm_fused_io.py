@@ -85,3 +85,6 @@ def test_fails_closed_on_bad_indices():
         count_matmul_gridexit(a, w, count, out, gather_index=torch.arange(64, device="cuda"), **CFG)  # int64
     with pytest.raises(ValueError):
         count_matmul_gridexit(a, w, count, out, scatter_index=torch.arange(64, dtype=torch.int32, device="cuda"), **CFG)  # no weights
+    idx = torch.arange(64, dtype=torch.int32, device="cuda"); wts = torch.ones(64, dtype=torch.float16, device="cuda")
+    with pytest.raises(ValueError):  # one index pointer in the kernel: gather + scatter in one launch is refused
+        count_matmul_gridexit(a, w, count, out, gather_index=idx, scatter_index=idx, scatter_weights=wts, **CFG)

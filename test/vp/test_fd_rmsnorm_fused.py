@@ -36,3 +36,43 @@ def test_non_contiguous_falls_back():
     norm = FDRMSNorm(256).cuda()
     x = torch.randn(64, 512, device="cuda", dtype=torch.float16)[:, ::2]  # strided view
     assert torch.equal(norm(x), norm.reference_forward(x))
+
+
+def test_special_values_match_reference():
+    # Codex review (MINOR): rsqrt boundary corpus. The argument of rsqrt is var + eps >= eps, so it is never
+    # subnormal; inf / nan / all-subnormal / huge rows must still agree bit for bit (inf*0 -> nan on both sides).
+    norm = FDRMSNorm(256, eps=1e-5).cuda()
+    x = torch.randn(8, 256, device="cuda", dtype=torch.float32)
+    x[0] = 1e-30            # fp32 squares underflow to subnormal / zero -> variance ~0 -> rsqrt(eps)
+    x[1] = float("inf")
+    x[2, 0] = float("nan")
+    x[3] = -float("inf")
+    x[4] = 3e19            # squares overflow to inf in fp32
+    x[5] = 0.0
+    x[6, ::2] = float("inf")
+    for dtype in (torch.float32, torch.float16, torch.bfloat16):
+        xd = x.to(dtype)
+        ref = norm.reference_forward(xd)
+        out = norm(xd)
+        assert torch.equal(out.isnan(), ref.isnan())
+        assert torch.equal(out.nan_to_num(nan=0.0), ref.nan_to_num(nan=0.0))
+
+
+@pytest.mark.parametrize("case", ["cpu", "3d", "float64_input", "float64_weight", "strided_weight"])
+def test_unsupported_shapes_and_dtypes_fall_back(case):
+    # Codex review (MAJOR + MINOR): every guard takes the released body, so the result equals reference_forward
+    norm = FDRMSNorm(256).cuda()
+    x = torch.randn(16, 256, device="cuda", dtype=torch.float16)
+    if case == "cpu":
+        norm = FDRMSNorm(256); x = x.cpu()
+    elif case == "3d":
+        x = x.view(2, 8, 256)
+    elif case == "float64_input":
+        x = x.double()
+    elif case == "float64_weight":
+        norm.weight.data = norm.weight.data.double()
+    elif case == "strided_weight":
+        norm.weight = torch.nn.Parameter(torch.randn(512, device="cuda", dtype=torch.float16)[::2])
+    ref = norm.reference_forward(x)
+    out = norm(x)
+    assert out.dtype == ref.dtype and torch.equal(out, ref)
