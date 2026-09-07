@@ -61,6 +61,15 @@ def test_upload_does_not_drain_the_stream():
     assert host_ms < drain_ms / 4, f"upload blocked the host: {host_ms:.1f} ms with {drain_ms:.1f} ms of queued work"
 
 
+@pytest.mark.parametrize("device", ["cuda", "cuda:0", torch.device("cuda")])
+def test_device_given_as_string_or_object(device):
+    # the served path passes model_runner.device as a STRING; the helper must accept both spellings
+    rids = ["x-1", "x-2", "x-3"]
+    out = _hash_rids_to_tensor(rids=rids, device=device)
+    torch.cuda.synchronize()
+    assert out.is_cuda and torch.equal(out.cpu(), _reference(rids, torch.device("cpu")))
+
+
 def test_cpu_device_path_unchanged():
     rids = ["a", "b", "c"]
     out = _hash_rids_to_tensor(rids=rids, device=torch.device("cpu"))
