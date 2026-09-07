@@ -883,11 +883,18 @@ def fd_prepare_layer_route_full_graph(
         and action_batch.execution_kind == RUN_PROJECT_EXECUTION
         and action_batch.forced_action is None
         and action_batch.explicit_run_mask is None
+        and forward_batch.forward_mode.is_decode()
     ):
-        # Lane-2 Track B / F1: the router-driven decision, the tape writes and
-        # the route maps in ONE launch (bit-identical to the unfused sequence;
-        # see `_route_decide_maps_kernel`). Sealed/forced or explicit-mask
-        # skippers keep the unfused path below.
+        # Lane-2 tax-removal track / F1: the router-driven decision, the tape
+        # writes and the route maps in ONE launch (bit-identical to the unfused
+        # sequence; see `_route_decide_maps_kernel`). DECODE passes only: the
+        # decode skip body is captured by the conditional-graph backend, where
+        # the per-layer launch count is the tax. Prefill keeps the unfused
+        # sequence — the 2026-09-07 box gate showed captured (BCG) prefill
+        # passes drifting in first-token logprobs on 8/32 prompts when the maps
+        # crossed a segment boundary, while eager prefill was identical; prefill
+        # is compute-bound and gains nothing from the launch saving. Sealed/
+        # forced or explicit-mask skippers keep the unfused path as well.
         run_mask, fused_maps = device_tape.action_mask_fused(
             int(layer.layer_id),
             action_batch,
