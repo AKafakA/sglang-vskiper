@@ -66,7 +66,6 @@ VP_DECODE_COVERAGE_ENV = "SGLANG_VP_DECODE_COVERAGE"
 VP_DECODE_COVERAGE_MAX_BS_ENV = "SGLANG_VP_DECODE_COVERAGE_MAX_BS"
 FD_DUAL_COMPACT_MIN_ROWS_ENV = "SGLANG_FD_FULL_GRAPH_DUAL_COMPACT_MIN_ROWS"
 FD_LOW_ROW_POLICY_ENV = "SGLANG_FD_FULL_GRAPH_LOW_ROW_POLICY"
-FD_LOW_ROW_MAX_ROWS_ENV = "SGLANG_FD_FULL_GRAPH_LOW_ROW_MAX_ROWS"
 FD_ROUTE_ACCOUNTING_ENV = "SGLANG_FD_FULL_GRAPH_ROUTE_ACCOUNTING"
 FD_LAYER_COUNTERS_ENV = "SGLANG_FD_FULL_GRAPH_LAYER_COUNTERS"
 FD_DEVICE_ROUTE_TAPE_ENV = "SGLANG_FD_FULL_GRAPH_DEVICE_ROUTE_TAPE"
@@ -130,12 +129,13 @@ _VALID_LAYER_POLICIES = frozenset(
 _VALID_EXECUTION_MODES = frozenset(
     (FD_EXECUTION_DIRECT_EAGER, FD_EXECUTION_FULL_GRAPH)
 )
-# `native_dense` (lane-2 cut3 item 1, D-358) is `full_dual` without a row bound:
+# `native_dense` (lane-2 cut3 item 1, D-358) is the dense-body posture at every
+# occupancy; the bounded `full_dual` variant was deleted with its bound (D-582):
 # the model's OWN dense feed-forward for every row plus the projector, selected
 # by the route mask, at every occupancy. It is the serving arm's routed-MLP
 # posture — the count-adaptive and grouped paths stay in the tree for their
 # gate arms but are not reachable from a `native_dense` deployment.
-_VALID_LOW_ROW_POLICIES = frozenset(("off", "full_dual", "native_dense"))
+_VALID_LOW_ROW_POLICIES = frozenset(("off", "native_dense"))
 # Routed-MLP gate arithmetic, which is a property of the CHECKPOINT, not a tuning
 # knob. `released` is the published FlexiDepth gate: `w * MLP` on RUN rows and
 # `(1 - w) * PROJECT` on the rest. `hard_mask` is the straight-through gate
@@ -204,6 +204,9 @@ _REMOVED_FEATURE_ENVS = (
     "SGLANG_FD_FULL_GRAPH_COMPACT_CAPACITY_FRACTION",
     "SGLANG_FD_FULL_GRAPH_COMPACT_CAPACITY_MULTIPLE",
     "SGLANG_FD_FULL_GRAPH_COMPACT_MIN_ROWS",
+    # [D-582] the low-row body swap: a third occupancy threshold outside the two
+    # admission legs, measured as parity on gsm8k when removed.
+    "SGLANG_FD_FULL_GRAPH_LOW_ROW_MAX_ROWS",
 )
 # Value-typed names among the conflict/removed sets: any non-off value counts
 # as set (a path, a list, an integer); the rest are boolean-ish.
@@ -219,6 +222,7 @@ _VALUE_TYPED_CONFLICT_ENVS = frozenset(
         "SGLANG_FD_FULL_GRAPH_COMPACT_CAPACITY_FRACTION",
         "SGLANG_FD_FULL_GRAPH_COMPACT_CAPACITY_MULTIPLE",
         "SGLANG_FD_FULL_GRAPH_COMPACT_MIN_ROWS",
+        "SGLANG_FD_FULL_GRAPH_LOW_ROW_MAX_ROWS",
     )
 )
 # [lane-2 knob cleanup, D-578] Cohort buffer sizes round up to this many rows.
@@ -243,7 +247,7 @@ _ROUTE_DECIDE_STATS: dict = {}
 # (executed evidence, never a flag): device -> (passes, rows).
 _BINARY_COHORT_CUBLAS_PASSES: dict[str, tuple[int, int]] = {}
 # D-508 attestation: per-layer prefill break-even decisions on eager passes,
-# per device: device -> (layers_checked, layers_fallen_back_to_full_dual).
+# per device: device -> (layers_checked, layers_fallen_back_to_the_dense_body).
 # Executed evidence; lives under binary_cohort.realized (identity-stripped).
 _PREFILL_FALLBACK: dict[str, tuple[int, int]] = {}
 # P5 attestation: decode graph coverage decision per device (executed evidence).

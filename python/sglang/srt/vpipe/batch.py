@@ -400,14 +400,14 @@ def finalize_full_graph_batch(
             raise RuntimeError(
                 "FlexiDepth low-row counter shape must be dispatch/graph/logical"
             )
-        low_row_policy, low_row_max_rows = full_graph_low_row_policy()
+        low_row_policy = full_graph_low_row_policy()
         if low_row_policy == "off":
             raise RuntimeError("FlexiDepth low-row counters require an active policy")
-        # Lane-2 cut2/cut3: the counter condition must mirror the DISPATCH
-        # condition in `mlp.py` exactly (policy + rows), or the attested
-        # dispatch count silently disagrees with the body that ran — the
-        # per-batch compact-phase flag is not part of the dispatch decision.
-        if routes.shape[1] <= low_row_max_rows:
+        # The counter condition must mirror the DISPATCH condition in `mlp.py`
+        # exactly, or the attested dispatch count silently disagrees with the
+        # body that ran. [D-582] With the row bound deleted, native_dense
+        # dispatches at EVERY occupancy, so the counter is unconditional here.
+        if True:
             logical_rows = (
                 forward_batch.fd_full_graph_valid_rows.sum(dtype=torch.int64)
                 * routes.shape[0]

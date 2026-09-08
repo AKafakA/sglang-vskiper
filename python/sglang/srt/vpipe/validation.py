@@ -85,7 +85,6 @@ from sglang.srt.vpipe.env import (
     FD_GATE_MODE_ENV,
     FD_LAYER_COUNTERS_ENV,
     FD_LAYER_POLICIES_ENV,
-    FD_LOW_ROW_MAX_ROWS_ENV,
     FD_LOW_ROW_POLICY_ENV,
     FD_MASKED_DECODE_ATTN_ENV,
     FD_PREFILL_GROUPED_MLP_ENV,
@@ -473,13 +472,14 @@ def validate_full_graph_model_configuration(
             )
     compact_enabled = full_graph_compact_config(values)
     compact_phases = full_graph_compact_phases(values)
-    low_row_policy, low_row_max_rows = full_graph_low_row_policy(values)
+    low_row_policy = full_graph_low_row_policy(values)
     gate_mode = full_graph_gate_mode(values)
     if gate_mode != "released" and low_row_policy != "native_dense":
         # The gate arithmetic is implemented in the two bodies that execute in
-        # the shipped posture (`_full_dual_mlp` for decode, `_grouped_prefill_mlp`
-        # for prefill). Only `native_dense` guarantees `_full_dual_mlp` at EVERY
-        # occupancy; under any other policy the count-adaptive, grouped and
+        # the shipped posture (`_native_dense_mlp` for decode,
+        # `_grouped_prefill_mlp` for prefill). Only `native_dense` guarantees
+        # `_native_dense_mlp` at EVERY occupancy; under any other policy the
+        # count-adaptive, grouped and
         # compaction bodies remain reachable and would silently apply the
         # released `w` scaling to a checkpoint not trained with it. Refuse
         # rather than measure the wrong arithmetic.
@@ -560,11 +560,10 @@ def validate_full_graph_model_configuration(
                 f"{FD_LOW_ROW_POLICY_ENV} requires "
                 f"{FD_COMPACT_ENABLED_ENV}=1"
             )
-        # Lane-2 cut2 (2026-09-02): the low-row body now resolves before every
-        # routed-MLP dispatch (binary_cohort included), so it is well-defined
-        # for prefill passes too (a <= max_rows-token prefill chunk takes the
-        # exact fixed-shape full_dual body). Decode must still be a compact
-        # phase; prefill may be as well (the I3 vp_final posture is `both`).
+        # The posture resolves before every routed-MLP dispatch
+        # (binary_cohort included), so it is well-defined for prefill passes
+        # too. Decode must still be a compact phase; prefill may be as well
+        # (the I3 vp_final posture is `both`).
         if "decode" not in compact_phases:
             raise ValueError(
                 f"{FD_LOW_ROW_POLICY_ENV} requires decode in "
@@ -575,15 +574,6 @@ def validate_full_graph_model_configuration(
                 f"{FD_LOW_ROW_POLICY_ENV} requires decode in "
                 f"{FD_ACTIVE_PHASES_ENV}"
             )
-        # Lane-2 cut2b (2026-09-02): the low-row body now resolves BEFORE the
-        # compact and binary-cohort dispatches, so a bound above
-        # COMPACT_MIN_ROWS is well-defined (it simply takes precedence for
-        # those row counts) instead of ambiguous. Keeping the bound below the
-        # measured crossover is a policy question, not a correctness one: the
-        # ladders put the skip body's crossover near 200 rows at 1k context, so
-        # the deployable bound is measured, not structural.
-        if low_row_max_rows < 1:
-            raise ValueError(f"{FD_LOW_ROW_MAX_ROWS_ENV} must be positive")
         if eager_semantic_debug or forced_all_run_fastpath:
             raise ValueError(
                 f"{FD_LOW_ROW_POLICY_ENV} conflicts with eager semantic "

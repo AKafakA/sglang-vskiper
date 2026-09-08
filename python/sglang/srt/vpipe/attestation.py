@@ -563,7 +563,7 @@ def record_model_runner_dispatch(
     setattr(model_runner, dispatch_name, getattr(model_runner, dispatch_name, 0) + 1)
     setattr(model_runner, row_name, getattr(model_runner, row_name, 0) + rows)
 def low_row_policy_attestation(
-    policy: Optional[str] = None, max_rows: Optional[int] = None
+    policy: Optional[str] = None,
 ) -> dict[str, Any]:
     """The routed-MLP body posture, as a standalone (testable) evidence block.
 
@@ -574,18 +574,17 @@ def low_row_policy_attestation(
     `/server_info` rather than inferred from the environment.
     """
 
-    if policy is None or max_rows is None:
-        policy, max_rows = full_graph_low_row_policy()
+    if policy is None:
+        policy = full_graph_low_row_policy()
     gate_mode = full_graph_gate_mode()
     return {
         "enabled": policy != "off",
         "policy": policy,
-        "max_rows": max_rows if policy != "off" else None,
         "active_phases": ["decode"] if policy != "off" else [],
         "logical_routes_preserved": True,
         "physical_work": (
             "dense_and_project_all_graph_rows"
-            if policy in ("full_dual", "native_dense")
+            if policy == "native_dense"
             else "unchanged"
         ),
         "flop_savings_claim_allowed": policy == "off",
@@ -643,7 +642,7 @@ def model_runner_runtime_attestation(
             ),
         )
     compact_enabled = full_graph_compact_config()
-    low_row_policy, low_row_max_rows = full_graph_low_row_policy()
+    low_row_policy = full_graph_low_row_policy()
     virtual_cohort = full_graph_virtual_cohort_enabled()
     weighted_scatter = full_graph_weighted_scatter_enabled()
     fused_evidence = full_graph_fused_evidence_enabled()
@@ -1007,9 +1006,7 @@ def model_runner_runtime_attestation(
                 )
             ),
         },
-        "low_row_policy": low_row_policy_attestation(
-            low_row_policy, low_row_max_rows
-        ),
+        "low_row_policy": low_row_policy_attestation(low_row_policy),
         "virtual_cohort": {
             "enabled": virtual_cohort,
             "mapping": "device_row_map",
