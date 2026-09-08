@@ -49,6 +49,14 @@ EXTENDED_DECODE_DATASETS = (
     "scrolls_gov_report",
     "scrolls_summ_screen_fd",
     "scrolls_qmsum",
+    # Balanced long-OUTPUT rows (owner D-519, 2026-09-06): the decode
+    # mechanism needs decode-heavy rows; context grows with the generation.
+    "longbench_write",
+    "lca_libgen",
+    "lca_libgen_noapi",
+    "lca_libgen_official",
+    "longwriter6k",
+    "livecodebench",
 )
 PREFILL_DATASETS = (
     "mmlu",
@@ -80,6 +88,20 @@ WORKLOAD_DATASETS = {
     ),
     # Long-context CODING row: lcc + repobench-p (weights ∝ window-fit survivors, set after measurement).
     "longbench_code": ("longbench_lcc", "longbench_repobench-p"),
+    # Balanced long-output rows (D-519): one dataset each, window-filtered.
+    "longbench_write": ("longbench_write",),
+    "lca_libgen": ("lca_libgen",),
+    "lca_libgen_noapi": ("lca_libgen_noapi",),
+    "lca_libgen_official": ("lca_libgen_official",),
+    "longwriter6k": ("longwriter6k",),
+    "livecodebench": ("livecodebench",),
+    # Quality-line writing row (owner 2026-09-06): the official LongBench-Write
+    # test prompts embedded in the LongWriter-6k serving stream, so the test
+    # items are served at the row's target QPS inside the real load (a 106-
+    # request burst alone never engages the decode band, D-533). Weights come
+    # from the build config (longbench_write small, its pool exhausts -> every
+    # window survivor is included exactly once, no replication).
+    "writing_row": ("longwriter6k", "longbench_write"),
     "mixed_25": DECODE_DATASETS + PREFILL_DATASETS[:3],
     "mixed_50": DECODE_DATASETS + PREFILL_DATASETS[:3],
     "mixed_75": DECODE_DATASETS + PREFILL_DATASETS[:3],
@@ -96,6 +118,13 @@ WORKLOAD_PHASE = {
     "longctx_writing": "decode",
     "longbench_qa": "decode",
     "longbench_code": "decode",
+    "longbench_write": "decode",
+    "lca_libgen": "decode",
+    "lca_libgen_noapi": "decode",
+    "lca_libgen_official": "decode",
+    "longwriter6k": "decode",
+    "livecodebench": "decode",
+    "writing_row": "decode",
     "mixed_25": "mixed",
     "mixed_50": "mixed",
     "mixed_75": "mixed",
@@ -122,6 +151,13 @@ DEFAULT_DECODE_WEIGHTS = {
     # longbench_code row: ∝ measured window-fit survivors at 8192 (lcc 478/500, repobench-p 217/500).
     "longbench_lcc": 0.688,
     "longbench_repobench-p": 0.312,
+    # single-dataset rows
+    "longbench_write": 1.0,
+    "lca_libgen": 1.0,
+    "lca_libgen_noapi": 1.0,
+    "lca_libgen_official": 1.0,
+    "longwriter6k": 1.0,
+    "livecodebench": 1.0,
 }
 DEFAULT_PREFILL_WEIGHTS = {
     "mmlu": 1.0 / 3.0,
@@ -216,6 +252,85 @@ DATASET_PROTOCOLS: dict[str, dict[str, Any]] = {
             "task_reference_max_output_len": 64,
         }
         for task in ("lcc", "repobench-p")
+    },
+    # Balanced long-output rows (owner D-519, 2026-09-06). Staged locally
+    # (`newrows_local.py`), window-FILTERED, natural (uncapped) generation.
+    "longbench_write": {
+        # LongWriter (THUDM 2024) LongBench-Write: 120 prompts with a required
+        # length in words; the model's chat template renders the prompt as in
+        # the authors' pred.py. Quality = the authors' length score S_l
+        # (offline formula) and quality score S_q (GPT-4o judge, only with the
+        # owner's approval) via score_longwrite_offline.py.
+        "id": "longwriter:longbench_write-v1:zero-shot-chat",
+        "source": "THUDM/LongWriter:evaluation/longbench_write.jsonl",
+        "evaluation_split": "test",
+        "quality_semantics": "longwrite_offline",
+        # window-filter budget only (required words x 1.35 tokens/word); the
+        # served generation is natural. Set per row from the record.
+        "task_reference_max_output_len": None,
+    },
+    "lca_libgen": {
+        # Long Code Arena library-based code generation (JetBrains Research
+        # 2024): instruction + the library's defined elements (the benchmark's
+        # "with API list" context). Quality = ChrF + API recall from the
+        # lca-baselines metrics via score_lca_offline.py.
+        "id": "lca-libgen-v1:instruction+api-list-chat",
+        "source": "JetBrains-Research/lca-library-based-code-generation:test",
+        "evaluation_split": "test",
+        "quality_semantics": "lca_offline",
+        "task_reference_max_output_len": None,
+    },
+    "lca_libgen_noapi": {
+        # D-526: the benchmark's instruction-only setting (no API list) -- the
+        # full API list drove Llama-3-8B into repetition loops on 55-61 % of
+        # prompts in both arms. Same reference, same scorer.
+        "id": "lca-libgen-v1:instruction-only-chat",
+        "source": "JetBrains-Research/lca-library-based-code-generation:test",
+        "evaluation_split": "test",
+        "quality_semantics": "lca_offline",
+        "task_reference_max_output_len": None,
+    },
+    "lca_libgen_official": {
+        # Owner ruling D-531 (2026-09-06): the benchmark's OWN protocol
+        # (lca-baselines library_based_code_generation/src/models): the
+        # no-context prompt template verbatim as the user message, greedy
+        # (temperature 0.0) and max_tokens = 2048. The cap is the benchmark's
+        # generation limit and is applied ONLY on this row because
+        # Llama-3-8B-Instruct runs into repetition loops on 14-15 % of these
+        # prompts in BOTH arms under natural generation (D-530); suites built
+        # from this dataset use decode output policy `task_reference_limit`.
+        "id": "lca-libgen-v1:official-nocontext-chat:cap2048",
+        "source": "JetBrains-Research/lca-library-based-code-generation:test",
+        "evaluation_split": "test",
+        "quality_semantics": "lca_offline",
+        "task_reference_max_output_len": 2048,
+    },
+    "longwriter6k": {
+        # Owner 2026-09-06 (serving-scale writing row): the LongWriter-6k
+        # prompts (THUDM), each a single user instruction with a required
+        # length; the reference response is used ONLY by the window filter
+        # (prompt + reference <= context). Natural, uncapped generation.
+        # Quality: LongWriter's length score S_l (offline formula) where the
+        # prompt states a required length; S_q needs the owner's API approval.
+        "id": "longwriter:longwriter6k-v1:zero-shot-chat",
+        "source": "THUDM/LongWriter-6k:train",
+        "evaluation_split": "train",
+        "quality_semantics": "longwrite_offline",
+        "task_reference_max_output_len": None,
+    },
+    "livecodebench": {
+        # Owner 2026-09-06 (serving-scale code row): LiveCodeBench
+        # code_generation_lite, every release, unique question_id, under the
+        # benchmark's OWN chat prompt (lcb_runner/prompts/code_generation.py:
+        # SYSTEM_MESSAGE_GENERIC + '### Question / ### Format / ### Answer'
+        # template, the LLaMa3 style). Natural, uncapped generation. No
+        # reference response exists (tests only), so the window filter is
+        # prompt-only. Quality: the benchmark's own test harness, offline.
+        "id": "livecodebench:code_generation_lite-all:official-chat",
+        "source": "livecodebench/code_generation_lite:test.jsonl..test6.jsonl",
+        "evaluation_split": "test",
+        "quality_semantics": "lcb_offline",
+        "task_reference_max_output_len": None,
     },
     "mmlu_pro": {
         "id": "lm-eval-0.4.9.1:mmlu_pro-native:5shot-letter-chat",
@@ -1437,6 +1552,92 @@ def load_longbench_summary(
     return items
 
 
+def load_newrow(
+    dataset: str, limit: int, tokenizer: Any, context_length: int
+) -> list[WorkloadItem]:
+    """Balanced long-output rows (D-519): LongBench-Write / LCA library-based
+    code generation from locally staged jsonl (`newrows_local.py`).
+
+    Window filter (ruling A1): prompt (chat-templated, measured with the SAME
+    function that records prompt_len) + the row's reference output budget must
+    fit the context; rows that do not are DROPPED. Quality is scored only by
+    the third-party scorers offline (metric names end in `_offline`).
+    """
+
+    newrows = _load_module("vp_newrows_local", "newrows_local.py")
+    protocol = DATASET_PROTOCOLS[dataset]
+    items: list[WorkloadItem] = []
+    considered = 0
+    for record in newrows.iter_records(dataset):
+        if len(items) >= limit:
+            break
+        considered += 1
+        budget = int(newrows.output_budget_tokens(dataset, record, tokenizer))
+        if dataset == "longbench_write":
+            metric = "longwrite_offline"
+            gold = [int(record["length"])]  # required length in words
+            extra = {"required_words": int(record["length"]), "type": record.get("type")}
+        elif dataset == "longwriter6k":
+            metric = "longwrite_offline"
+            required = newrows.longwriter_required_words(record)  # parsed from the prompt; None when unstated
+            gold = [required] if required else []
+            extra = {"required_words": required, "reference_tokens": budget}
+        elif dataset == "livecodebench":
+            metric = "lcb_offline"
+            gold = {"question_id": str(record["question_id"]), "platform": record.get("platform"), "difficulty": record.get("difficulty")}
+            extra = {"has_starter_code": bool(record.get("starter_code")), "contest_date": record.get("contest_date"), "release_file": record.get("release_file")}
+        else:
+            metric = "lca_offline"
+            gold = {
+                "reference": str(record["clean_reference"]),
+                "unique_apis": [str(a) for a in record["unique_apis"]],
+            }
+            extra = {
+                "repo_full_name": record.get("repo_full_name"),
+                "n_unique_apis": int(record.get("n_unique_apis", len(record["unique_apis"]))),
+                # the reference program's own token count (information only);
+                # for `lca_libgen_official` the budget is the benchmark cap.
+                "reference_tokens": int(newrows.reference_tokens(record, tokenizer)),
+            }
+        candidate = WorkloadItem(
+            dataset=dataset,
+            item_id=str(record["_id"]),
+            phase="decode",
+            prompt=newrows.render_messages(dataset, record),
+            prompt_kind="chat_messages",
+            reference_output_len=None,
+            metric=metric,
+            gold=gold,
+            protocol_id=protocol["id"],
+            quality_semantics=protocol["quality_semantics"],
+            task_reference_max_output_len=budget,
+            stop=[],
+            evaluator_data={},
+        )
+        prompt_tokens = len(_render_prompt_ids(tokenizer, candidate))
+        if not newrows.fits_window(prompt_tokens, budget, context_length):
+            continue
+        items.append(
+            replace(
+                candidate,
+                evaluator_data={
+                    "source_split": protocol["evaluation_split"],
+                    "prompt_tokens": prompt_tokens,
+                    "window_filtered": True,
+                    "context_length": context_length,
+                    "output_budget_tokens": budget,
+                    **extra,
+                },
+            )
+        )
+    if not items:
+        raise ValueError(
+            f"{dataset}: no row fits prompt + budget <= {context_length} "
+            f"(considered {considered})"
+        )
+    return items
+
+
 def load_dataset_items(
     dataset: str,
     limit: int,
@@ -1444,6 +1645,16 @@ def load_dataset_items(
     include_train_pool: bool = False,
     context_length: Optional[int] = None,
 ) -> list[WorkloadItem]:
+    if dataset in {"longbench_write", "lca_libgen", "lca_libgen_noapi", "lca_libgen_official", "longwriter6k", "livecodebench"}:
+        if tokenizer is None:
+            raise ValueError(f"{dataset} requires a tokenizer for the window filter")
+        if context_length is None:
+            raise ValueError(
+                f"{dataset} requires context_length: the window filter is the "
+                "sealed alternative to truncation (ruling A1) and must not "
+                "silently default"
+            )
+        return load_newrow(dataset, limit, tokenizer, context_length)
     if dataset in {
         "scrolls_gov_report",
         "scrolls_summ_screen_fd",
@@ -2070,6 +2281,11 @@ def score_prediction(
     if metric in ("longbench_qa_f1_offline", "longbench_code_sim_offline"):
         # LongBench QA F1 / code edit-similarity come only from lm-eval's longbench
         # metrics offline (score_longbench_offline.py).
+        return None, "offline_third_party_scoring"
+    if metric in ("longwrite_offline", "lca_offline", "lcb_offline"):
+        # LongBench-Write / LongWriter-6k S_l/S_q (LongWriter evaluation), LCA
+        # ChrF/API recall (lca-baselines metrics) and LiveCodeBench pass@1 (the
+        # benchmark's test harness) come only from the offline scorers.
         return None, "offline_third_party_scoring"
     if metric == "mmlu_pro_letter_match":
         return mmlu_pro_letter_match(prediction, str(gold)), "scored"
