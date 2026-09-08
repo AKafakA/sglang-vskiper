@@ -117,6 +117,14 @@ def stable_server_identity(server_info: dict[str, Any]) -> dict[str, Any]:
                 conditional_graph.pop(
                     "filtered_all_run_body_executions", None
                 )
+                # The decode conditional-graph block carries its own copy of
+                # the binary_cohort attestation; its `realized` counters
+                # advance with traffic exactly like the top-level copies
+                # stripped below (first tripped by the vp_final integrated
+                # arm, 2026-09-01: identity drifted between reps).
+                cg_binary_cohort = conditional_graph.get("binary_cohort")
+                if isinstance(cg_binary_cohort, dict):
+                    cg_binary_cohort.pop("realized", None)
         regime_switch = runtime.get("regime_switch")
         if isinstance(regime_switch, dict):
             regime_switch.pop("counters", None)
