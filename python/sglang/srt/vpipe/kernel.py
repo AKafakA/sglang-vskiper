@@ -141,7 +141,48 @@ def _row_kernels():
                 )
             row += NUM_PROGS
 
-    return pack_rows_kernel, weighted_scatter_kernel, silu_mul_kernel
+    @triton.jit
+    def silu_mul_tile_kernel(
+        gate_up_ptr,
+        out_ptr,
+        count_ptr,
+        I: tl.constexpr,
+        stride_in: tl.constexpr,
+        stride_out: tl.constexpr,
+        BLOCK_R: tl.constexpr,
+        BLOCK_I: tl.constexpr,
+    ):
+        # Lane-2 adapter-lane track (2026-09-08): the same per-element fp32
+        # silu(gate) * up as silu_mul_kernel, but tiled over a 2-D grid
+        # (row tiles x column tiles) instead of 108 programs walking rows one
+        # at a time -- enough bytes in flight to reach HBM bandwidth. The grid
+        # is fixed by the scratch capacity (capture-safe); rows >= count are
+        # masked, so the served count decides the work exactly as before.
+        pid_r = tl.program_id(0)
+        pid_i = tl.program_id(1)
+        count = tl.load(count_ptr)
+        row0 = pid_r * BLOCK_R
+        if row0 >= count:
+            return
+        rows = row0 + tl.arange(0, BLOCK_R)
+        cols = pid_i * BLOCK_I + tl.arange(0, BLOCK_I)
+        live = (rows[:, None] < count) & (cols[None, :] < I)
+        in_off = rows[:, None] * stride_in + cols[None, :]
+        gate = tl.load(gate_up_ptr + in_off, mask=live).to(tl.float32)
+        up = tl.load(gate_up_ptr + in_off + I, mask=live).to(tl.float32)
+        silu = gate * tl.sigmoid(gate)
+        tl.store(
+            out_ptr + rows[:, None] * stride_out + cols[None, :],
+            (silu * up).to(out_ptr.dtype.element_ty),
+            mask=live,
+        )
+
+    return (
+        pack_rows_kernel,
+        weighted_scatter_kernel,
+        silu_mul_kernel,
+        silu_mul_tile_kernel,
+    )
 def _num_programs(device: torch.device) -> int:
     return torch.cuda.get_device_properties(device).multi_processor_count
 def pack_rows(
@@ -398,9 +439,56 @@ def count_silu_mul(
     count: torch.Tensor,
     output: torch.Tensor,
     *,
+    block_i: int = 1024,
+    block_r: int = 4,
+) -> None:
+    """out[:count] = silu(gate) * up over the [gate | up] compact rows.
+
+    Tiled launch (2-D grid over the scratch capacity x width; rows >= count
+    masked). Per element it is the same fp32 ``gate * sigmoid(gate) * up``
+    cast to the output dtype as the row-walking kernel it replaced, so the
+    outputs are bit-identical (asserted by test_count_silu_mul_tiled.py).
+    """
+
+    if gate_up.dim() != 2 or output.dim() != 2:
+        raise ValueError("count_silu_mul operands must be 2-D")
+    if gate_up.shape[1] != 2 * output.shape[1]:
+        raise ValueError("gate_up width must be 2x the output width")
+    if gate_up.stride(1) != 1 or output.stride(1) != 1:
+        raise ValueError("count_silu_mul rows must be contiguous")
+    if gate_up.shape[0] != output.shape[0]:
+        raise ValueError("count_silu_mul capacity mismatch between gate_up and output")
+    capacity = int(output.shape[0])
+    if capacity == 0:
+        return
+    import triton
+
+    width = int(output.shape[1])
+    block_i = min(block_i, triton.next_power_of_2(width))
+    _row_kernels()[3][
+        (triton.cdiv(capacity, block_r), triton.cdiv(width, block_i))
+    ](
+        gate_up,
+        output,
+        count,
+        width,
+        gate_up.stride(0),
+        output.stride(0),
+        block_r,
+        block_i,
+    )
+
+
+def count_silu_mul_rowloop(
+    gate_up: torch.Tensor,
+    count: torch.Tensor,
+    output: torch.Tensor,
+    *,
     block_i: int = 512,
 ) -> None:
-    """out[:count] = silu(gate) * up over the [gate | up] compact rows."""
+    """The pre-2026-09-08 108-program row-walking launch, kept as the
+    exactness reference for the tiled kernel (test_count_silu_mul_tiled.py);
+    not called by any served body."""
 
     if gate_up.dim() != 2 or output.dim() != 2:
         raise ValueError("count_silu_mul operands must be 2-D")
