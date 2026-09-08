@@ -23,13 +23,11 @@ from sglang.srt.vpipe.attestation import (
     full_graph_defer_project_kv_diagnostic_stage,
 )
 from sglang.srt.vpipe.common import (
-    full_graph_compact_o_proj_min_rows,
     full_graph_compact_routed_qkv_enabled,
     full_graph_contiguous_routed_qkv_config,
     full_graph_compact_phases,
     full_graph_prefill_cublas_enabled,
     full_graph_prefill_fallback_min_project,
-    full_graph_compact_q_proj_enabled,
     full_graph_gate_mode,
     full_graph_low_row_policy,
     flexidepth_execution_mode,
@@ -39,7 +37,6 @@ from sglang.srt.vpipe.common import (
 )
 from sglang.srt.vpipe.config import (
     full_graph_compact_config,
-    full_graph_compact_o_proj_config,
     full_graph_batched_commit_enabled,
     full_graph_commit_overlap_enabled,
     full_graph_defer_project_kv_enabled,
@@ -51,7 +48,6 @@ from sglang.srt.vpipe.config import (
     full_graph_fused_evidence_enabled,
     full_graph_layer_counters_enabled,
     full_graph_layer_policies,
-    full_graph_mapped_decode_attention_enabled,
     full_graph_masked_decode_attention_enabled,
     full_graph_prefill_grouped_mlp_enabled,
     full_graph_route_accounting_enabled,
@@ -62,13 +58,9 @@ from sglang.srt.vpipe.config import (
 from sglang.srt.vpipe.env import (
     FD_ACTIVE_PHASES_ENV,
     FD_COMPACT_ENABLED_ENV,
-    FD_COMPACT_MIN_ROWS_ENV,
-    FD_COMPACT_O_PROJ_ENV,
-    FD_COMPACT_O_PROJ_LAYERS_ENV,
     FD_COMPACT_PHASES_ENV,
     FD_PREFILL_CUBLAS_ENV,
     FD_PREFILL_FALLBACK_ENV,
-    FD_COMPACT_Q_PROJ_ENV,
     FD_CONDITIONAL_BRANCH_COUNTERS_ENV,
     FD_CONDITIONAL_GRAPH_ENV,
     FD_CONDITIONAL_GRAPH_HELPER_ENV,
@@ -95,7 +87,6 @@ from sglang.srt.vpipe.env import (
     FD_LAYER_POLICIES_ENV,
     FD_LOW_ROW_MAX_ROWS_ENV,
     FD_LOW_ROW_POLICY_ENV,
-    FD_MAPPED_DECODE_ATTN_ENV,
     FD_MASKED_DECODE_ATTN_ENV,
     FD_PREFILL_GROUPED_MLP_ENV,
     FD_ROUTE_ACCOUNTING_ENV,
@@ -480,7 +471,7 @@ def validate_full_graph_model_configuration(
                 f"{FD_CONDITIONAL_PRODUCTION_ALL_RUN_ENV} must stay disabled "
                 "(the switch selects the body, not the env flag)"
             )
-    compact_enabled, compact_min_rows, _, _ = full_graph_compact_config(values)
+    compact_enabled = full_graph_compact_config(values)
     compact_phases = full_graph_compact_phases(values)
     low_row_policy, low_row_max_rows = full_graph_low_row_policy(values)
     gate_mode = full_graph_gate_mode(values)
@@ -517,7 +508,6 @@ def validate_full_graph_model_configuration(
     weighted_scatter = full_graph_weighted_scatter_enabled(values)
     fused_evidence = full_graph_fused_evidence_enabled(values)
     masked_decode_attention = full_graph_masked_decode_attention_enabled(values)
-    compact_o_proj, compact_o_layers = full_graph_compact_o_proj_config(values)
     if full_graph_prefill_fallback_min_project(values) is not None:
         # D-508 fails closed: the per-layer fallback decides between a
         # compaction body and the dense full-dual body on prefill passes, so
@@ -550,9 +540,6 @@ def validate_full_graph_model_configuration(
                 f"{FD_PREFILL_CUBLAS_ENV}=1 requires at least one binary_cohort "
                 f"layer policy in {FD_LAYER_POLICIES_ENV}"
             )
-    full_graph_compact_o_proj_min_rows(values)
-    compact_q_proj = full_graph_compact_q_proj_enabled(values)
-    mapped_decode_attention = full_graph_mapped_decode_attention_enabled(values)
     if virtual_cohort and any(
         policy[0] == "project_filtered_run_compact"
         for policy in full_graph_layer_policies(values).values()
@@ -719,7 +706,7 @@ def validate_full_graph_model_configuration(
             f"{FD_DEVICE_ROUTE_DIGEST_ENV}=1"
         )
     full_graph_layer_policies(values)
-    compact_enabled, _, _, _ = full_graph_compact_config(values)
+    compact_enabled = full_graph_compact_config(values)
     if virtual_cohort and not compact_enabled:
         raise ValueError(
             f"{FD_VIRTUAL_COHORT_ENV}=1 requires {FD_COMPACT_ENABLED_ENV}=1"
@@ -757,40 +744,16 @@ def validate_full_graph_model_configuration(
                 f"{FD_FUSED_EVIDENCE_ENV}=1 requires decode in "
                 f"{FD_ACTIVE_PHASES_ENV}"
             )
-    if compact_o_proj and not compact_enabled:
-        raise ValueError(
-            f"{FD_COMPACT_O_PROJ_ENV}=1 requires {FD_COMPACT_ENABLED_ENV}=1"
-        )
-    if compact_o_proj and not masked_decode_attention:
-        raise ValueError(
-            f"{FD_COMPACT_O_PROJ_ENV}=1 requires {FD_MASKED_DECODE_ATTN_ENV}=1"
-        )
-    if compact_q_proj and not compact_o_proj:
-        raise ValueError(
-            f"{FD_COMPACT_Q_PROJ_ENV}=1 requires {FD_COMPACT_O_PROJ_ENV}=1"
-        )
-    if mapped_decode_attention and not compact_o_proj:
-        raise ValueError(
-            f"{FD_MAPPED_DECODE_ATTN_ENV}=1 requires "
-            f"{FD_COMPACT_O_PROJ_ENV}=1"
-        )
-    if mapped_decode_attention and not masked_decode_attention:
-        raise ValueError(
-            f"{FD_MAPPED_DECODE_ATTN_ENV}=1 requires "
-            f"{FD_MASKED_DECODE_ATTN_ENV}=1"
-        )
+    # [lane-2 knob cleanup, D-578] The compact output-projection body, the
+    # split-QKV body and the mapped-decode worker-row sizing are deleted. Their
+    # env vars are registered in _REMOVED_FEATURE_ENVS and refused by the
+    # removed-feature check below, so nothing is silently ignored here.
     # NOTE: the converse (MASKED=1 => the mask actually reaches a triton decode kernel)
     # is NOT enforceable here — this validator has no server_args/backend in scope, and
     # MASKED=1 with LAYER_ROUTED=0 is legitimate when an explicit --decode-attention-
     # backend=triton pin is present (several sealed repo configs do exactly that). The
     # guard therefore lives in ModelRunner._get_attention_backend, where the resolved
     # backend is visible. See _MASKED_DECODE_REQUIRED_BACKEND.
-    unknown_compact_o_layers = sorted(set(compact_o_layers) - set(loaded_layers))
-    if unknown_compact_o_layers:
-        raise ValueError(
-            f"{FD_COMPACT_O_PROJ_LAYERS_ENV} names unloaded layers: "
-            + ", ".join(str(layer_id) for layer_id in unknown_compact_o_layers)
-        )
     if (
         masked_decode_attention
         and flexidepth_execution_mode(values) != FD_EXECUTION_FULL_GRAPH

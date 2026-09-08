@@ -6,32 +6,9 @@ the stock attention kernels do not expect."""
 
 from __future__ import annotations
 
-import os
-from dataclasses import dataclass, replace
-from typing import Any, Callable, Optional
+from typing import Any
+
 import torch
-import torch.nn.functional as F
-from sglang.srt.vpipe.env import (
-    FD_COMPACT_O_PROJ_ENV,
-    FD_COMPACT_O_PROJ_LAYERS_ENV,
-    FD_COMPACT_O_PROJ_MIN_ROWS_ENV,
-    FD_FORCED_ALL_RUN_PRODUCTION_ATTN_ENV,
-    FD_MAPPED_DECODE_ATTN_ENV,
-    FD_MASKED_DECODE_ATTN_ENV,
-)
-from sglang.srt.vpipe.common import (
-    full_graph_compact_q_proj_enabled,
-)
-from sglang.srt.vpipe.config import (
-    full_graph_compact_config,
-    full_graph_compact_o_proj_config,
-)
-from sglang.srt.vpipe.mlp_compact import (
-    _compact_capacity,
-)
-from sglang.srt.vpipe.common import (
-    full_graph_compact_o_proj_min_rows,
-)
 
 
 def _apply_attention_run_mask(
@@ -66,10 +43,18 @@ def fd_attention_o_proj_full_graph(
     attention_output: torch.Tensor,
     forward_batch: Any,
 ) -> torch.Tensor:
-    """Project exact RUN rows through compact cuBLAS plus mapped overflow."""
+    """Project the attention rows through the layer's own ``o_proj``.
 
-    enabled, layer_fractions = full_graph_compact_o_proj_config()
-    layer_id = int(getattr(attention.attn, "layer_id", -1))
+    [lane-2 knob cleanup, D-578] The compact-o_proj cohort branch that used to
+    live here is deleted with its three env vars
+    (``SGLANG_FD_FULL_GRAPH_COMPACT_O_PROJ{,_LAYERS,_MIN_ROWS}``). It was never
+    enabled in any served arm — the gates default off — and before 2026-09-03 it
+    could not have run at all: it passed ``capacity=`` to ``kernel.pack_rows``,
+    which takes a preallocated destination, so its first use raised TypeError.
+    What remains is the plain projection plus the bias guard that the masked
+    decode path genuinely needs.
+    """
+
     run_mask = getattr(forward_batch, "fd_full_graph_attention_run_mask", None)
     if (
         run_mask is not None
@@ -78,156 +63,25 @@ def fd_attention_o_proj_full_graph(
         raise RuntimeError(
             "FlexiDepth masked decode attention requires a bias-free o_proj"
         )
-    if not enabled or layer_id not in layer_fractions or run_mask is None:
-        output, _ = attention.o_proj(attention_output)
-        return output
-
-    compact_enabled, _, _, multiple = full_graph_compact_config()
-    min_rows = full_graph_compact_o_proj_min_rows()
-    rows = int(attention_output.shape[0])
-    capacity = _compact_capacity(rows, layer_fractions[layer_id], multiple)
-    if not compact_enabled or rows < min_rows or capacity >= rows:
-        output, _ = attention.o_proj(attention_output)
-        return output
-    if attention_output.ndim != 2 or run_mask.shape != (rows,):
-        raise RuntimeError(
-            "FlexiDepth compact o_proj requires aligned 2D attention rows"
-        )
-    if getattr(attention.o_proj, "bias", None) is not None:
-        raise RuntimeError("FlexiDepth compact o_proj requires a bias-free layer")
-
-    from sglang.srt.vpipe.cohort import (
-        build_row_map,
-        scatter_cohort,
-    )
-    from sglang.srt.vpipe.kernel import (
-        pack_rows,
-    )
-    from sglang.srt.vpipe.cohort import (
-        mapped_linear,
-    )
-
-    row_map = getattr(forward_batch, "fd_full_graph_attention_row_map", None)
-    count = getattr(forward_batch, "fd_full_graph_attention_row_count", None)
-    row_map_layer = getattr(
-        forward_batch, "fd_full_graph_attention_row_map_layer", None
-    )
-    if row_map is None or count is None or row_map_layer != layer_id:
-        row_map, count = build_row_map(run_mask)
-    # Lane-2 cut6 (2026-09-03): this call used to pass `capacity=` to
-    # `kernel.pack_rows`, which takes a PREALLOCATED destination and returns
-    # None — so the compact-o_proj path raised `TypeError: pack_rows() got an
-    # unexpected keyword argument 'capacity'` at its first use and had never
-    # run in any deployment (found when the mapped-attention arm refused to
-    # boot). Allocate the fixed-capacity destination here and use the kernel's
-    # real signature; capacity is graph-static, so the shape stays capturable.
-    packed_attention = attention_output.new_empty(
-        (capacity, int(attention_output.shape[1]))
-    )
-    pack_rows(attention_output, row_map, count, packed_attention)
-    packed_output, _ = attention.o_proj(packed_attention)
-    output = attention_output.new_zeros(
-        (rows, int(attention.o_proj.weight.shape[0]))
-    )
-    scatter_cohort(output, packed_output, row_map, count)
-    mapped_linear(
-        attention_output,
-        attention.o_proj.weight,
-        row_map,
-        count,
-        output,
-        row_offset=capacity,
-    )
+    output, _ = attention.o_proj(attention_output)
     return output
 def fd_attention_qkv_full_graph(
     attention: Any,
     hidden_states: torch.Tensor,
     forward_batch: Any,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Project own-weight QKV for the exact foreground RUN cohort."""
+    """Project QKV for the whole batch through the layer's own weights.
 
-    enabled = full_graph_compact_q_proj_enabled()
-    compact_o_enabled, layer_fractions = full_graph_compact_o_proj_config()
-    layer_id = int(getattr(attention.attn, "layer_id", -1))
-    run_mask = getattr(forward_batch, "fd_full_graph_attention_run_mask", None)
-    compact_enabled, _, _, multiple = full_graph_compact_config()
-    rows = int(hidden_states.shape[0])
-    expected_width = attention.q_size + 2 * attention.kv_size
-    qkv_weight = attention.qkv_proj.weight
-    min_rows = full_graph_compact_o_proj_min_rows()
-    fraction = layer_fractions.get(layer_id)
-    capacity = (
-        _compact_capacity(rows, fraction, multiple)
-        if fraction is not None
-        else rows
-    )
-    if (
-        not enabled
-        or not compact_o_enabled
-        or run_mask is None
-        or fraction is None
-        or not compact_enabled
-        or rows < min_rows
-        or capacity >= rows
-    ):
-        qkv, _ = attention.qkv_proj(hidden_states)
-        return qkv.split(
-            [attention.q_size, attention.kv_size, attention.kv_size], dim=-1
-        )
+    [lane-2 knob cleanup, D-578] The compact-Q cohort branch is deleted along
+    with ``SGLANG_FD_FULL_GRAPH_COMPACT_Q_PROJ`` and the o_proj layer-fraction
+    gates it shared. Like the o_proj branch above, it was never enabled in any
+    served arm and carried the same latent defect: it called
+    ``kernel.pack_rows`` with a ``capacity=`` keyword that function does not
+    accept, so its first execution would have raised TypeError.
+    """
 
-    if hidden_states.ndim != 2 or run_mask.shape != (rows,):
-        raise RuntimeError(
-            "FlexiDepth compact Q projection requires aligned 2D attention rows"
-        )
-    if getattr(attention.qkv_proj, "bias", None) is not None:
-        raise RuntimeError(
-            "FlexiDepth compact Q projection requires a bias-free layer"
-        )
-    if qkv_weight.ndim != 2 or int(qkv_weight.shape[0]) != expected_width:
-        raise RuntimeError(
-            "FlexiDepth compact Q projection has incompatible weights"
-        )
-
-    from sglang.srt.vpipe.cohort import (
-        build_row_map,
-        scatter_cohort,
-    )
-    from sglang.srt.vpipe.kernel import (
-        pack_rows,
-    )
-    from sglang.srt.vpipe.cohort import (
-        mapped_linear,
+    qkv, _ = attention.qkv_proj(hidden_states)
+    return qkv.split(
+        [attention.q_size, attention.kv_size, attention.kv_size], dim=-1
     )
 
-    row_map = getattr(forward_batch, "fd_full_graph_attention_row_map", None)
-    count = getattr(forward_batch, "fd_full_graph_attention_row_count", None)
-    row_map_layer = getattr(
-        forward_batch, "fd_full_graph_attention_row_map_layer", None
-    )
-    if row_map is None or count is None or row_map_layer != layer_id:
-        row_map, count = build_row_map(run_mask)
-    packed_hidden = pack_rows(
-        hidden_states,
-        row_map,
-        count,
-        capacity=capacity,
-    )
-    q_weight = qkv_weight[: attention.q_size]
-    packed_q = F.linear(packed_hidden, q_weight)
-    q = hidden_states.new_zeros((rows, attention.q_size))
-    scatter_cohort(q, packed_q, row_map, count)
-    mapped_linear(
-        hidden_states,
-        q_weight,
-        row_map,
-        count,
-        q,
-        row_offset=capacity,
-    )
-
-    kv = F.linear(hidden_states, qkv_weight[attention.q_size : expected_width])
-    k, v = kv.split([attention.kv_size, attention.kv_size], dim=-1)
-    forward_batch.fd_full_graph_attention_row_map = row_map
-    forward_batch.fd_full_graph_attention_row_count = count
-    forward_batch.fd_full_graph_attention_row_map_layer = layer_id
-    return q, k, v

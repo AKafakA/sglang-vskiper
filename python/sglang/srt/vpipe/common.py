@@ -31,7 +31,6 @@ import os
 import torch
 import torch.nn.functional as F
 from sglang.srt.vpipe.env import (
-    FD_COMPACT_O_PROJ_MIN_ROWS_ENV,
     FD_COMPACT_ROUTED_QKV_ENV,
     FD_CONTIGUOUS_ROUTED_QKV_ENV,
     FD_ROUTED_QKV_CAPACITIES_ENV,
@@ -43,7 +42,6 @@ from sglang.srt.vpipe.env import (
     VP_DECODE_COVERAGE_ENV,
     VP_DECODE_COVERAGE_MAX_BS_ENV,
     _VP_DECODE_COVERAGE,
-    FD_COMPACT_Q_PROJ_ENV,
     FD_LOW_ROW_MAX_ROWS_ENV,
     FD_GATE_MODE_ENV,
     FD_FUSED_ROUTER_NORM_ENV,
@@ -222,28 +220,6 @@ def full_graph_compact_routed_qkv_enabled(
 
     values = os.environ if environ is None else environ
     return _strict_bool(values, FD_COMPACT_ROUTED_QKV_ENV)
-def full_graph_compact_o_proj_min_rows(
-    environ: Optional[Mapping[str, str]] = None,
-) -> int:
-    """Return the measured graph-bucket crossover for compact output."""
-
-    values = os.environ if environ is None else environ
-    try:
-        min_rows = int(values.get(FD_COMPACT_O_PROJ_MIN_ROWS_ENV, "128"))
-    except (TypeError, ValueError) as error:
-        raise ValueError(
-            f"{FD_COMPACT_O_PROJ_MIN_ROWS_ENV} must be an integer"
-        ) from error
-    if min_rows <= 0:
-        raise ValueError(f"{FD_COMPACT_O_PROJ_MIN_ROWS_ENV} must be positive")
-    return min_rows
-def full_graph_compact_q_proj_enabled(
-    environ: Optional[Mapping[str, str]] = None,
-) -> bool:
-    """Return whether RUN-only Q projection shares the compact output route."""
-
-    values = os.environ if environ is None else environ
-    return _strict_bool(values, FD_COMPACT_Q_PROJ_ENV)
 def _strict_bool(
     values: Mapping[str, str], name: str, default: str = "0"
 ) -> bool:

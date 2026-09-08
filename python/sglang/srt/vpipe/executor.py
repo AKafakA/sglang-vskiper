@@ -39,9 +39,6 @@ from sglang.srt.vpipe.common import (
 from sglang.srt.vpipe.attention import (
     _apply_attention_run_mask,
 )
-from sglang.srt.vpipe.common import (
-    full_graph_compact_o_proj_min_rows,
-)
 from sglang.srt.vpipe.batch import (
     full_graph_prefill_enabled,
 )
@@ -55,9 +52,6 @@ from sglang.srt.vpipe.env import (
 )
 from sglang.srt.vpipe.mlp import (
     fd_conditional_mlp_full_graph,
-)
-from sglang.srt.vpipe.mlp_compact import (
-    _compact_capacity,
 )
 from sglang.srt.vpipe.coverage import (
     record_eager_skip_decode_layer_call,
@@ -74,12 +68,9 @@ from sglang.srt.vpipe.common import (
     full_graph_prefill_fallback_min_project,
 )
 from sglang.srt.vpipe.config import (
-    full_graph_compact_config,
-    full_graph_compact_o_proj_config,
     full_graph_defer_project_kv_enabled,
     full_graph_forced_all_run_fastpath_enabled,
     full_graph_forced_all_run_production_attention_enabled,
-    full_graph_mapped_decode_attention_enabled,
     full_graph_masked_decode_attention_enabled,
     full_graph_prefill_grouped_mlp_enabled,
 )
@@ -154,36 +145,13 @@ def fd_execute_prepared_layer_route_full_graph(
         forward_batch.fd_full_graph_attention_row_count = None
         forward_batch.fd_full_graph_attention_row_map_layer = None
         forward_batch.fd_full_graph_attention_worker_rows = None
-        if full_graph_mapped_decode_attention_enabled():
-            compact_enabled, _, _, multiple = full_graph_compact_config()
-            compact_o_enabled, layer_fractions = (
-                full_graph_compact_o_proj_config()
-            )
-            layer_id = int(getattr(layer.self_attn.attn, "layer_id", -1))
-            fraction = layer_fractions.get(layer_id)
-            rows = int(hidden_states.shape[0])
-            min_rows = full_graph_compact_o_proj_min_rows()
-            worker_rows = (
-                _compact_capacity(rows, fraction, multiple)
-                if fraction is not None
-                else rows
-            )
-            if (
-                compact_enabled
-                and compact_o_enabled
-                and fraction is not None
-                and rows >= min_rows
-                and worker_rows < rows
-            ):
-                from sglang.srt.vpipe.cohort import (
-                    build_row_map,
-                )
-
-                row_map, count = build_row_map(attention_run_mask)
-                forward_batch.fd_full_graph_attention_row_map = row_map
-                forward_batch.fd_full_graph_attention_row_count = count
-                forward_batch.fd_full_graph_attention_row_map_layer = layer_id
-                forward_batch.fd_full_graph_attention_worker_rows = worker_rows
+        # [lane-2 knob cleanup, D-578] The mapped-decode worker-row sizing that
+        # stood here derived its capacity from the compact-o_proj layer
+        # fractions, which are deleted with that body. The feature is off in
+        # every arm we have ever served, and its only consumer (the triton
+        # backend's worker-row path) reads fields this block was the sole
+        # writer of. Rather than leave it silently doing nothing,
+        # validate_full_graph_env now fails closed when the flag is set.
     if force_production_attention:
         forward_batch.fd_full_graph_force_production_attention = True
     try:
