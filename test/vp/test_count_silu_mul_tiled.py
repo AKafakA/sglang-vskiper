@@ -57,11 +57,13 @@ def test_tiled_matches_rowloop_bitwise(dtype, capacity, width, count):
     # rows at/above the count are never written by either launch
     assert torch.isnan(out_tiled[count:].float()).all()
     assert torch.isnan(out_ref[count:].float()).all()
-    # and the value is the fp32 formula, not an approximation
+    # and the value is the silu(gate) * up formula (sanity, NOT the identity
+    # gate: torch.sigmoid and tl.sigmoid differ by ulps; the bit-identity
+    # that matters is against the row-walking kernel above)
     g = gate_up[:count, :width].float()
     u = gate_up[:count, width:].float()
-    expect = (g * torch.sigmoid(g) * u).to(dtype)
-    assert torch.equal(out_tiled[:count], expect)
+    expect = g * torch.sigmoid(g) * u
+    assert torch.allclose(out_tiled[:count].float(), expect, rtol=2e-2, atol=2e-2)
 
 
 def test_count_larger_than_capacity_is_clamped_by_the_grid():
