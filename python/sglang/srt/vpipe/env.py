@@ -130,15 +130,13 @@ FD_ROUTED_QKV_CAPACITY_MULTIPLE_ENV = (
 )
 _VALID_LAYER_POLICIES = frozenset(
     (
+        # 2026-09-08 (D-574): every routed layer runs the count-adaptive binary-cohort
+        # body. The other policies selected the per-layer adapter capacities and the
+        # hand-chosen split at layer 22 -- constants fitted to one dataset's route
+        # distribution that a paired A/B showed bought nothing, so their bodies are gone.
+        # Naming a removed policy now fails closed here instead of silently falling
+        # through to the default body.
         "binary_cohort",
-        "dense_filtered_project",
-        "dual_compact",
-        "filtered",
-        "full_dual",
-        "project_base",
-        "project_filtered_run",
-        "project_filtered_run_compact",
-        "run_base",
     )
 )
 _VALID_EXECUTION_MODES = frozenset(

@@ -31,21 +31,10 @@ from sglang.srt.vpipe.env import (
     _BINARY_COHORT_STATS,
     _PREFILL_FALLBACK,
 )
-from sglang.srt.vpipe.mlp_compact import (
-    _compact_capacity,
-    full_graph_dual_compact_min_rows,
-)
-from sglang.srt.vpipe.mlp_compact import (
-    _bounded_compact_mlp,
-    _mapped_asymmetric_compact_mlp,
-    _mapped_single_compact_branch,
-    _project_filtered_run_compact_mlp,
-)
 from sglang.srt.vpipe.config import (
     full_graph_compact_config,
     full_graph_forced_all_run_fastpath_enabled,
     full_graph_layer_policies,
-    full_graph_virtual_cohort_enabled,
 )
 from sglang.srt.vpipe.mlp_compact import (
     _one_expert_mlp,
@@ -595,141 +584,13 @@ def fd_conditional_mlp_full_graph(
             valid_rows,
         )
 
-    if compact_enabled and rows >= min_rows:
-        policies = full_graph_layer_policies()
-        layer_id = int(getattr(layer, "layer_id", -1))
-        policy = policies.get(layer_id)
-        if policy is not None:
-            policy_name, run_fraction, project_fraction = policy
-            if policy_name == "full_dual":
-                return _full_dual_mlp(
-                    layer, proj, hidden_states, route_weights, run_mask
-                )
-            if policy_name == "dense_filtered_project":
-                return _dense_filtered_project_mlp(
-                    layer, proj, hidden_states, route_weights, run_mask
-                )
-            if policy_name == "project_filtered_run":
-                return _project_filtered_run_mlp(
-                    layer, proj, hidden_states, route_weights, run_mask
-                )
-            if policy_name == "project_filtered_run_compact":
-                if rows < int(project_fraction):
-                    return _project_filtered_run_mlp(
-                        layer, proj, hidden_states, route_weights, run_mask
-                    )
-                return _project_filtered_run_compact_mlp(
-                    layer,
-                    proj,
-                    hidden_states,
-                    route_weights,
-                    run_mask,
-                    capacity=_compact_capacity(
-                        rows, float(run_fraction), multiple
-                    ),
-                )
-            if policy_name == "project_base":
-                capacity = _compact_capacity(
-                    rows, float(run_fraction), multiple
-                )
-                output, run_overflow = _mapped_project_base_mlp(
-                    layer,
-                    proj,
-                    hidden_states,
-                    route_weights,
-                    run_mask,
-                    capacity=capacity,
-                    valid_rows=valid_rows,
-                )
-                if compact_stats is not None:
-                    valid_count = (
-                        valid_rows.sum(dtype=torch.int64)
-                        if valid_rows is not None
-                        else torch.tensor(
-                            rows, dtype=torch.int64, device=hidden_states.device
-                        )
-                    )
-                    compact_stats.append(
-                        torch.stack(
-                            (
-                                valid_count,
-                                run_overflow,
-                                torch.zeros_like(run_overflow),
-                            )
-                        )
-                    )
-                return output
-            if policy_name == "run_base":
-                capacity = _compact_capacity(
-                    rows, float(project_fraction), multiple
-                )
-                output, project_overflow = _mapped_run_base_mlp(
-                    layer,
-                    proj,
-                    hidden_states,
-                    route_weights,
-                    run_mask,
-                    capacity=capacity,
-                    valid_rows=valid_rows,
-                )
-                if compact_stats is not None:
-                    valid_count = (
-                        valid_rows.sum(dtype=torch.int64)
-                        if valid_rows is not None
-                        else torch.tensor(
-                            rows, dtype=torch.int64, device=hidden_states.device
-                        )
-                    )
-                    compact_stats.append(
-                        torch.stack(
-                            (
-                                valid_count,
-                                torch.zeros_like(project_overflow),
-                                project_overflow,
-                            )
-                        )
-                    )
-                return output
-            if policy_name == "dual_compact":
-                if rows < full_graph_dual_compact_min_rows():
-                    return _project_filtered_run_mlp(
-                        layer, proj, hidden_states, route_weights, run_mask
-                    )
-                if valid_rows is None:
-                    valid_rows = torch.ones(
-                        rows, dtype=torch.bool, device=hidden_states.device
-                    )
-                run_active = run_mask.squeeze(-1) & valid_rows
-                project_active = (~run_mask.squeeze(-1)) & valid_rows
-                return _mapped_asymmetric_compact_mlp(
-                    layer,
-                    proj,
-                    hidden_states,
-                    route_weights,
-                    run_active,
-                    project_active,
-                    run_capacity=_compact_capacity(
-                        rows, float(run_fraction), multiple
-                    ),
-                    project_capacity=_compact_capacity(
-                        rows, float(project_fraction), multiple
-                    ),
-                    compact_stats=compact_stats,
-                )
-        elif not policies:
-            capacity = _compact_capacity(rows, fraction, multiple)
-            if capacity < rows:
-                return _bounded_compact_mlp(
-                    layer,
-                    proj,
-                    hidden_states,
-                    route_weights,
-                    run_mask,
-                    capacity=capacity,
-                    valid_rows=valid_rows,
-                    compact_stats=compact_stats,
-                )
-
+    # Layer bodies (2026-09-08, D-574 simplification): every routed layer runs the
+    # count-adaptive binary-cohort body, dispatched above. The per-layer policy string
+    # (seven adapter capacities + a hand-chosen split at layer 22) and the compact /
+    # fixed-capacity / fused-MoE-overflow bodies it selected are DELETED: an A/B against
+    # the deployed posture (coqa and gsm8k, knee + overload, both arms simultaneous,
+    # GR-1a/GR-2 PASS) showed the constants bought nothing, and they were fitted to one
+    # dataset's route distribution. What remains below is the no-policy default body.
     dense_w1 = layer.mlp.gate_up_proj.weight.unsqueeze(0)
     dense_w2 = layer.mlp.down_proj.weight.unsqueeze(0)
     project_w1 = proj._fused_gate_down_weight().unsqueeze(0)
@@ -751,73 +612,6 @@ def fd_conditional_mlp_full_graph(
     # Filtered MoE output is unspecified for inactive rows. Select the active
     # branch on device instead of relying on either kernel to zero its tail.
     return torch.where(run_mask, run_output, project_output)
-def _mapped_project_base_mlp(
-    layer: Any,
-    proj: Any,
-    hidden_states: torch.Tensor,
-    route_weights: torch.Tensor,
-    run_mask: torch.Tensor,
-    *,
-    capacity: int,
-    valid_rows: Optional[torch.Tensor] = None,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Run a full cheap PROJECT base and overwrite exact compact RUN rows."""
-
-    if valid_rows is None:
-        valid_rows = torch.ones(
-            hidden_states.shape[0], dtype=torch.bool, device=hidden_states.device
-        )
-    output = proj(hidden_states) * (1.0 - route_weights)
-    run_active = run_mask.squeeze(-1) & valid_rows
-    overflow = _mapped_single_compact_branch(
-        layer.mlp,
-        hidden_states,
-        route_weights,
-        run_active,
-        output,
-        capacity=capacity,
-        overflow_w1=layer.mlp.gate_up_proj.weight.unsqueeze(0),
-        overflow_w2=layer.mlp.down_proj.weight.unsqueeze(0),
-    )
-    return output, overflow
-def _mapped_run_base_mlp(
-    layer: Any,
-    proj: Any,
-    hidden_states: torch.Tensor,
-    route_weights: torch.Tensor,
-    run_mask: torch.Tensor,
-    *,
-    capacity: int,
-    valid_rows: Optional[torch.Tensor] = None,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Run a full dense base and overwrite exact compact PROJECT rows.
-
-    Invalid (padded) rows are zeroed like every other body (full_dual at
-    fd_conditional_mlp_full_graph, binary_cohort by construction): without
-    this the dense base left mlp(h_pad) * w_pad on padded rows, the one body
-    whose padded rows differed.
-    """
-
-    padded_rows = valid_rows
-    if valid_rows is None:
-        valid_rows = torch.ones(
-            hidden_states.shape[0], dtype=torch.bool, device=hidden_states.device
-        )
-    output = layer.mlp(hidden_states) * route_weights
-    if padded_rows is not None:
-        output.masked_fill_(~padded_rows.view(-1, 1), 0)
-    project_active = (~run_mask.squeeze(-1)) & valid_rows
-    overflow = _mapped_single_compact_branch(
-        proj,
-        hidden_states,
-        1.0 - route_weights,
-        project_active,
-        output,
-        capacity=capacity,
-        overflow_w1=proj._fused_gate_down_weight().unsqueeze(0),
-        overflow_w2=proj.up_proj.weight.unsqueeze(0),
-    )
-    return output, overflow
 def _full_dual_mlp(
     layer: Any,
     proj: Any,
@@ -852,37 +646,5 @@ def _dense_filtered_project_mlp(
         proj.up_proj.weight.unsqueeze(0),
         1.0 - route_weights,
         ~run_mask,
-    )
-    return torch.where(run_mask, run_output, project_output)
-def _project_filtered_run_mlp(
-    layer: Any,
-    proj: Any,
-    hidden_states: torch.Tensor,
-    route_weights: torch.Tensor,
-    run_mask: torch.Tensor,
-) -> torch.Tensor:
-    """Run PROJECT for every row and filter only the sparse dense correction."""
-
-    if full_graph_virtual_cohort_enabled() and hidden_states.is_cuda:
-        output = proj(hidden_states) * (1.0 - route_weights)
-        _mapped_single_compact_branch(
-            layer.mlp,
-            hidden_states,
-            route_weights,
-            run_mask.squeeze(-1),
-            output,
-            capacity=int(hidden_states.shape[0]),
-            overflow_w1=layer.mlp.gate_up_proj.weight.unsqueeze(0),
-            overflow_w2=layer.mlp.down_proj.weight.unsqueeze(0),
-        )
-        return output
-
-    project_output = proj(hidden_states) * (1.0 - route_weights)
-    run_output = _one_expert_mlp(
-        hidden_states,
-        layer.mlp.gate_up_proj.weight.unsqueeze(0),
-        layer.mlp.down_proj.weight.unsqueeze(0),
-        route_weights,
-        run_mask,
     )
     return torch.where(run_mask, run_output, project_output)
