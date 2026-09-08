@@ -5,9 +5,9 @@ export SGLANG_FD_ACTIVE_PHASES=both
 export SGLANG_FD_WEIGHTS=/rds/user/wd312/hpc-work/llm/vpipe-csd3/serving/flexidepth_router_weights.pt
 export SGLANG_FD_EXECUTION_MODE=full_graph
 export SGLANG_FD_FULL_GRAPH_COMPACT=1
-export SGLANG_FD_FULL_GRAPH_COMPACT_CAPACITY_FRACTION=0.625
-export SGLANG_FD_FULL_GRAPH_COMPACT_CAPACITY_MULTIPLE=16
-export SGLANG_FD_FULL_GRAPH_COMPACT_MIN_ROWS=32
+# [D-578] the three compact capacity knobs are gone: the multiple and the
+# accounting fraction are internal constants at these exact values, and the
+# min-row count no longer reaches any code. Setting them now fails the boot.
 export SGLANG_FD_FULL_GRAPH_COMPACT_PHASES=prefill
 export SGLANG_FD_FULL_GRAPH_DEVICE_ROUTE_TAPE=1
 export SGLANG_FD_FULL_GRAPH_ROUTE_ACCOUNTING=1

@@ -414,7 +414,7 @@ def attach_vp_model(model, config):
         ),
         persistent=False,
     )
-    low_row_policy, _ = full_graph_low_row_policy()
+    low_row_policy = full_graph_low_row_policy()
     model.register_buffer(
         "_fd_full_graph_low_row_counters",
         (
@@ -702,7 +702,7 @@ def vp_runtime_attestation(lm) -> dict:
             "dispatches": dispatches,
             "graph_rows": graph_rows,
             "logical_layer_rows": logical_layer_rows,
-            "body": "full_dual",
+            "body": "native_dense",
         }
     digest_counters = getattr(
         lm.model, "_fd_full_graph_route_digest_counters", None

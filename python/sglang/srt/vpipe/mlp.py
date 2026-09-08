@@ -435,7 +435,7 @@ def fd_conditional_mlp_full_graph(
         # rows even with the low-row body in place). Below the low-row bound
         # decode is weight-bound, so the dense MLP on all rows costs exactly
         # production's MLP; same output (active rows w*MLP, others zero).
-        lr_policy, lr_max_rows = full_graph_low_row_policy()
+        lr_policy = full_graph_low_row_policy()
         # `native_dense` (D-358) must be honoured here too. This test named only
         # `full_dual` because it predates that policy, and when native_dense was
         # added the MAIN dispatch below was widened while this branch was not --
@@ -446,9 +446,7 @@ def fd_conditional_mlp_full_graph(
         # i.e. half the win handed straight back. It also made the attestation
         # lie: /server_info reported `routed_mlp_kernels: model_native_dense_only`
         # with the fused-MoE kernel plainly in the trace.
-        if lr_policy in ("full_dual", "native_dense") and int(
-            hidden_states.shape[0]
-        ) <= lr_max_rows:
+        if lr_policy == "native_dense":
             run_output = layer.mlp(hidden_states) * route_weights
         else:
             run_output = _one_expert_mlp(
@@ -470,24 +468,25 @@ def fd_conditional_mlp_full_graph(
             valid_rows,
         )
 
-    # Lane-2 cut2 (2026-09-02): the low-row `full_dual` body resolves BEFORE
-    # every routed-MLP dispatch, binary_cohort included. Below ~32 rows decode
-    # is weight-bandwidth-bound, so partial-row skipping saves no weight reads
-    # and the count-adaptive / grouped machinery is pure cost (measured on the
-    # CSD3 ladder: +8.5 ms/step at 1-16 rows, 1,142 vs 376 launches). The
-    # dense-both-branches body costs the production MLP plus the small
-    # projector GEMMs. Invalid (padded) rows are zeroed exactly as the
-    # binary-cohort path does. Same env gate as the compact-path low-row body.
+    # `native_dense` (D-358) resolves BEFORE every routed-MLP dispatch,
+    # binary_cohort included: the routed MLP becomes the model's own dense feed
+    # forward at every occupancy, plus the projector, selected by the route
+    # mask. Invalid (padded) rows are zeroed exactly as the binary-cohort path
+    # does.
+    #
+    # [D-582] The `full_dual` variant of this branch, which applied the same
+    # body only BELOW a 128-row bound, is deleted with that bound. It was the
+    # third occupancy threshold in the design, outside the two admission legs,
+    # and the CSD3 duo A/B measured its removal as parity on gsm8k at both the
+    # knee and overload. What justified it -- the count-adaptive machinery
+    # costing ~+8.5 ms/step at 1-16 rows -- is real but confined to ramp-up and
+    # drain, where the knee's p90 occupancy (~178 rows) never sits.
     compact_enabled = full_graph_compact_config()
     compact_enabled = compact_enabled and compact_phase_enabled
     rows = int(hidden_states.shape[0])
-    low_row_policy, low_row_max_rows = full_graph_low_row_policy()
-    # The body needs no compaction, so it is keyed on the policy + rows only
-    # (validation already requires COMPACT=1 with the policy); tying it to the
-    # per-batch compact-phase flag left graph-captured passes on the
-    # fused-MoE fallback (cut2 profile: 11.6 fused_moe launches/step at 4 rows).
-    if low_row_policy in ("full_dual", "native_dense") and rows <= low_row_max_rows:
-        output = _full_dual_mlp(
+    low_row_policy = full_graph_low_row_policy()
+    if low_row_policy == "native_dense":
+        output = _native_dense_mlp(
             layer, proj, hidden_states, route_weights, run_mask
         )
         if valid_rows is not None:
@@ -612,7 +611,7 @@ def fd_conditional_mlp_full_graph(
     # Filtered MoE output is unspecified for inactive rows. Select the active
     # branch on device instead of relying on either kernel to zero its tail.
     return torch.where(run_mask, run_output, project_output)
-def _full_dual_mlp(
+def _native_dense_mlp(
     layer: Any,
     proj: Any,
     hidden_states: torch.Tensor,
