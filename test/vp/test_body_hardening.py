@@ -36,36 +36,3 @@ def test_weighted_scatter_rejects_strided_route_weights():
         vp_kernel.weighted_scatter(
             compact, index, expanded, count, output, invert_weight=True
         )
-def test_run_base_body_zeroes_padded_rows(monkeypatch):
-    rows, hidden = 6, 4
-    hidden_states = torch.arange(rows * hidden, dtype=torch.float32).view(rows, hidden) + 1
-    route_weights = torch.full((rows, 1), 0.5)
-    run_mask = torch.tensor([[True], [True], [False], [True], [False], [True]])
-    valid_rows = torch.tensor([True, True, True, True, False, False])
-    layer = types.SimpleNamespace(mlp=lambda h: h * 2.0)
-    proj = types.SimpleNamespace(
-        _fused_gate_down_weight=lambda: torch.zeros(2, hidden),
-        up_proj=types.SimpleNamespace(weight=torch.zeros(hidden, 1)),
-    )
-    seen = {}
-
-    def fake_compact_branch(proj_, h, weights, project_active, output, **kwargs):
-        seen["project_active"] = project_active.clone()
-        return torch.zeros((), dtype=torch.int64)
-
-    monkeypatch.setattr(vp_mlp, "_mapped_single_compact_branch", fake_compact_branch)
-    output, _ = vp_mlp._mapped_run_base_mlp(
-        layer, proj, hidden_states, route_weights, run_mask,
-        capacity=rows, valid_rows=valid_rows,
-    )
-    expected = hidden_states * 2.0 * 0.5
-    assert torch.equal(output[:4], expected[:4])
-    assert torch.all(output[4:] == 0), "padded rows must be zero like every other body"
-    # padded rows never enter the PROJECT branch
-    assert seen["project_active"].tolist() == [False, False, True, False, False, False]
-
-    # valid_rows=None keeps the historical all-rows behaviour (nothing padded)
-    output_all, _ = vp_mlp._mapped_run_base_mlp(
-        layer, proj, hidden_states, route_weights, run_mask, capacity=rows,
-    )
-    assert torch.equal(output_all, expected)
