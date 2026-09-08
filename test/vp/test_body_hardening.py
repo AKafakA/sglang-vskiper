@@ -3,7 +3,8 @@
 1. ``weighted_scatter`` fails closed on strided route weights: the kernel reads
    ``weights_ptr + dst`` with no stride argument, so a strided 1-D view would be
    consumed silently wrong.
-2. ``_mapped_run_base_mlp`` zeroes invalid (padded) rows like every other body;
+2. (removed 2026-09-08, D-574: `_mapped_run_base_mlp` and the other per-layer
+   capacity bodies were deleted with the layer-policy machinery.)
    the compact PROJECT branch is stubbed so the test runs without Triton/CUDA.
 """
 
@@ -35,8 +36,6 @@ def test_weighted_scatter_rejects_strided_route_weights():
         vp_kernel.weighted_scatter(
             compact, index, expanded, count, output, invert_weight=True
         )
-
-
 def test_run_base_body_zeroes_padded_rows(monkeypatch):
     rows, hidden = 6, 4
     hidden_states = torch.arange(rows * hidden, dtype=torch.float32).view(rows, hidden) + 1
