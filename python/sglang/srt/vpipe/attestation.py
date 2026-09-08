@@ -23,6 +23,8 @@ from sglang.srt.vpipe.common import (
     regime_switch_config,
 )
 from sglang.srt.vpipe.env import (
+    COMPACT_ACCOUNTING_CAPACITY_FRACTION,
+    COMPACT_CAPACITY_MULTIPLE,
     FD_CONDITIONAL_BRANCH_COUNTERS_ENV,
     FD_CONDITIONAL_GRAPH_ENV,
     FD_CONDITIONAL_MAX_ROWS_ENV,
@@ -50,9 +52,6 @@ from sglang.srt.vpipe.skipper import (
     route_digest_uses_logical_request_ids,
 )
 from sglang.srt.vpipe.common import (
-    full_graph_compact_o_proj_min_rows,
-)
-from sglang.srt.vpipe.common import (
     full_graph_compact_phases,
     full_graph_gate_mode,
     full_graph_low_row_policy,
@@ -67,7 +66,6 @@ from sglang.srt.vpipe.config import (
     full_graph_batched_commit_enabled,
     full_graph_commit_overlap_enabled,
     full_graph_compact_config,
-    full_graph_compact_o_proj_config,
     full_graph_defer_project_kv_enabled,
     full_graph_device_route_digest_enabled,
     full_graph_device_route_tape_enabled,
@@ -77,7 +75,6 @@ from sglang.srt.vpipe.config import (
     full_graph_fused_evidence_enabled,
     full_graph_layer_counters_enabled,
     full_graph_layer_policies,
-    full_graph_mapped_decode_attention_enabled,
     full_graph_masked_decode_attention_enabled,
     full_graph_prefill_grouped_mlp_enabled,
     full_graph_route_accounting_enabled,
@@ -89,7 +86,6 @@ from sglang.srt.vpipe.mlp_compact import (
     full_graph_dual_compact_min_rows,
 )
 from sglang.srt.vpipe.common import (
-    full_graph_compact_q_proj_enabled,
     full_graph_compact_routed_qkv_enabled,
 )
 from sglang.srt.vpipe.coverage import (
@@ -517,7 +513,7 @@ def full_graph_compact_evidence_specs(
     """Encode compact accounting without materializing per-layer tensors."""
 
     values = os.environ if environ is None else environ
-    compact_enabled, _, default_fraction, _ = full_graph_compact_config(values)
+    compact_enabled = full_graph_compact_config(values)
     policies = full_graph_layer_policies(values)
     specs: list[tuple[float, float, float]] = []
     for layer_id in loaded_layers:
@@ -539,8 +535,8 @@ def full_graph_compact_evidence_specs(
                 project_fraction = float(project_value)
         elif compact_enabled and not policies:
             mode = 2.0
-            run_fraction = default_fraction
-            project_fraction = default_fraction
+            run_fraction = COMPACT_ACCOUNTING_CAPACITY_FRACTION
+            project_fraction = COMPACT_ACCOUNTING_CAPACITY_FRACTION
         specs.append((mode, run_fraction, project_fraction))
     return specs
 def record_model_runner_dispatch(
@@ -646,9 +642,7 @@ def model_runner_runtime_attestation(
                 * loaded_layer_count
             ),
         )
-    compact_enabled, compact_min_rows, compact_fraction, compact_multiple = (
-        full_graph_compact_config()
-    )
+    compact_enabled = full_graph_compact_config()
     low_row_policy, low_row_max_rows = full_graph_low_row_policy()
     virtual_cohort = full_graph_virtual_cohort_enabled()
     weighted_scatter = full_graph_weighted_scatter_enabled()
@@ -676,20 +670,6 @@ def model_runner_runtime_attestation(
     _masked_decode_effective = (
         masked_decode_attention
         and _masked_decode_active_backend == _MASKED_DECODE_REQUIRED_BACKEND
-    )
-    mapped_decode_attention_configured = (
-        full_graph_mapped_decode_attention_enabled()
-    )
-    mapped_decode_attention = (
-        mapped_decode_attention_configured and not forced_all_run_fastpath
-    )
-    compact_o_proj_configured, compact_o_layers = (
-        full_graph_compact_o_proj_config()
-    )
-    compact_o_proj = compact_o_proj_configured and not forced_all_run_fastpath
-    compact_o_min_rows = full_graph_compact_o_proj_min_rows()
-    compact_q_proj = (
-        full_graph_compact_q_proj_enabled() and not forced_all_run_fastpath
     )
     compact_phases = sorted(full_graph_compact_phases())
     route_accounting_enabled = full_graph_route_accounting_enabled()
@@ -858,7 +838,7 @@ def model_runner_runtime_attestation(
             ),
         },
         "device_resident_routes": True,
-        "full_batch_attention": not mapped_decode_attention,
+        "full_batch_attention": True,
         "kv_complete": deferred_project_kv_semantic,
         "route_accounting_enabled": route_accounting_enabled,
         "device_route_tape": {
@@ -1006,9 +986,10 @@ def model_runner_runtime_attestation(
         "bounded_compact": {
             "enabled": compact_enabled,
             "active_phases": compact_phases,
-            "min_rows": compact_min_rows,
-            "capacity_fraction": compact_fraction,
-            "capacity_multiple": compact_multiple,
+            # [D-578] These three were env knobs; they are now fixed
+            # constants (accounting/allocation, never policy).
+            "capacity_fraction": COMPACT_ACCOUNTING_CAPACITY_FRACTION,
+            "capacity_multiple": COMPACT_CAPACITY_MULTIPLE,
             "dual_compact_min_rows": full_graph_dual_compact_min_rows(),
             # Honest-evidence flag (it3/it4 review finding): with a
             # per-bucket threshold active, sub-threshold passes run the
@@ -1059,47 +1040,10 @@ def model_runner_runtime_attestation(
             ),
             "jump_row_output": "zero" if _masked_decode_effective else "unmasked",
         },
-        "mapped_decode_attention": {
-            "enabled": mapped_decode_attention,
-            "configured": mapped_decode_attention_configured,
-            "mapping": "device_row_map",
-            "launch_topology": "fixed_workers_with_exact_strided_overflow",
-            "kv_write": "complete",
-            "jump_row_attention_reads": (
-                "suppressed" if mapped_decode_attention else "full_grid_masked"
-            ),
-        },
-        "compact_o_projection": {
-            "enabled": compact_o_proj,
-            "configured": compact_o_proj_configured,
-            "min_rows": compact_o_min_rows,
-            "layers": {
-                str(layer_id): {"capacity_fraction": fraction}
-                for layer_id, fraction in sorted(compact_o_layers.items())
-            },
-            "common_lane": "fixed_capacity_cublas",
-            "overflow_lane": "mapped_exact",
-            "jump_row_projection": "suppressed" if compact_o_proj else "full",
-        },
         "project_input_fusion": {
             "enabled": fdvp_fused_project_input_enabled(),
             "shared_storage": (
                 fdvp_fused_project_input_shared_storage_enabled()
-            ),
-        },
-        "split_qkv_projection": {
-            "enabled": compact_q_proj,
-            "min_rows": compact_o_min_rows,
-            "layers": {
-                str(layer_id): {"capacity_fraction": fraction}
-                for layer_id, fraction in sorted(compact_o_layers.items())
-            },
-            "kv_lane": "full_own_weight_cublas",
-            "q_common_lane": "fixed_capacity_cublas",
-            "q_overflow_lane": "mapped_exact",
-            "shared_output_row_map": compact_q_proj,
-            "jump_row_q_projection": (
-                "suppressed" if compact_q_proj else "full"
             ),
         },
         "per_layer_route_counters_enabled": layer_counters_enabled,

@@ -19,6 +19,7 @@ from sglang.srt.vpipe.common import (
     full_graph_decode_enabled,
 )
 from sglang.srt.vpipe.env import (
+    COMPACT_CAPACITY_MULTIPLE,
     FD_EXECUTION_FULL_GRAPH,
 )
 from sglang.srt.vpipe.common import (
@@ -446,7 +447,6 @@ def finalize_full_graph_batch(
             accumulate_fused_route_evidence,
         )
 
-        _, compact_min_rows, _, compact_multiple = full_graph_compact_config()
         accumulate_fused_route_evidence(
             actions=routes,
             valid_rows=device_tape.valid_rows,
@@ -460,11 +460,12 @@ def finalize_full_graph_batch(
             layer_counters=layer_route_counters,
             route_digest_counters=route_digest_counters,
             readiness_counters=inline_kv_readiness_counters,
-            compact_active=(
-                forward_batch.fd_full_graph_compact_phase_enabled
-                and routes.shape[1] >= compact_min_rows
-            ),
-            capacity_multiple=compact_multiple,
+            # [D-578] compact_active no longer carries a min-row condition:
+            # after D-574 the routed body compacts whenever compaction is on,
+            # so gating the counter on a row threshold reported a pass as
+            # uncompacted that in fact compacted.
+            compact_active=forward_batch.fd_full_graph_compact_phase_enabled,
+            capacity_multiple=COMPACT_CAPACITY_MULTIPLE,
         )
         return
     if route_digest_counters is not None:
@@ -502,13 +503,9 @@ def finalize_full_graph_batch(
     if route_counters.numel() >= 6:
         if device_tape is not None:
             compact_specs = device_tape.compact_evidence_specs
-            compact_enabled, compact_min_rows, _, compact_multiple = (
-                full_graph_compact_config()
-            )
             compact_active = (
-                compact_enabled
+                full_graph_compact_config()
                 and forward_batch.fd_full_graph_compact_phase_enabled
-                and routes.shape[1] >= compact_min_rows
             )
             if compact_specs is None and compact_active:
                 raise RuntimeError(
@@ -521,7 +518,7 @@ def finalize_full_graph_batch(
                         valid_rows,
                         compact_specs,
                         compact_active=compact_active,
-                        capacity_multiple=compact_multiple,
+                        capacity_multiple=COMPACT_CAPACITY_MULTIPLE,
                     )
                 )
         else:

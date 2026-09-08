@@ -23,12 +23,7 @@ import msgspec
 import math
 import os
 from sglang.srt.vpipe.env import (
-    FD_COMPACT_CAPACITY_FRACTION_ENV,
-    FD_COMPACT_CAPACITY_MULTIPLE_ENV,
     FD_COMPACT_ENABLED_ENV,
-    FD_COMPACT_MIN_ROWS_ENV,
-    FD_COMPACT_O_PROJ_ENV,
-    FD_COMPACT_O_PROJ_LAYERS_ENV,
     FD_BATCHED_COMMIT_ENV,
     FD_COMMIT_OVERLAP_ENV,
     FD_DEFER_PROJECT_KV_ENV,
@@ -41,7 +36,6 @@ from sglang.srt.vpipe.env import (
     FD_FUSED_EVIDENCE_ENV,
     FD_LAYER_COUNTERS_ENV,
     FD_LAYER_POLICIES_ENV,
-    FD_MAPPED_DECODE_ATTN_ENV,
     FD_MASKED_DECODE_ATTN_ENV,
     FD_PREFILL_GROUPED_MLP_ENV,
     FD_ROUTE_ACCOUNTING_ENV,
@@ -243,8 +237,19 @@ def full_graph_virtual_cohort_enabled(
     return _strict_bool(values, FD_VIRTUAL_COHORT_ENV)
 def full_graph_compact_config(
     environ: Optional[Mapping[str, str]] = None,
-) -> tuple[bool, int, float, int]:
-    """Return the bounded-compaction policy and fail closed on invalid values."""
+) -> bool:
+    """Return whether the routed bodies compact, failing closed on a bad value.
+
+    [lane-2 knob cleanup, D-578] This used to return a four-tuple carrying a
+    capacity fraction, a minimum row count and a rounding multiple. After D-574
+    deleted the capacity-based bodies, the fraction and the min-row count no
+    longer reached any computation — they survived only as inputs to attestation
+    counters, i.e. they changed what we *reported* about a pass, never what the
+    pass did. Reporting constants that look like policy knobs are exactly what
+    the cleanup is removing, so both are gone and the rounding multiple is now
+    the module constant ``COMPACT_CAPACITY_MULTIPLE`` (an allocation
+    granularity, not a policy). Compaction itself stays a single on/off.
+    """
 
     values = os.environ if environ is None else environ
     enabled_value = str(values.get(FD_COMPACT_ENABLED_ENV, "0")).strip().lower()
@@ -259,28 +264,7 @@ def full_graph_compact_config(
         raise ValueError(
             f"{FD_COMPACT_ENABLED_ENV} must be a boolean value"
         )
-    enabled = enabled_value in true_values
-    try:
-        min_rows = int(values.get(FD_COMPACT_MIN_ROWS_ENV, "256"))
-        capacity_fraction = float(
-            values.get(FD_COMPACT_CAPACITY_FRACTION_ENV, "0.625")
-        )
-        capacity_multiple = int(
-            values.get(FD_COMPACT_CAPACITY_MULTIPLE_ENV, "16")
-        )
-    except (TypeError, ValueError) as error:
-        raise ValueError(
-            "invalid FlexiDepth full-graph compact configuration"
-        ) from error
-    if min_rows <= 0:
-        raise ValueError(f"{FD_COMPACT_MIN_ROWS_ENV} must be positive")
-    if not 0.0 < capacity_fraction < 1.0:
-        raise ValueError(
-            f"{FD_COMPACT_CAPACITY_FRACTION_ENV} must be in (0, 1)"
-        )
-    if capacity_multiple <= 0:
-        raise ValueError(f"{FD_COMPACT_CAPACITY_MULTIPLE_ENV} must be positive")
-    return enabled, min_rows, capacity_fraction, capacity_multiple
+    return enabled_value in true_values
 def full_graph_scheduler_convergence_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
@@ -343,61 +327,3 @@ def full_graph_masked_decode_attention_enabled(
 
     values = os.environ if environ is None else environ
     return _strict_bool(values, FD_MASKED_DECODE_ATTN_ENV)
-def full_graph_compact_o_proj_config(
-    environ: Optional[Mapping[str, str]] = None,
-) -> tuple[bool, dict[int, float]]:
-    """Return exact compact output-projection capacities by layer."""
-
-    values = os.environ if environ is None else environ
-    raw_enabled = str(values.get(FD_COMPACT_O_PROJ_ENV, "0")).strip().lower()
-    if raw_enabled in {"1", "true", "yes", "on"}:
-        enabled = True
-    elif raw_enabled in {"0", "false", "no", "off", ""}:
-        enabled = False
-    else:
-        raise ValueError(f"{FD_COMPACT_O_PROJ_ENV} must be a boolean value")
-
-    raw_layers = str(values.get(FD_COMPACT_O_PROJ_LAYERS_ENV, "") or "").strip()
-    layers: dict[int, float] = {}
-    if raw_layers:
-        for entry in raw_layers.split(","):
-            fields = [field.strip() for field in entry.split(":")]
-            if len(fields) != 2:
-                raise ValueError(
-                    f"invalid {FD_COMPACT_O_PROJ_LAYERS_ENV} entry: {entry!r}"
-                )
-            try:
-                layer_id = int(fields[0])
-                fraction = float(fields[1])
-            except ValueError as error:
-                raise ValueError(
-                    f"invalid {FD_COMPACT_O_PROJ_LAYERS_ENV} entry: {entry!r}"
-                ) from error
-            if layer_id < 0 or layer_id in layers:
-                raise ValueError(
-                    f"duplicate or negative layer in "
-                    f"{FD_COMPACT_O_PROJ_LAYERS_ENV}: {layer_id}"
-                )
-            if not 0.0 < fraction < 1.0:
-                raise ValueError(
-                    f"capacity in {FD_COMPACT_O_PROJ_LAYERS_ENV} must be in (0, 1)"
-                )
-            layers[layer_id] = fraction
-    if enabled and not layers:
-        raise ValueError(
-            f"{FD_COMPACT_O_PROJ_ENV}=1 requires "
-            f"{FD_COMPACT_O_PROJ_LAYERS_ENV}"
-        )
-    if not enabled and layers:
-        raise ValueError(
-            f"{FD_COMPACT_O_PROJ_LAYERS_ENV} requires "
-            f"{FD_COMPACT_O_PROJ_ENV}=1"
-        )
-    return enabled, layers
-def full_graph_mapped_decode_attention_enabled(
-    environ: Optional[Mapping[str, str]] = None,
-) -> bool:
-    """Return whether sparse RUN rows use persistent virtual-row attention."""
-
-    values = os.environ if environ is None else environ
-    return _strict_bool(values, FD_MAPPED_DECODE_ATTN_ENV)

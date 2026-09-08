@@ -478,7 +478,7 @@ def fd_conditional_mlp_full_graph(
     # dense-both-branches body costs the production MLP plus the small
     # projector GEMMs. Invalid (padded) rows are zeroed exactly as the
     # binary-cohort path does. Same env gate as the compact-path low-row body.
-    compact_enabled, min_rows, fraction, multiple = full_graph_compact_config()
+    compact_enabled = full_graph_compact_config()
     compact_enabled = compact_enabled and compact_phase_enabled
     rows = int(hidden_states.shape[0])
     low_row_policy, low_row_max_rows = full_graph_low_row_policy()
