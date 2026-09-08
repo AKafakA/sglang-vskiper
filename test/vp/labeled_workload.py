@@ -57,6 +57,9 @@ EXTENDED_DECODE_DATASETS = (
     "lca_libgen_official",
     "longwriter6k",
     "livecodebench",
+    # Owner D-570 (2026-09-08): BBH chain-of-thought (lm-eval bbh_cot_fewshot,
+    # 3 fixed CoT shots per task, exact match) = the second win-regime row.
+    "bbh_cot",
 )
 PREFILL_DATASETS = (
     "mmlu",
@@ -158,6 +161,7 @@ DEFAULT_DECODE_WEIGHTS = {
     "lca_libgen_official": 1.0,
     "longwriter6k": 1.0,
     "livecodebench": 1.0,
+    "bbh_cot": 1.0,
 }
 DEFAULT_PREFILL_WEIGHTS = {
     "mmlu": 1.0 / 3.0,
@@ -342,6 +346,20 @@ DATASET_PROTOCOLS: dict[str, dict[str, Any]] = {
     "mmlu_pro_cot": {
         "id": "lm-eval-0.4.9.1:mmlu_pro-cot:5shot-cot-chat",
         "source": "TIGER-Lab/MMLU-Pro",
+        "evaluation_split": "test",
+        "quality_semantics": "paper_exact",
+        "task_reference_max_output_len": 1024,
+    },
+    "bbh_cot": {
+        # lm_eval/tasks/bbh/cot_fewshot/*.yaml (v4.0, 27 tasks; the task files
+        # are shipped verbatim under test/vp/bbh_cot_fewshot/): description +
+        # 3 FIXED CoT shots (fewshot_config.samples, sampler first_n) rendered
+        # as user/assistant turns, doc_to_text "Q: {{input}}\nA: Let's think
+        # step by step.\n", until ["</s>", "Q", "\n\n"], filter regex
+        # "(?<=the answer is )(.*)(?=.)" take_first, exact_match on the
+        # target; max_gen_toks 1024.
+        "id": "lm-eval-0.4.9.1:bbh_cot_fewshot-v4:3shot-fixed-multiturn",
+        "source": "SaylorTwift/bbh:27-tasks",
         "evaluation_split": "test",
         "quality_semantics": "paper_exact",
         "task_reference_max_output_len": 1024,
@@ -1034,6 +1052,95 @@ def load_ifeval(limit: int) -> list[WorkloadItem]:
     return items
 
 
+BBH_COT_TASKS = (
+    "boolean_expressions", "causal_judgement", "date_understanding",
+    "disambiguation_qa", "dyck_languages", "formal_fallacies", "geometric_shapes",
+    "hyperbaton", "logical_deduction_five_objects", "logical_deduction_seven_objects",
+    "logical_deduction_three_objects", "movie_recommendation", "multistep_arithmetic_two",
+    "navigate", "object_counting", "penguins_in_a_table", "reasoning_about_colored_objects",
+    "ruin_names", "salient_translation_error_detection", "snarks", "sports_understanding",
+    "temporal_sequences", "tracking_shuffled_objects_five_objects",
+    "tracking_shuffled_objects_seven_objects", "tracking_shuffled_objects_three_objects",
+    "web_of_lies", "word_sorting",
+)
+
+
+def _bbh_cot_task_spec(task: str) -> dict[str, Any]:
+    """The lm-eval cot_fewshot task file, verbatim (description, doc_to_text,
+    the three fixed CoT shots)."""
+    import yaml
+
+    path = Path(__file__).resolve().parent / "bbh_cot_fewshot" / f"{task}.yaml"
+    spec = yaml.safe_load(path.read_text())
+    shots = spec["fewshot_config"]["samples"]
+    if spec["fewshot_config"].get("sampler") != "first_n" or len(shots) != 3:
+        raise ValueError(f"bbh_cot task {task}: expected 3 first_n CoT shots")
+    if spec["doc_to_text"] != "Q: {{input}}\nA: Let's think step by step.\n":
+        raise ValueError(f"bbh_cot task {task}: unexpected doc_to_text")
+    return spec
+
+
+def _bbh_cot_question(text: str) -> str:
+    # doc_to_text of every cot_fewshot task (the trailing newline included)
+    return f"Q: {text}\nA: Let's think step by step.\n"
+
+
+def load_bbh_cot(limit: int) -> list[WorkloadItem]:
+    """BBH chain-of-thought (owner D-570): each task's description + its three
+    fixed lm-eval CoT shots as user/assistant turns, then the question; tasks
+    interleaved round-robin so any prefix of the pool is task-balanced."""
+    import datasets
+
+    protocol = DATASET_PROTOCOLS["bbh_cot"]
+    per_task: list[list[WorkloadItem]] = []
+    for task in BBH_COT_TASKS:
+        spec = _bbh_cot_task_spec(task)
+        rows = datasets.load_dataset("SaylorTwift/bbh", task, split="test")
+        shot_messages: list[dict[str, str]] = []
+        for shot_index, shot in enumerate(spec["fewshot_config"]["samples"]):
+            question = _bbh_cot_question(shot["input"])
+            if shot_index == 0:
+                question = spec["description"] + question
+            shot_messages.extend(
+                [
+                    {"role": "user", "content": question},
+                    {"role": "assistant", "content": shot["target"]},
+                ]
+            )
+        items: list[WorkloadItem] = []
+        for index, row in enumerate(rows):
+            items.append(
+                WorkloadItem(
+                    dataset="bbh_cot",
+                    item_id=f"{task}:test:{index}",
+                    phase="decode",
+                    prompt=[
+                        *shot_messages,
+                        {"role": "user", "content": _bbh_cot_question(row["input"])},
+                    ],
+                    prompt_kind="chat_messages",
+                    reference_output_len=None,
+                    metric="bbh_cot_exact_match",
+                    gold=row["target"],
+                    protocol_id=protocol["id"],
+                    quality_semantics=protocol["quality_semantics"],
+                    task_reference_max_output_len=protocol[
+                        "task_reference_max_output_len"
+                    ],
+                    # lm-eval generation_kwargs.until, verbatim, plus the chat EOS
+                    stop=["</s>", "Q", "\n\n", "<|im_end|>"],
+                    evaluator_data={"task": task, "source_split": "test"},
+                )
+            )
+        per_task.append(items)
+    ordered: list[WorkloadItem] = []
+    for position in range(max(len(items) for items in per_task)):
+        for items in per_task:
+            if position < len(items):
+                ordered.append(items[position])
+    return ordered[:limit]
+
+
 def _coqa_questions(row: dict[str, Any]) -> list[str]:
     questions = row["questions"]
     if isinstance(questions, dict):
@@ -1689,6 +1796,8 @@ def load_dataset_items(
         return load_longbench_qa(dataset, limit, tokenizer, context_length)
     if dataset == "ifeval":
         return load_ifeval(limit)
+    if dataset == "bbh_cot":
+        return load_bbh_cot(limit)
     if dataset == "mmlu_pro":
         return load_mmlu_pro(limit, cot=False)
     if dataset == "mmlu_pro_cot":
@@ -2185,6 +2294,17 @@ def gsm8k_cot_strict_match(prediction: str, gold: str) -> float:
     return float(predicted == expected)
 
 
+def bbh_cot_exact_match(prediction: str, gold: str) -> float:
+    # lm-eval bbh cot_fewshot filter "get-answer": regex
+    # "(?<=the answer is )(.*)(?=.)" (greedy; the lookahead drops the final
+    # character, i.e. the closing period), take_first, then exact_match on the
+    # raw target (no case/punctuation normalisation in the task file).
+    match = re.search(r"(?<=the answer is )(.*)(?=.)", prediction)
+    if match is None:
+        return 0.0
+    return float(match.group(1) == str(gold))
+
+
 def coqa_f1(prediction: str, gold_answers: list[str]) -> float:
     if not gold_answers:
         return 0.0
@@ -2270,6 +2390,8 @@ def score_prediction(
         return gsm8k_strict_match(prediction, str(gold)), "scored"
     if metric == "gsm8k_cot_strict_match":
         return gsm8k_cot_strict_match(prediction, str(gold)), "scored"
+    if metric == "bbh_cot_exact_match":
+        return bbh_cot_exact_match(prediction, str(gold)), "scored"
     if metric == "gsm8k_cot_zeroshot_strict_match":
         # gsm8k-cot-zeroshot.yaml carries the SAME strict-match filter and
         # regexes_to_ignore as gsm8k-cot.yaml; distinct name for traceability.
