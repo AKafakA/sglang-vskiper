@@ -73,13 +73,31 @@ def test_count_larger_than_capacity_is_clamped_by_the_grid():
     # rows of scratch to read).
     from sglang.srt.vpipe import kernel as vp_kernel
 
-    capacity, width = 96, 512
-    gate_up = torch.randn((capacity, 2 * width), device="cuda", dtype=torch.float16)
-    out = torch.full((capacity, width), float("nan"), device="cuda", dtype=torch.float16)
-    count_t = torch.tensor([capacity], device="cuda", dtype=torch.int64)
-    vp_kernel.count_silu_mul(gate_up, count_t, out)
-    torch.cuda.synchronize()
-    assert not torch.isnan(out.float()).any()
+    for capacity, width, count in ((96, 512, 96), (7, 40, 9), (13, 4096, 100)):
+        # capacity not a multiple of block_r (7, 13): the last row tile spans
+        # rows beyond the scratch; the capacity mask must keep them out.
+        gate_up = torch.randn((capacity, 2 * width), device="cuda", dtype=torch.float16)
+        out = torch.full((capacity, width), float("nan"), device="cuda", dtype=torch.float16)
+        count_t = torch.tensor([count], device="cuda", dtype=torch.int64)
+        vp_kernel.count_silu_mul(gate_up, count_t, out)
+        torch.cuda.synchronize()
+        assert not torch.isnan(out.float()).any(), (capacity, width, count)
+        ref = torch.full_like(out, float("nan"))
+        vp_kernel.count_silu_mul_rowloop(gate_up, torch.tensor([capacity], device="cuda"), ref)
+        torch.cuda.synchronize()
+        assert torch.equal(out, ref), (capacity, width, count)
+
+
+def test_rejects_non_power_of_two_blocks():
+    from sglang.srt.vpipe import kernel as vp_kernel
+
+    gate_up = torch.zeros((8, 64), device="cuda", dtype=torch.float16)
+    out = torch.zeros((8, 32), device="cuda", dtype=torch.float16)
+    count_t = torch.tensor([8], device="cuda", dtype=torch.int64)
+    with pytest.raises(ValueError):
+        vp_kernel.count_silu_mul(gate_up, count_t, out, block_r=3)
+    with pytest.raises(ValueError):
+        vp_kernel.count_silu_mul(gate_up, count_t, out, block_i=24)
 
 
 def test_rejects_capacity_mismatch():

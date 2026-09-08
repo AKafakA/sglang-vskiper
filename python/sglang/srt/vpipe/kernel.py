@@ -146,6 +146,7 @@ def _row_kernels():
         gate_up_ptr,
         out_ptr,
         count_ptr,
+        capacity,
         I: tl.constexpr,
         stride_in: tl.constexpr,
         stride_out: tl.constexpr,
@@ -162,20 +163,27 @@ def _row_kernels():
         pid_i = tl.program_id(1)
         count = tl.load(count_ptr)
         row0 = pid_r * BLOCK_R
-        if row0 >= count:
-            return
-        rows = row0 + tl.arange(0, BLOCK_R)
-        cols = pid_i * BLOCK_I + tl.arange(0, BLOCK_I)
-        live = (rows[:, None] < count) & (cols[None, :] < I)
-        in_off = rows[:, None] * stride_in + cols[None, :]
-        gate = tl.load(gate_up_ptr + in_off, mask=live).to(tl.float32)
-        up = tl.load(gate_up_ptr + in_off + I, mask=live).to(tl.float32)
-        silu = gate * tl.sigmoid(gate)
-        tl.store(
-            out_ptr + rows[:, None] * stride_out + cols[None, :],
-            (silu * up).to(out_ptr.dtype.element_ty),
-            mask=live,
-        )
+        # No early `return` inside the runtime condition (Codex review
+        # 2026-09-08: rejected by some Triton versions); the whole body sits
+        # under the condition instead. `capacity` bounds every row so an
+        # out-of-contract count can never read/write past the scratch.
+        if row0 < count:
+            rows = (row0 + tl.arange(0, BLOCK_R)).to(tl.int64)
+            cols = pid_i * BLOCK_I + tl.arange(0, BLOCK_I)
+            live = (
+                (rows[:, None] < count)
+                & (rows[:, None] < capacity)
+                & (cols[None, :] < I)
+            )
+            in_off = rows[:, None] * stride_in + cols[None, :]
+            gate = tl.load(gate_up_ptr + in_off, mask=live).to(tl.float32)
+            up = tl.load(gate_up_ptr + in_off + I, mask=live).to(tl.float32)
+            silu = gate * tl.sigmoid(gate)
+            tl.store(
+                out_ptr + rows[:, None] * stride_out + cols[None, :],
+                (silu * up).to(out_ptr.dtype.element_ty),
+                mask=live,
+            )
 
     return (
         pack_rows_kernel,
@@ -465,12 +473,16 @@ def count_silu_mul(
 
     width = int(output.shape[1])
     block_i = min(block_i, triton.next_power_of_2(width))
+    for name, value in (("block_i", block_i), ("block_r", block_r)):
+        if value <= 0 or value & (value - 1):
+            raise ValueError(f"count_silu_mul {name} must be a power of two, got {value}")
     _row_kernels()[3][
         (triton.cdiv(capacity, block_r), triton.cdiv(width, block_i))
     ](
         gate_up,
         output,
         count,
+        capacity,
         width,
         gate_up.stride(0),
         output.stride(0),
