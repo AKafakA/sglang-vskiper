@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from sglang.srt.vpipe.design import (  # [D-609]
     moe_config_dir,
+    SERVED_CONDITIONAL_GRAPH,
+    SERVED_MASKED_DECODE_ATTENTION,
 )
 
 from typing import Mapping, Sequence
@@ -345,8 +347,8 @@ def full_graph_conditional_graph_enabled(
 ) -> bool:
     """Return whether decode uses sequential device conditional stages."""
 
-    values = os.environ if environ is None else environ
-    value = str(values.get(FD_CONDITIONAL_GRAPH_ENV, "0")).strip().lower()
+    # [D-609] design constant, not an environment read
+    value = str("1" if SERVED_CONDITIONAL_GRAPH else "0").strip().lower()
     if value in {"1", "true", "yes", "on"}:
         return True
     if value in {"0", "false", "no", "off", ""}:

@@ -7,6 +7,10 @@ rather than serve a posture nobody declared.
 
 from __future__ import annotations
 
+from sglang.srt.vpipe.design import (  # [D-609]
+    conditional_graph_helper_path,
+)
+
 from typing import (
     Any,
     Mapping,
@@ -629,7 +633,7 @@ def validate_full_graph_model_configuration(
             raise ValueError(
                 f"{FD_CONDITIONAL_GRAPH_ENV}=1 requires dynamic routing"
             )
-        if not str(values.get(FD_CONDITIONAL_GRAPH_HELPER_ENV, "")).strip():
+        if not str(conditional_graph_helper_path() or "").strip():
             raise ValueError(
                 f"{FD_CONDITIONAL_GRAPH_ENV}=1 requires "
                 f"{FD_CONDITIONAL_GRAPH_HELPER_ENV}"

@@ -10,6 +10,11 @@ lm-level take the ForCausalLM wrapper.
 
 import os
 from functools import lru_cache
+from sglang.srt.vpipe.design import (  # [D-609] design/host paths are code
+    flexidepth_weights_path,
+    served_model_revision,
+    skipper_deployed,
+)
 
 import torch
 
