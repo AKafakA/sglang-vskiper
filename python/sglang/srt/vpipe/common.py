@@ -27,6 +27,7 @@ import json
 import math
 import msgspec
 import signal
+import json as _json
 import os
 import torch
 import torch.nn.functional as F
@@ -287,8 +288,15 @@ def full_graph_low_row_policy(
     reference arms, and it is unbounded by construction.
     """
 
+    # [D-609] "off" IS the design (D-589). The environment may not change it;
+    # an override here is what silently ran full_dual for eighteen hours.
     values = os.environ if environ is None else environ
     policy = str(values.get(FD_LOW_ROW_POLICY_ENV, "off")).strip().lower()
+    if policy != "off" and FD_LOW_ROW_POLICY_ENV in values:
+        raise ValueError(
+            f"{FD_LOW_ROW_POLICY_ENV} is not configurable (D-609): the served "
+            f'design is "off". Got {policy!r}'
+        )
     if policy not in _VALID_LOW_ROW_POLICIES:
         choices = ", ".join(sorted(_VALID_LOW_ROW_POLICIES))
         raise ValueError(
@@ -300,8 +308,10 @@ def full_graph_compact_phases(
 ) -> frozenset[str]:
     """Return request phases allowed to use a calibrated compact policy."""
 
+    # [D-609] The served design compacts in BOTH phases. This defaulted to
+    # "decode", so a clean deployment silently differed from every measured cell.
     values = os.environ if environ is None else environ
-    value = str(values.get(FD_COMPACT_PHASES_ENV, "decode") or "decode")
+    value = str(values.get(FD_COMPACT_PHASES_ENV, "both") or "both")
     value = value.strip().lower()
     if value not in _VALID_ACTIVE_PHASES:
         choices = ", ".join(sorted(_VALID_ACTIVE_PHASES))
@@ -1146,21 +1156,68 @@ def full_graph_skipper_name(
             f"{FULL_GRAPH_SKIPPER_ENV} must be one of {choices}; got {name!r}"
         )
     return name
+# [D-609] THE SERVED DESIGN. Both admission legs, as code.
+#
+# This used to be supplied as JSON in SGLANG_VP_REGIME_SWITCH, and an unset
+# variable meant the switch was OFF -- so a deployment that set nothing silently
+# ran with the mechanism disabled, and a deployment whose variable failed to
+# reach the server was indistinguishable from one where it worked. That is
+# exactly what happened on 2026-09-09: an orchestrator exported a low-row
+# override for eighteen hours of A100 time, every manifest recorded the default,
+# and every output gate passed while the wrong system was measured.
+#
+# The owner's ruling: "remove the knobs and record the decisions and then run it"
+# -- the design lives in the tree. Deploying this tree IS configuring the
+# experiment. There is no variable to fail to apply.
+#
+# Prefill leg: min_tokens 1536 (the lower bound stands; raising it to 3072 was
+# tested and refuted, D-603). NO max_tokens -- the upper gate is deleted (D-596).
+# Decode leg: KV-token hysteresis, prod_allrun below / skip above.
+SERVED_REGIME_SWITCH = {
+    "version": 1,
+    "prefill": {
+        "enabled": True,
+        "min_tokens": 1536,
+        "row_correction_alpha": 0.0,
+        "include_mixed": True,
+        "engagement_min": 0.35,
+        "engagement_probe_every": 64,
+    },
+    "decode": {
+        "enabled": True,
+        "enter_rows": 176,
+        "exit_rows": 144,
+        "low_body": "prod_allrun",
+        "high_body": "skip",
+        "enter_kv_tokens": 200000,
+        "exit_kv_tokens": 160000,
+    },
+}
+
+
 def regime_switch_config(
     environ: Optional[Mapping[str, str]] = None,
 ) -> Optional[RegimeSwitchConfig]:
-    """Resolve the fail-closed regime-switch config from the environment.
+    """Return the served regime-switch design.
 
-    Absent, empty, or ``"off"`` yields ``None`` (switch off = current
-    byte-identical behavior).  Any other value is strict JSON decoded into a
-    :class:`RegimeSwitchConfig` (unknown keys rejected natively) and validated;
-    malformed configs raise ``ValueError`` before serving.
+    [D-609] The design is a CONSTANT, not an environment read. The only value
+    the environment may still carry is the explicit string ``"off"``, which the
+    byte-identical-baseline arm uses to disable the mechanism outright; it cannot
+    change any parameter. An absent variable now yields THE DESIGN, not ``None``
+    -- the reverse of the old behaviour, and the point of the change.
     """
 
     values = os.environ if environ is None else environ
     raw = str(values.get(REGIME_SWITCH_ENV, "") or "").strip()
-    if not raw or raw.lower() == "off":
+    if raw.lower() == "off":
         return None
+    if raw:
+        raise ValueError(
+            f"{REGIME_SWITCH_ENV} may only be unset (= the served design) or "
+            f'"off" (= baseline arm). Configuring the design by environment is '
+            f"forbidden (D-609); it is a constant in vpipe/common.py. Got {raw!r}"
+        )
+    raw = _json.dumps(SERVED_REGIME_SWITCH)
     # Memoized on the raw string: the gate (flexidepth_phase_enabled)
     # consults this ~32-48x per pass, and the config is boot-constant —
     # re-decoding the JSON per call taxed every regime-on pass.
