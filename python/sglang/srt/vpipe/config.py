@@ -18,6 +18,7 @@ from sglang.srt.vpipe.design import (  # [D-609] the design is code
     SERVED_MASKED_DECODE_ATTENTION, SERVED_PREFILL_GROUPED_MLP,
     SERVED_ROUTE_ACCOUNTING, SERVED_ROUTED_LAYERS, SERVED_SCHEDULER_CONVERGENCE,
     SERVED_WEIGHTED_SCATTER, SERVED_DEFER_PROJECT_KV,
+    mechanism, skipper_deployed,
 )
 
 from dataclasses import asdict, dataclass, field
@@ -90,7 +91,7 @@ def full_graph_request_identity_required(
     if full_graph_policy_identity_required(values):
         return True
     # [D-609] design constant, not an environment read
-    digest = "1" if SERVED_DEVICE_ROUTE_DIGEST else "0"
+    digest = "1" if mechanism(SERVED_DEVICE_ROUTE_DIGEST) else "0"
     if digest in {"1", "true", "yes", "on"}:
         return configured_full_graph_skipper_name(values) == (
             FLEXIDEPTH_FULL_GRAPH_SKIPPER
@@ -111,7 +112,7 @@ def full_graph_defer_project_kv_enabled(
     """Return whether PROJECT-row K/V completion runs as graph side work."""
 
     # [D-609] design constant, not an environment read
-    return SERVED_DEFER_PROJECT_KV
+    return mechanism(SERVED_DEFER_PROJECT_KV)
 def full_graph_batched_commit_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
@@ -139,7 +140,7 @@ def full_graph_weighted_scatter_enabled(
     """Return whether compact branches fuse route weighting into scatter."""
 
     # [D-609] design constant, not an environment read
-    return SERVED_WEIGHTED_SCATTER
+    return mechanism(SERVED_WEIGHTED_SCATTER)
 def full_graph_layer_policies(
     environ: Optional[Mapping[str, str]] = None,
 ) -> dict[int, tuple[str, Optional[float], Optional[float]]]:
@@ -150,7 +151,7 @@ def full_graph_layer_policies(
     # silently served ZERO routed layers -- the mechanism off, looking configured.
     return {
         layer: (SERVED_LAYER_POLICY, None, None)
-        for layer in SERVED_ROUTED_LAYERS
+        for layer in (SERVED_ROUTED_LAYERS if skipper_deployed() else ())
     }
     policies = {}
     for entry in raw.split(","):
@@ -239,7 +240,7 @@ def full_graph_prefill_grouped_mlp_enabled(
     """Return whether prefill uses variable-size RUN/PROJECT GEMM cohorts."""
 
     # [D-609] design constant, not an environment read
-    return SERVED_PREFILL_GROUPED_MLP
+    return mechanism(SERVED_PREFILL_GROUPED_MLP)
 def full_graph_virtual_cohort_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
@@ -264,7 +265,7 @@ def full_graph_compact_config(
     """
 
     # [D-609] design constant
-    return SERVED_COMPACT_ENABLED
+    return mechanism(SERVED_COMPACT_ENABLED)
     true_values = {
         "1",
         "true",
@@ -283,12 +284,12 @@ def full_graph_scheduler_convergence_enabled(
     """Return whether scheduler identity and inline K/V readiness are attested."""
 
     # [D-609] design constant, not an environment read
-    return SERVED_SCHEDULER_CONVERGENCE
+    return mechanism(SERVED_SCHEDULER_CONVERGENCE)
 def full_graph_layer_counters_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     # [D-609] design constant
-    value = "1" if SERVED_LAYER_COUNTERS else "0"
+    value = "1" if mechanism(SERVED_LAYER_COUNTERS) else "0"
     if value in {"1", "true", "yes", "on"}:
         return True
     if value in {"0", "false", "no", "off", ""}:
@@ -296,28 +297,28 @@ def full_graph_layer_counters_enabled(
     raise ValueError(f"{FD_LAYER_COUNTERS_ENV} must be a boolean value")
 
     # [D-609] design constant, not an environment read
-    return SERVED_LAYER_COUNTERS
+    return mechanism(SERVED_LAYER_COUNTERS)
 def full_graph_route_accounting_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether route and compact-work counters run inside graph replay."""
 
     # [D-609] design constant, not an environment read
-    return SERVED_ROUTE_ACCOUNTING
+    return mechanism(SERVED_ROUTE_ACCOUNTING)
 def full_graph_device_route_tape_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether routed actions use one graph-stable device tensor."""
 
     # [D-609] design constant, not an environment read
-    return SERVED_DEVICE_ROUTE_TAPE
+    return mechanism(SERVED_DEVICE_ROUTE_TAPE)
 def full_graph_device_route_digest_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether graph replay accumulates a device-only action digest."""
 
     # [D-609] design constant, not an environment read
-    return SERVED_DEVICE_ROUTE_DIGEST
+    return mechanism(SERVED_DEVICE_ROUTE_DIGEST)
 def full_graph_fused_evidence_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
@@ -338,4 +339,4 @@ def full_graph_masked_decode_attention_enabled(
     """Return whether Triton decode attention suppresses JUMP-row reads."""
 
     # [D-609] design constant, not an environment read
-    return SERVED_MASKED_DECODE_ATTENTION
+    return mechanism(SERVED_MASKED_DECODE_ATTENTION)

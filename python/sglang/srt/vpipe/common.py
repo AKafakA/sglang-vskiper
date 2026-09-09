@@ -35,6 +35,7 @@ from sglang.srt.vpipe.design import (  # [D-609] the design is code
     SERVED_FUSED_PROJECT_INPUT,
     SERVED_REGIME_SWITCH,
     active_arm,
+    mechanism,
     skipper_deployed,
 )
 import torch
@@ -1045,7 +1046,7 @@ class RegimeSwitchConfig(
         self.decode.validate()
 def fdvp_fused_project_input_enabled():
     # [D-609] design constant, not an environment read
-    return SERVED_FUSED_PROJECT_INPUT
+    return mechanism(SERVED_FUSED_PROJECT_INPUT)
 def fdvp_fused_project_input_shared_storage_enabled():
     return False  # [D-609] design constant, not an environment read
     if False:

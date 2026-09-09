@@ -14,6 +14,7 @@ from __future__ import annotations
 from sglang.srt.vpipe.design import (  # [D-609]
     moe_config_dir,
     SERVED_CONDITIONAL_GRAPH,
+    mechanism,
     SERVED_MASKED_DECODE_ATTENTION,
 )
 
@@ -351,10 +352,18 @@ def vp_runtime_enabled() -> bool:
 def full_graph_conditional_graph_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
-    """Return whether decode uses sequential device conditional stages."""
+    """Return whether decode uses sequential device conditional stages.
 
-    # [D-609] design constant, not an environment read
-    value = str("1" if SERVED_CONDITIONAL_GRAPH else "0").strip().lower()
+    [D-609] A design constant -- but a DECODE-phase one. The prefill-only arm has no
+    decode phase, so asserting it there makes the arm unservable (validation rejects
+    "conditional graph without decode", correctly). The old arm_env_vpre_binarycohort.sh
+    simply never exported it; that phase-dependence was implicit in the scripts and has
+    to become explicit now that the scripts are gone.
+    """
+
+    value = str(
+        "1" if mechanism(SERVED_CONDITIONAL_GRAPH, decode_only=True) else "0"
+    ).strip().lower()
     if value in {"1", "true", "yes", "on"}:
         return True
     if value in {"0", "false", "no", "off", ""}:
