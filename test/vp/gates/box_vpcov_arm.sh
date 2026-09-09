@@ -32,11 +32,14 @@ rm -rf "$OUT"; mkdir -p "$OUT"
 # which is how eighteen hours ran on a rejected design. The arm goes into the
 # durable file the served path reads, and the design comes from the tree.
 python3 - "$ARM" "$TREE" <<'ARMPY'
-import sys, pathlib
+import importlib.util, pathlib, sys
 arm, tree = sys.argv[1], pathlib.Path(sys.argv[2])
-sys.path.insert(0, str(tree / "python"))
-from sglang.srt.vpipe.design import resolve_arm       # fails closed on an unknown arm
-resolve_arm(arm)
+# design.py is dependency-free by design; load it BY PATH so this works under bare
+# python3 without dragging in the sglang package chain (orjson et al).
+spec = importlib.util.spec_from_file_location(
+    "vpipe_design", tree / "python" / "sglang" / "srt" / "vpipe" / "design.py")
+d = importlib.util.module_from_spec(spec); spec.loader.exec_module(d)
+d.resolve_arm(arm)                                    # fails closed on an unknown arm
 (tree / "deploy").mkdir(exist_ok=True)
 (tree / "deploy" / "active_arm").write_text(arm + "\n")
 print(f"active arm -> {arm}")
