@@ -65,9 +65,6 @@ from sglang.srt.vpipe.env import (
 from sglang.srt.vpipe.executor import (
     fd_layer_forward_full_graph,
 )
-from sglang.srt.vpipe.routing import (
-    full_graph_forced_route,
-)
 from sglang.srt.vpipe.validation import (
     validate_full_graph_model_configuration,
 )
@@ -615,13 +612,6 @@ def vp_runtime_attestation(lm) -> dict:
         flexidepth_state["route_accounting_enabled"] = (
             full_graph_route_accounting_enabled()
         )
-        forced_route = full_graph_forced_route()
-        if forced_route is None:
-            flexidepth_state["forced_route"] = "off"
-        else:
-            flexidepth_state["forced_route"] = (
-                "all_run" if forced_route else "all_project"
-            )
     counters = getattr(lm.model, "_fd_full_graph_route_counters", None)
     if counters is not None:
         values = [int(value) for value in counters.detach().cpu().tolist()]

@@ -75,7 +75,6 @@ from sglang.srt.model_executor.runner_backend_utils.breakable_cuda_graph import 
     is_capturing_breakable_cuda_graph,
 )
 from sglang.srt.vpipe.common import (
-    forced_route_action,
     resolve_full_graph_skipper,
 )
 from sglang.srt.vpipe.env import (
@@ -844,21 +843,6 @@ def all_run_predicate_from_counts(
     if predicate_out.device != counts.device:
         raise ValueError("route counts and predicate must share a device")
     _predicate_from_counts_kernel[(1,)](counts, predicate_out)
-def full_graph_forced_route(
-    environ: Optional[Mapping[str, str]] = None,
-) -> Optional[bool]:
-    """Return a sealed mechanism-control route, or ``None`` for the router."""
-
-    values = os.environ if environ is None else environ
-    value = str(values.get(FD_FORCE_ROUTE_ENV, "off") or "off").strip().lower()
-    if value not in _VALID_FORCED_ROUTES:
-        choices = ", ".join(sorted(_VALID_FORCED_ROUTES))
-        raise ValueError(
-            f"{FD_FORCE_ROUTE_ENV} must be one of {choices}; got {value!r}"
-        )
-    if value == "off":
-        return None
-    return value == "all_run"
 @dataclass(slots=True)
 class FullGraphPreparedLayerRoute:
     """Stable tensors shared by one routed layer's conditional bodies."""
@@ -925,7 +909,6 @@ def fd_prepare_layer_route_full_graph(
             token_epoch=parity_epoch,
         )
 
-    forced_route = full_graph_forced_route()
     skipper_adapter = getattr(
         forward_batch, "fd_full_graph_skipper_adapter", None
     )
@@ -934,7 +917,6 @@ def fd_prepare_layer_route_full_graph(
     action_batch = skipper_adapter.route(
         hidden_states,
         router=router,
-        forced_action=forced_route_action(forced_route),
         layer_id=layer_id,
         batch_state=getattr(
             forward_batch, "fd_full_graph_skipper_state", None
