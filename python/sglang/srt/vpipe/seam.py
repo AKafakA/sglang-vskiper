@@ -151,7 +151,8 @@ def init_fd_layer(layer, config, layer_id, routed_lo, routed_hi, qk_head_norms):
     # (self_attn still writes K/V); reproduces FlexiDepth's quality in the SGLang serving stack.
     layer.fd_router = None
     layer.fd_proj = None
-    _fdw = os.environ.get("SGLANG_FD_WEIGHTS", "")
+    # [D-609] weights path from the committed host config, gated on the active arm
+    _fdw = flexidepth_weights_path() if skipper_deployed() else ""
     if _fdw and routed_lo <= layer_id <= routed_hi:
         from sglang.srt.vpipe.routing import (
             FDProj,
@@ -289,7 +290,8 @@ def attach_vp_model(model, config):
     # carrying checkpoint-specific calibration has to be told, explicitly,
     # which checkpoint is being served.
     _hub_commit = str(getattr(config, "_commit_hash", "") or "").strip()
-    _declared = str(os.environ.get(SERVED_MODEL_REVISION_ENV, "") or "").strip()
+    # [D-609] declared revision from the committed host config
+    _declared = str(served_model_revision() or "").strip()
     if _hub_commit and _declared and _hub_commit != _declared:
         raise ValueError(
             f"{SERVED_MODEL_REVISION_ENV}={_declared!r} disagrees with the "

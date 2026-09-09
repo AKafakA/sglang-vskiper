@@ -196,3 +196,79 @@ def design_attestation() -> dict[str, Any]:
         "gate_mode": SERVED_GATE_MODE,
         "fused_router_norm": SERVED_FUSED_ROUTER_NORM,
     }
+
+
+# ---------------------------------------------------------------------------
+# RESOLVED HOST PATHS
+# ---------------------------------------------------------------------------
+# The served path asks for a path; it never asks the environment. The one variable
+# that survives anywhere is SGLANG_VP_HOST_CONFIG, and it carries a POINTER to a
+# committed file -- not a value. If it is absent, or the file is missing, or a path
+# inside it does not exist, boot fails loudly. That is the opposite of an env var,
+# whose absence produces a silent default.
+_HOST_CACHE: dict[str, dict[str, str]] = {}
+
+
+def _host() -> dict[str, str]:
+    key = os.environ.get(_HOST_CONFIG_ENV, "")
+    if key not in _HOST_CACHE:
+        _HOST_CACHE[key] = host_config(key or None)
+    return _HOST_CACHE[key]
+
+
+def flexidepth_weights_path() -> str:
+    """Absolute path to the skipper's router/projector weights."""
+
+    return _host()["flexidepth_weights"]
+
+
+def conditional_graph_helper_path() -> str:
+    return _host().get("conditional_graph_helper", "")
+
+
+def moe_config_dir() -> str:
+    return _host().get("moe_config_dir", "")
+
+
+def served_model_revision() -> str:
+    return _host().get("served_model_revision", "")
+
+
+# ---------------------------------------------------------------------------
+# THE ACTIVE ARM
+# ---------------------------------------------------------------------------
+# Selected by a DURABLE FILE, not a shell export. The campaign script writes one arm
+# name into `deploy/active_arm`; the served path reads it; the manifest records what
+# resolved. A file survives the process, can be inspected after the fact, and diffs --
+# an `export` leaves no trace and cannot be checked once the shell is gone.
+#
+# An unknown name raises. There is no "default that quietly applies", which is the
+# property that let a wrong configuration run for eighteen hours.
+_ACTIVE_ARM_FILE = "deploy/active_arm"
+_ARM_CACHE: dict[str, str] = {}
+
+
+def _repo_root() -> Path:
+    # vpipe/design.py -> vpipe -> srt -> sglang -> python -> <tree root>
+    return Path(__file__).resolve().parents[4]
+
+
+def active_arm_name() -> str:
+    """Name of the arm this process is serving, from the durable file."""
+
+    if "name" not in _ARM_CACHE:
+        f = _repo_root() / _ACTIVE_ARM_FILE
+        name = f.read_text().strip() if f.is_file() else DEFAULT_ARM
+        resolve_arm(name)  # fail closed on an unknown name
+        _ARM_CACHE["name"] = name
+    return _ARM_CACHE["name"]
+
+
+def active_arm() -> dict[str, Any]:
+    return resolve_arm(active_arm_name())
+
+
+def skipper_deployed() -> bool:
+    """True when the active arm serves a skipper at all (stock serves none)."""
+
+    return active_arm().get("skipper") is not None

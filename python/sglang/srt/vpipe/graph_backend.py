@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from sglang.srt.vpipe.design import (  # [D-609]
+    conditional_graph_helper_path,
+)
+
 import os
 from contextlib import contextmanager
 from typing import Any, Optional
@@ -102,7 +106,8 @@ class FlexiDepthConditionalCudaGraphBackend(FullCudaGraphBackend):
         # Re-planned at replay so the orphaned wrapper carries a live KV plan.
         self._stock_decode_graph_wrappers: dict[Any, list] = {}
         self._conditional_max_rows = full_graph_conditional_max_rows()
-        helper_path = os.environ.get(FD_CONDITIONAL_GRAPH_HELPER_ENV, "")
+        # [D-609] host path from the committed config
+        helper_path = conditional_graph_helper_path()
         self._helper = ConditionalGraphHelper(helper_path)
         self._validate_runner()
 

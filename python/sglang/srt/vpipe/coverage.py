@@ -13,6 +13,10 @@ measured from the decode runner, which is the coverage oracle by construction.""
 
 from __future__ import annotations
 
+from sglang.srt.vpipe.design import (  # [D-609]
+    SERVED_EXECUTION_MODE, skipper_deployed,
+)
+
 import contextlib
 from sglang.srt.environ import envs
 from typing import Iterator, Sequence
@@ -119,10 +123,9 @@ def fd_skip_decode_deployed() -> bool:
 
     global _fd_skip_decode_deployed_cache
     if _fd_skip_decode_deployed_cache is None:
+        # [D-609] arm + design, not environment
         _fd_skip_decode_deployed_cache = bool(
-            os.environ.get("SGLANG_FD_WEIGHTS", "").strip()
-            and os.environ.get("SGLANG_FD_EXECUTION_MODE", "").strip().lower()
-            == "full_graph"
+            skipper_deployed() and SERVED_EXECUTION_MODE == "full_graph"
         )
     return _fd_skip_decode_deployed_cache
 def coverage_dense_armed() -> bool:
