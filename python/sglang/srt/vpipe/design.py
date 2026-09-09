@@ -79,7 +79,16 @@ SERVED_SCHEDULER_CONVERGENCE: Final[bool] = True
 SERVED_MASKED_DECODE_ATTENTION: Final[bool] = True
 SERVED_CONDITIONAL_GRAPH: Final[bool] = True
 SERVED_FUSED_PROJECT_INPUT: Final[bool] = True
-SERVED_DEFER_PROJECT_KV: Final[bool] = True
+# OFF. The gate arm script arm_env_vdec_fd.sh sets this, but the CAMPAIGN's manifest
+# (21 variables) never did, so every measured cell ran without it. The design must be what
+# was served, not what a neighbouring script happened to export -- taking the value from the
+# gate arm instead of the manifest is the same mistake at one remove.
+SERVED_DEFER_PROJECT_KV: Final[bool] = False
+# Not set in the served manifest either: attestation layer counters, weighted scatter,
+# prefill grouped MLP, eager semantic debug.
+SERVED_LAYER_COUNTERS: Final[bool] = False
+SERVED_WEIGHTED_SCATTER: Final[bool] = False
+SERVED_PREFILL_GROUPED_MLP: Final[bool] = False
 
 # Gate arithmetic is a property of the CHECKPOINT, not a tuning knob. ``released`` is the
 # published FlexiDepth gate (w*MLP on RUN rows, (1-w)*PROJECT on the rest). An ste_hard

@@ -12,6 +12,14 @@ env must fail closed, not silently select the other branch.
 
 from __future__ import annotations
 
+from sglang.srt.vpipe.design import (  # [D-609] the design is code
+    SERVED_COMPACT_ENABLED, SERVED_CONDITIONAL_GRAPH, SERVED_DEVICE_ROUTE_DIGEST,
+    SERVED_DEVICE_ROUTE_TAPE, SERVED_LAYER_COUNTERS, SERVED_LAYER_POLICY,
+    SERVED_MASKED_DECODE_ATTENTION, SERVED_PREFILL_GROUPED_MLP,
+    SERVED_ROUTE_ACCOUNTING, SERVED_ROUTED_LAYERS, SERVED_SCHEDULER_CONVERGENCE,
+    SERVED_WEIGHTED_SCATTER, SERVED_DEFER_PROJECT_KV,
+)
+
 from dataclasses import asdict, dataclass, field
 from typing import (
     Any,
@@ -81,7 +89,8 @@ def full_graph_request_identity_required(
     values = os.environ if environ is None else environ
     if full_graph_policy_identity_required(values):
         return True
-    digest = str(values.get(DEVICE_ROUTE_DIGEST_ENV, "0")).strip().lower()
+    # [D-609] design constant, not an environment read
+    digest = "1" if SERVED_DEVICE_ROUTE_DIGEST else "0"
     if digest in {"1", "true", "yes", "on"}:
         return configured_full_graph_skipper_name(values) == (
             FLEXIDEPTH_FULL_GRAPH_SKIPPER
@@ -94,52 +103,55 @@ def full_graph_eager_semantic_debug_enabled(
 ) -> bool:
     """Return whether the trace-only eager execution gate is enabled."""
 
-    values = os.environ if environ is None else environ
-    return _strict_bool(values, FD_EAGER_SEMANTIC_DEBUG_ENV)
+    # [D-609] design constant, not an environment read
+    return False  # debug knob, deleted (D-609)
 def full_graph_defer_project_kv_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether PROJECT-row K/V completion runs as graph side work."""
 
-    values = os.environ if environ is None else environ
-    return _strict_bool(values, FD_DEFER_PROJECT_KV_ENV)
+    # [D-609] design constant, not an environment read
+    return SERVED_DEFER_PROJECT_KV
 def full_graph_batched_commit_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether per-layer deferred commits fuse into one launch."""
 
-    values = os.environ if environ is None else environ
-    return _strict_bool(values, FD_BATCHED_COMMIT_ENV)
+    # [D-609] design constant, not an environment read
+    return False  # feature dropped (D-578); refused by validation
 def full_graph_commit_overlap_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether the deferred K/V commit overlaps the logits suffix."""
 
-    values = os.environ if environ is None else environ
-    return _strict_bool(values, FD_COMMIT_OVERLAP_ENV)
+    # [D-609] design constant, not an environment read
+    return False  # feature dropped (D-578); refused by validation
 def full_graph_forced_all_run_fastpath_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Bypass conditional branches in the sealed all-RUN control only."""
 
-    values = os.environ if environ is None else environ
-    return _strict_bool(values, FD_FORCED_ALL_RUN_FASTPATH_ENV)
+    # [D-609] design constant, not an environment read
+    return False  # gate-arm only, never served
 def full_graph_weighted_scatter_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether compact branches fuse route weighting into scatter."""
 
-    values = os.environ if environ is None else environ
-    return _strict_bool(values, FD_WEIGHTED_SCATTER_ENV)
+    # [D-609] design constant, not an environment read
+    return SERVED_WEIGHTED_SCATTER
 def full_graph_layer_policies(
     environ: Optional[Mapping[str, str]] = None,
 ) -> dict[int, tuple[str, Optional[float], Optional[float]]]:
     """Parse explicit FlexiDepth layer policies from deployment state."""
 
-    values = os.environ if environ is None else environ
-    raw = str(values.get(FD_LAYER_POLICIES_ENV, "") or "").strip()
-    if not raw:
-        return {}
+    # [D-609] The design is a constant: every routed layer runs binary_cohort.
+    # This used to come from a 16-entry env string; an arm that failed to export it
+    # silently served ZERO routed layers -- the mechanism off, looking configured.
+    return {
+        layer: (SERVED_LAYER_POLICY, None, None)
+        for layer in SERVED_ROUTED_LAYERS
+    }
     policies = {}
     for entry in raw.split(","):
         fields = [value.strip() for value in entry.split(":")]
@@ -226,15 +238,15 @@ def full_graph_prefill_grouped_mlp_enabled(
 ) -> bool:
     """Return whether prefill uses variable-size RUN/PROJECT GEMM cohorts."""
 
-    values = os.environ if environ is None else environ
-    return _strict_bool(values, FD_PREFILL_GROUPED_MLP_ENV)
+    # [D-609] design constant, not an environment read
+    return SERVED_PREFILL_GROUPED_MLP
 def full_graph_virtual_cohort_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether compact branches use mapped virtual-tensor I/O."""
 
-    values = os.environ if environ is None else environ
-    return _strict_bool(values, FD_VIRTUAL_COHORT_ENV)
+    # [D-609] design constant, not an environment read
+    return False  # superseded by binary_cohort (D-574)
 def full_graph_compact_config(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
@@ -251,8 +263,8 @@ def full_graph_compact_config(
     granularity, not a policy). Compaction itself stays a single on/off.
     """
 
-    values = os.environ if environ is None else environ
-    enabled_value = str(values.get(FD_COMPACT_ENABLED_ENV, "0")).strip().lower()
+    # [D-609] design constant
+    return SERVED_COMPACT_ENABLED
     true_values = {
         "1",
         "true",
@@ -270,60 +282,60 @@ def full_graph_scheduler_convergence_enabled(
 ) -> bool:
     """Return whether scheduler identity and inline K/V readiness are attested."""
 
-    values = os.environ if environ is None else environ
-    return _strict_bool(values, FD_SCHEDULER_CONVERGENCE_ENV)
+    # [D-609] design constant, not an environment read
+    return SERVED_SCHEDULER_CONVERGENCE
 def full_graph_layer_counters_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
-    values = os.environ if environ is None else environ
-    value = str(values.get(FD_LAYER_COUNTERS_ENV, "0")).strip().lower()
+    # [D-609] design constant
+    value = "1" if SERVED_LAYER_COUNTERS else "0"
     if value in {"1", "true", "yes", "on"}:
         return True
     if value in {"0", "false", "no", "off", ""}:
         return False
     raise ValueError(f"{FD_LAYER_COUNTERS_ENV} must be a boolean value")
 
-    values = os.environ if environ is None else environ
-    return _strict_bool(values, FD_LAYER_COUNTERS_ENV)
+    # [D-609] design constant, not an environment read
+    return SERVED_LAYER_COUNTERS
 def full_graph_route_accounting_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether route and compact-work counters run inside graph replay."""
 
-    values = os.environ if environ is None else environ
-    return _strict_bool(values, FD_ROUTE_ACCOUNTING_ENV)
+    # [D-609] design constant, not an environment read
+    return SERVED_ROUTE_ACCOUNTING
 def full_graph_device_route_tape_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether routed actions use one graph-stable device tensor."""
 
-    values = os.environ if environ is None else environ
-    return _strict_bool(values, FD_DEVICE_ROUTE_TAPE_ENV)
+    # [D-609] design constant, not an environment read
+    return SERVED_DEVICE_ROUTE_TAPE
 def full_graph_device_route_digest_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether graph replay accumulates a device-only action digest."""
 
-    values = os.environ if environ is None else environ
-    return _strict_bool(values, FD_DEVICE_ROUTE_DIGEST_ENV)
+    # [D-609] design constant, not an environment read
+    return SERVED_DEVICE_ROUTE_DIGEST
 def full_graph_fused_evidence_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether replay evidence is reduced by two fixed-shape kernels."""
 
-    values = os.environ if environ is None else environ
-    return _strict_bool(values, FD_FUSED_EVIDENCE_ENV)
+    # [D-609] design constant, not an environment read
+    return False  # gate-arm only, never served
 def full_graph_forced_all_run_production_attention_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Use the production decode backend in the sealed all-RUN body."""
 
-    values = os.environ if environ is None else environ
-    return _strict_bool(values, FD_FORCED_ALL_RUN_PRODUCTION_ATTN_ENV)
+    # [D-609] design constant, not an environment read
+    return False  # gate-arm only, never served
 def full_graph_masked_decode_attention_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether Triton decode attention suppresses JUMP-row reads."""
 
-    values = os.environ if environ is None else environ
-    return _strict_bool(values, FD_MASKED_DECODE_ATTN_ENV)
+    # [D-609] design constant, not an environment read
+    return SERVED_MASKED_DECODE_ATTENTION
