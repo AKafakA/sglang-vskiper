@@ -11,6 +11,8 @@ lm-level take the ForCausalLM wrapper.
 import os
 from functools import lru_cache
 from sglang.srt.vpipe.design import (  # [D-609] design/host paths are code
+    active_arm_name,
+    design_attestation,
     flexidepth_weights_path,
     served_model_revision,
     skipper_deployed,
@@ -799,6 +801,13 @@ def vp_runtime_attestation(lm) -> dict:
     return {
         "model_family": lm.vp_model_family,
         "flexidepth": flexidepth_state,
+        # [D-609] Publish the DESIGN and the resolved ARM so a launch gate can read back
+        # what was served instead of trusting what it set. design_attestation() existed
+        # but had zero callers, so the input gate the refactor is FOR did not exist:
+        # a campaign could still start against a server serving something else, which is
+        # exactly the failure that cost ~18 h of A100 time.
+        "design": design_attestation(),
+        "arm": active_arm_name(),
     }
 
 
