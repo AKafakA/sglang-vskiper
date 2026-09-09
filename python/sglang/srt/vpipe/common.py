@@ -35,6 +35,7 @@ from sglang.srt.vpipe.design import (  # [D-609] the design is code
     SERVED_FUSED_PROJECT_INPUT,
     SERVED_REGIME_SWITCH,
     active_arm,
+    active_arm_name,
     arm_phases,
     mechanism,
     skipper_deployed,
@@ -84,7 +85,6 @@ from sglang.srt.vpipe.types import (
 from sglang.srt.vpipe.skipper import (
     _ADAPTERS,
     _deterministic_mock_adapter,
-    _parse_mock_config,
     configured_full_graph_skipper_name,
 )
 from sglang.srt.vpipe.kv_commit import (
@@ -1063,6 +1063,7 @@ def resolve_full_graph_skipper(
 
     values = os.environ if environ is None else environ
     name = full_graph_skipper_name(values)
+    # reading env here only to REFUSE a stale export (D-609): the values come from the arm
     mock_config_present = any(
         str(values.get(key, "")).strip() for key in _MOCK_CONFIG_ENVS
     )
@@ -1074,17 +1075,26 @@ def resolve_full_graph_skipper(
             )
         return _ADAPTERS[name]
 
+    # [D-611] The mock's parameters come from the ARM definition, like its name. These
+    # are the RandomSkip trade-off study's independent variables (skip rate x depth), so
+    # they must be as durable and attestable as the design itself.
+    arm = active_arm()
     missing = [
         key
-        for key in (
-            FULL_GRAPH_MOCK_TOKEN_SKIP_RATE_ENV,
-            FULL_GRAPH_MOCK_SKIPPED_DEPTH_RATIO_ENV,
-        )
-        if not str(values.get(key, "")).strip()
+        for key in ("mock_token_skip_rate", "mock_skipped_depth_ratio", "mock_seed")
+        if arm.get(key) is None
     ]
     if missing:
-        raise ValueError("deterministic mock requires " + ", ".join(missing))
-    return _deterministic_mock_adapter(*_parse_mock_config(values))
+        raise ValueError(
+            f"arm {active_arm_name()!r} selects the deterministic mock but omits "
+            + ", ".join(missing)
+            + " (define them in vpipe/design.py ARMS, D-611)"
+        )
+    return _deterministic_mock_adapter(
+        float(arm["mock_token_skip_rate"]),
+        float(arm["mock_skipped_depth_ratio"]),
+        int(arm["mock_seed"]),
+    )
 def forced_route_action(value: Optional[bool]) -> Optional[LogicalAction]:
     if value is None:
         return None
@@ -1217,3 +1227,55 @@ def regime_switch_config(
 
 
 _REGIME_SWITCH_CONFIG_CACHE: dict[str, RegimeSwitchConfig] = {}
+
+
+def resolved_design_attestation() -> dict[str, Any]:
+    """What this process ACTUALLY resolved -- never what design.py declares.
+
+    [D-611, Codex F8] The first version of the launch gate published
+    ``design_attestation()``: the ``SERVED_*`` constants, echoed back. Comparing the
+    tree's constants against the tree's own constants is a tautology -- it cannot fail.
+    An environment override changes what the RESOLVERS return while the declaration
+    still reads correct, which is precisely the failure the gate exists to catch.
+
+    So this calls the resolvers and reports their answers. The gate then compares
+    INTENDED (design.py constants) against RESOLVED (this), and a divergence -- from an
+    inherited export, a stale process, a mis-selected arm -- shows up as a mismatch.
+    """
+
+    switch = regime_switch_config()
+    return {
+        "source": "resolvers, at boot (D-611)",
+        "arm": active_arm_name(),
+        "skipper": full_graph_skipper_name(),
+        "regime_switch": (
+            None
+            if switch is None
+            else {
+                "version": 1,
+                "prefill": {
+                    "enabled": switch.prefill.enabled,
+                    "min_tokens": switch.prefill.min_tokens,
+                    "row_correction_alpha": switch.prefill.row_correction_alpha,
+                    "include_mixed": switch.prefill.include_mixed,
+                    "engagement_min": switch.prefill.engagement_min,
+                    "engagement_probe_every": switch.prefill.engagement_probe_every,
+                },
+                "decode": {
+                    "enabled": switch.decode.enabled,
+                    "enter_rows": switch.decode.enter_rows,
+                    "exit_rows": switch.decode.exit_rows,
+                    "low_body": switch.decode.low_body,
+                    "high_body": switch.decode.high_body,
+                    "enter_kv_tokens": switch.decode.enter_kv_tokens,
+                    "exit_kv_tokens": switch.decode.exit_kv_tokens,
+                },
+            }
+        ),
+        "low_row_policy": full_graph_low_row_policy(),
+        "execution_mode": flexidepth_execution_mode(),
+        "active_phases": sorted(flexidepth_active_phases()),
+        "compact_phases": sorted(full_graph_compact_phases()),
+        "gate_mode": full_graph_gate_mode(),
+        "fused_router_norm": full_graph_fused_router_norm_enabled(),
+    }

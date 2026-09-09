@@ -134,18 +134,6 @@ def _deterministic_mock_adapter(
         skipped_depth_ratio=skipped_depth_ratio,
         seed=seed,
     )
-def _parse_mock_config(values: Mapping[str, str]) -> tuple[float, float, int]:
-    try:
-        token_skip_rate = float(values.get(FULL_GRAPH_MOCK_TOKEN_SKIP_RATE_ENV, ""))
-        skipped_depth_ratio = float(
-            values.get(FULL_GRAPH_MOCK_SKIPPED_DEPTH_RATIO_ENV, "")
-        )
-        seed = int(values.get(FULL_GRAPH_MOCK_SEED_ENV, "0"))
-    except (TypeError, ValueError) as error:
-        raise ValueError(
-            "invalid deterministic full-graph mock configuration"
-        ) from error
-    return token_skip_rate, skipped_depth_ratio, seed
 class DeterministicMockFullGraphAdapter(FullGraphSkipperAdapter):
     """Order-independent token-rate x skipped-depth systems ablation."""
 
@@ -320,11 +308,14 @@ def configured_full_graph_skipper_name(
 ) -> str:
     """Return the normalized configured name without importing policy code."""
 
-    values = os.environ if environ is None else environ
-    return str(
-        values.get(FULL_GRAPH_SKIPPER_ENV, FLEXIDEPTH_FULL_GRAPH_SKIPPER)
-        or FLEXIDEPTH_FULL_GRAPH_SKIPPER
-    ).strip().lower()
+    # [D-611] The skipper comes from the ACTIVE ARM, never the environment. This read
+    # defaulted to `flexidepth`, so `vdec_randomskip` -- whose arm declares
+    # deterministic_mock -- served TRAINED FlexiDepth routes while attesting a random
+    # mock, and passed the smoke gate doing it. The arm's declaration was decorative:
+    # exactly the declared-vs-served split D-609 exists to prevent.
+    from sglang.srt.vpipe.design import active_arm
+
+    return str(active_arm().get("skipper") or FLEXIDEPTH_FULL_GRAPH_SKIPPER).strip().lower()
 _ADAPTERS: dict[str, FullGraphSkipperAdapter] = {
     FLEXIDEPTH_FULL_GRAPH_SKIPPER: FlexiDepthFullGraphAdapter(),
 }
