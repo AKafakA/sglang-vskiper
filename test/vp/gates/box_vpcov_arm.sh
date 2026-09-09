@@ -18,7 +18,17 @@
 set -uo pipefail
 ARM="${1:?usage: box_vpcov_arm.sh <arm> [tree-dir] [out-root]}"
 GATES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-W="${VP_GATE_WORKDIR:-/local/scratch/tmp/wd312}"
+# [D-609] Harness paths come from the committed host config, like everything else.
+# These are plumbing (where to write, which interpreter), not design -- but there is
+# no reason for a second mechanism, and a hardcoded dev-box path is how this script
+# failed on the A100.
+_HC="${SGLANG_VP_HOST_CONFIG:-}"
+if [ -n "$_HC" ] && [ -f "$_HC" ]; then
+  W="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('gate_workdir',''))" "$_HC")"
+  VP_GATE_PYTHON="${VP_GATE_PYTHON:-$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('serve_python',''))" "$_HC")}"
+  VP_GATE_MODEL="${VP_GATE_MODEL:-$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('model_path',''))" "$_HC")}"
+fi
+W="${W:-${VP_GATE_WORKDIR:-/local/scratch/tmp/wd312}}"
 TREE="${2:-$W/tree-a56485bcf8}"
 OUTROOT="${3:-$W/vpcov-out}"
 V="${VP_GATE_PYTHON:-$W/sglang-sm75/.venv/bin/python}"
