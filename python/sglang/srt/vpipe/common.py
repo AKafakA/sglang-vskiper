@@ -33,8 +33,8 @@ import os
 from sglang.srt.vpipe.design import (  # [D-609] the design is code
     SERVED_EXECUTION_MODE,
     SERVED_FUSED_PROJECT_INPUT,
-    active_arm,
     SERVED_REGIME_SWITCH,
+    active_arm,
     skipper_deployed,
 )
 import torch
@@ -835,10 +835,10 @@ def flexidepth_execution_mode(
 ) -> str:
     """Return the explicit execution mode and reject misspelled modes."""
 
-    # [D-609] The served execution mode is a constant. It defaulted to
-    # direct_eager, so a clean deployment could not run with CUDA graphs at all --
-    # another design value that had to be pushed in from outside to be correct.
-    mode = SERVED_EXECUTION_MODE
+    # [D-609] The design applies to arms that SERVE A SKIPPER. The stock arm serves
+    # none, so it must not demand the full-graph body (which requires weights). The
+    # ARM decides whether the mechanism runs at all; the design decides how it runs.
+    mode = SERVED_EXECUTION_MODE if skipper_deployed() else FD_EXECUTION_DIRECT_EAGER
     if mode not in _VALID_EXECUTION_MODES:
         choices = ", ".join(sorted(_VALID_EXECUTION_MODES))
         raise ValueError(
@@ -1178,6 +1178,10 @@ def regime_switch_config(
     -- the reverse of the old behaviour, and the point of the change.
     """
 
+    # [D-609] The ARM decides whether the mechanism engages: the stock arm carries
+    # regime_switch=False and gets the byte-identical baseline path.
+    if not active_arm().get("regime_switch", True):
+        return None
     values = os.environ if environ is None else environ
     raw = str(values.get(REGIME_SWITCH_ENV, "") or "").strip()
     if raw.lower() == "off":
