@@ -49,13 +49,37 @@ def main() -> int:
 
     ok &= check("served fork tree", (a.tree / "python/sglang/srt/vpipe/design.py").is_file(), str(a.tree))
 
-    # The upstream tree must be GENUINELY stock. It shares most of its files with the fork, so
-    # "the directory exists" proves nothing -- count the vpipe package instead.
+    # [Codex review 2 P1-2] The upstream tree must be genuinely stock -- and "no vpipe/ package"
+    # only checks SHAPE. An upstream checkout with a modified scheduler, attention backend or
+    # model code passes that. The claim "verified genuinely stock" was stronger than the check.
+    # So: hash every file of python/sglang/srt and compare against a manifest generated from
+    # the pinned commit. That is identity, not shape.
     up_vpipe = a.upstream / "python/sglang/srt/vpipe"
     up_present = (a.upstream / "python/sglang/srt/model_executor/model_runner.py").is_file()
     ok &= check("upstream baseline tree present", up_present, str(a.upstream))
-    ok &= check("upstream is GENUINELY stock", up_present and not up_vpipe.exists(),
-                "vpipe/ package must be absent" if up_vpipe.exists() else "no vpipe/ package")
+    ok &= check("upstream carries no vpipe/ package", up_present and not up_vpipe.exists(),
+                "present -- NOT stock" if up_vpipe.exists() else "absent")
+
+    manifest = a.tree / "deploy" / "upstream_baseline.json"
+    if not manifest.is_file():
+        ok &= check("upstream CONTENT identity", False, f"missing manifest {manifest}")
+    elif up_present:
+        import hashlib
+
+        want = json.loads(manifest.read_text())
+        root = a.upstream / want["path"]
+        got = hashlib.sha256()
+        n = 0
+        for f in sorted(p_.relative_to(a.upstream).as_posix()
+                        for p_ in root.rglob("*") if p_.is_file()):
+            got.update(f.encode())
+            got.update(hashlib.sha256((a.upstream / f).read_bytes()).digest())
+            n += 1
+        same = (n == want["n_files"] and got.hexdigest() == want["content_sha256"])
+        ok &= check("upstream CONTENT identity", same,
+                    f"{n} files vs {want['n_files']} expected, "
+                    f"sha {got.hexdigest()[:16]} vs {want['content_sha256'][:16]} "
+                    f"(commit {want['commit']})")
 
     arm_file = a.tree / "deploy" / "active_arm"
     ok &= check("deploy/active_arm present", arm_file.is_file(),

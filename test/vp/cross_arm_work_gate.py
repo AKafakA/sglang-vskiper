@@ -85,6 +85,23 @@ def evaluate(
         elif set(arm) != keys:
             verdict["mismatches"].append({"arm": name, "kind": "request_set_differs"})
             verdict["pass"] = False
+    # [Codex review 2 P1-3] The comparison below iterates the TABLE, so a request present in
+    # every arm but ABSENT from the table was never compared: arms agreeing on their key set
+    # passed while that request did 30 tokens in one arm and 999 in another. Unchecked work is
+    # not equal work. Every request an arm actually served must be in the table.
+    table_keys = {str(k) for k in table}
+    for name, arm in arms.items():
+        extra = sorted(set(arm) - table_keys)
+        if extra:
+            verdict["mismatches"].append(
+                {
+                    "arm": name,
+                    "kind": "requests_absent_from_table",
+                    "n": len(extra),
+                    "examples": extra[:5],
+                }
+            )
+            verdict["pass"] = False
     for rid, want in table.items():
         for name, arm in arms.items():
             got = arm.get(str(rid))

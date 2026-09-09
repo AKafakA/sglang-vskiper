@@ -341,6 +341,31 @@ def validate_record(
     ]
     if missing_finish:
         errors.append(f"missing finish reason for {len(missing_finish)} requests")
+    # [G3, Codex review 2 P1-4] Only ABSENT finish reasons were rejected, so a request that
+    # finished with `error`, `abort`, `content_filter` or "" passed the zero-errors gate --
+    # the gate accepted the very failures it exists to catch. Exact-budget policies caught
+    # these incidentally through their required `length` finish; natural-length and
+    # calibration cells were exposed.
+    #
+    # Only two outcomes are a request that RAN: `stop` (EOS honored, natural lane) and
+    # `length` (cap or ignore_eos budget reached). Anything else is a failed request.
+    _FINISHED_OK = {"stop", "length"}
+    bad_finish = sorted(
+        {
+            str(reason)
+            for reason in finish_reasons
+            if reason is not None and str(reason) not in _FINISHED_OK
+        }
+    )
+    if bad_finish:
+        counts = {
+            reason: sum(1 for r in finish_reasons if str(r) == reason)
+            for reason in bad_finish
+        }
+        errors.append(
+            "failed/filtered finish reasons present (a request that did not finish is a "
+            f"failed request, not a datum): {counts}"
+        )
     length_finish_indices = [
         index for index, reason in enumerate(finish_reasons) if reason == "length"
     ]

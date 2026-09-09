@@ -101,7 +101,10 @@ def post(a) -> int:
           f"({len(statuses)} record(s))")
 
     # ---- G2: cross-arm work identity (GR-1a) ----------------------------------------
-    ok_g2 = True
+    # [Audit D-624 #3] G2 was initialised True, so omitting --arm exited ZERO: the gate
+    # printed "SKIPPED" and then declared an UNCHECKED PAIR quotable. Reproduced by the audit.
+    # An unchecked gate is a FAILED gate; opting out has to be explicit and recorded.
+    ok_g2 = bool(a.allow_unpaired)
     if a.arm:
         cmd = [str(TREE / "test/vp/cross_arm_work_gate.py"), "--cell", a.cell_name or cell.name]
         if a.reference:
@@ -114,8 +117,10 @@ def post(a) -> int:
             cmd += ["--out", str(a.out)]
         ok_g2 = run(cmd, "G2 cross-arm work identity (GR-1a)")
     else:
-        print("--- G2 SKIPPED: no --arm given. A single-arm cell has no work identity to check; "
-              "a PAIRED cell without --arm is an UNCHECKED cell, not a passing one.")
+        print("--- G2 NOT RUN: no --arm given. A paired cell without --arm is an UNCHECKED "
+              "cell, not a passing one" +
+              (" -- proceeding because --allow-unpaired was passed explicitly."
+               if a.allow_unpaired else ". FAILING; pass --allow-unpaired to override."))
 
     if not (ok_g2 and ok_g3):
         why = (f"G2 equal-work={'PASS' if ok_g2 else 'FAIL'}, "
@@ -148,6 +153,8 @@ def main() -> int:
     q.add_argument("--table", type=Path, help="frozen identity table instead of a reference arm")
     q.add_argument("--cell-name", dest="cell_name", help="cell label if it differs from the dir")
     q.add_argument("--out", type=Path, help="where cross_arm_work_gate writes its verdict")
+    q.add_argument("--allow-unpaired", action="store_true",
+                   help="explicitly accept a cell with no cross-arm check (recorded, not silent)")
     q.add_argument("--mark-invalid", action="store_true",
                    help="rename a failing cell INVALID.* so no tool reads it as a result")
     q.set_defaults(fn=post)
