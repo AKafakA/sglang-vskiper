@@ -272,3 +272,36 @@ def skipper_deployed() -> bool:
     """True when the active arm serves a skipper at all (stock serves none)."""
 
     return active_arm().get("skipper") is not None
+
+
+def arm_phases() -> frozenset[str]:
+    """The request phases the active arm routes. Empty when it serves no skipper."""
+
+    phases = active_arm().get("phases")
+    if not phases:
+        return frozenset()
+    if phases == "both":
+        return frozenset(("decode", "prefill"))
+    return frozenset((str(phases),))
+
+
+def mechanism(value: bool, *, decode_only: bool = False) -> bool:
+    """Apply a design constant only where the arm can actually run it.
+
+    [D-609] The constants above describe THE SERVED SKIPPER SYSTEM. They are not
+    universal truths about the process: an arm serving no skipper (``stock``) must have
+    every one of them off, and a decode-phase mechanism needs an arm with a decode phase.
+
+    The old arm_env_*.sh scripts encoded this implicitly by simply not exporting a
+    variable in the arms where it did not apply. Deleting the scripts made that
+    implicit knowledge disappear, and the smoke gate found it immediately: ``stock``
+    demanded full_graph weights it does not have, and ``vpre_binarycohort`` asserted a
+    conditional decode graph with no decode phase. Both were unservable. This function
+    is where that knowledge now lives, once, checkably -- instead of in six scripts.
+    """
+
+    if not skipper_deployed():
+        return False
+    if decode_only and "decode" not in arm_phases():
+        return False
+    return value
