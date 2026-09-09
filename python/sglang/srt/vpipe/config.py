@@ -32,31 +32,7 @@ import msgspec
 import math
 import os
 from sglang.srt.vpipe.env import (
-    FD_COMPACT_ENABLED_ENV,
-    FD_BATCHED_COMMIT_ENV,
-    FD_COMMIT_OVERLAP_ENV,
-    FD_DEFER_PROJECT_KV_ENV,
-    FD_DEVICE_ROUTE_DIGEST_ENV,
-    FD_DEVICE_ROUTE_TAPE_ENV,
-    FD_EAGER_SEMANTIC_DEBUG_ENV,
-    FD_EXECUTION_FULL_GRAPH,
-    FD_FORCED_ALL_RUN_FASTPATH_ENV,
-    FD_FORCED_ALL_RUN_PRODUCTION_ATTN_ENV,
-    FD_FUSED_EVIDENCE_ENV,
     FD_LAYER_COUNTERS_ENV,
-    FD_LAYER_POLICIES_ENV,
-    FD_MASKED_DECODE_ATTN_ENV,
-    FD_PREFILL_GROUPED_MLP_ENV,
-    FD_ROUTE_ACCOUNTING_ENV,
-    FD_SCHEDULER_CONVERGENCE_ENV,
-    FD_VIRTUAL_COHORT_ENV,
-    FD_WEIGHTED_SCATTER_ENV,
-    _VALID_LAYER_POLICIES,
-    FD_EXECUTION_DIRECT_EAGER,
-    FD_EXECUTION_MODE_ENV,
-    _VALID_EXECUTION_MODES,
-    FD_ACTIVE_PHASES_ENV,
-    _VALID_ACTIVE_PHASES,
     DETERMINISTIC_MOCK_FULL_GRAPH_SKIPPER,
     FLEXIDEPTH_FULL_GRAPH_SKIPPER,
     DEVICE_ROUTE_DIGEST_ENV,
@@ -153,87 +129,6 @@ def full_graph_layer_policies(
         layer: (SERVED_LAYER_POLICY, None, None)
         for layer in (SERVED_ROUTED_LAYERS if skipper_deployed() else ())
     }
-    policies = {}
-    for entry in raw.split(","):
-        fields = [value.strip() for value in entry.split(":")]
-        if len(fields) not in {2, 3, 4}:
-            raise ValueError(
-                f"invalid {FD_LAYER_POLICIES_ENV} entry: {entry!r}"
-            )
-        try:
-            layer_id = int(fields[0])
-        except ValueError as error:
-            raise ValueError(
-                f"invalid layer id in {FD_LAYER_POLICIES_ENV}: {fields[0]!r}"
-            ) from error
-        if layer_id < 0 or layer_id in policies:
-            raise ValueError(
-                f"duplicate or negative layer in {FD_LAYER_POLICIES_ENV}: {layer_id}"
-            )
-        policy = fields[1]
-        if policy not in _VALID_LAYER_POLICIES:
-            raise ValueError(
-                f"unsupported policy in {FD_LAYER_POLICIES_ENV}: {policy!r}"
-            )
-        fractions = []
-        for raw_fraction in fields[2:]:
-            try:
-                fractions.append(float(raw_fraction))
-            except ValueError as error:
-                raise ValueError(
-                    f"invalid capacity in {FD_LAYER_POLICIES_ENV}: {raw_fraction!r}"
-                ) from error
-        if policy == "binary_cohort" and fractions:
-            raise ValueError(
-                f"binary_cohort in {FD_LAYER_POLICIES_ENV} takes no "
-                "capacity fractions (count-adaptive by design)"
-            )
-        if policy == "project_filtered_run_compact":
-            if (
-                len(fractions) not in (1, 2)
-                or not 0.0 < fractions[0] < 1.0
-                or (
-                    len(fractions) == 2
-                    and not (
-                        math.isfinite(fractions[1]) and fractions[1] >= 1.0
-                    )
-                )
-            ):
-                raise ValueError(
-                    f"{policy} in {FD_LAYER_POLICIES_ENV} requires a RUN "
-                    "capacity in (0, 1) and an optional min-rows "
-                    "threshold >= 1"
-                )
-            # min-rows rides in the project slot (unused by this policy);
-            # rows >= threshold selects the compact body per capture bucket,
-            # below it the plain fused project_filtered_run body runs.
-            run_fraction = fractions[0]
-            project_fraction = fractions[1] if len(fractions) == 2 else 1.0
-        elif policy in {"project_base", "run_base"}:
-            if len(fractions) != 1 or not 0.0 < fractions[0] < 1.0:
-                raise ValueError(
-                    f"{policy} in {FD_LAYER_POLICIES_ENV} requires capacity in (0, 1)"
-                )
-            if policy == "project_base":
-                run_fraction, project_fraction = fractions[0], None
-            else:
-                run_fraction, project_fraction = None, fractions[0]
-        elif policy == "dual_compact":
-            if len(fractions) != 2 or any(
-                not 0.0 < fraction <= 1.0 for fraction in fractions
-            ):
-                raise ValueError(
-                    f"dual_compact in {FD_LAYER_POLICIES_ENV} requires RUN and PROJECT capacities in (0, 1]"
-                )
-            run_fraction, project_fraction = fractions
-        elif fractions:
-            raise ValueError(
-                f"{policy} in {FD_LAYER_POLICIES_ENV} cannot specify capacity"
-            )
-        else:
-            run_fraction, project_fraction = None, None
-        policies[layer_id] = (policy, run_fraction, project_fraction)
-    return policies
 def full_graph_prefill_grouped_mlp_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
@@ -266,18 +161,6 @@ def full_graph_compact_config(
 
     # [D-609] design constant
     return mechanism(SERVED_COMPACT_ENABLED)
-    true_values = {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-    false_values = {"0", "false", "no", "off", ""}
-    if enabled_value not in true_values | false_values:
-        raise ValueError(
-            f"{FD_COMPACT_ENABLED_ENV} must be a boolean value"
-        )
-    return enabled_value in true_values
 def full_graph_scheduler_convergence_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
@@ -297,7 +180,6 @@ def full_graph_layer_counters_enabled(
     raise ValueError(f"{FD_LAYER_COUNTERS_ENV} must be a boolean value")
 
     # [D-609] design constant, not an environment read
-    return mechanism(SERVED_LAYER_COUNTERS)
 def full_graph_route_accounting_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:

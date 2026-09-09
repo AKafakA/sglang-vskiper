@@ -1050,13 +1050,6 @@ def fdvp_fused_project_input_enabled():
     return mechanism(SERVED_FUSED_PROJECT_INPUT)
 def fdvp_fused_project_input_shared_storage_enabled():
     return False  # [D-609] design constant, not an environment read
-    if False:
-        _ = {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
 def _fdvp_router_graph_enabled():
     return False  # [D-609] pinned off; trace knob, no served purpose
 def _fdvp_timing_enabled():

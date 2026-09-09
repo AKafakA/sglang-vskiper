@@ -253,13 +253,6 @@ def fd_parity_trace_context(layer_id: int, forward_batch):
 def _fdvp_fused_router_dec_head():
     # [D-609] OFF: the L2 fused-router switch was never adopted into a served arm.
     return False
-    if False:
-        _ = {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
 def _fdvp_fused_project_input():
     return fdvp_fused_project_input_enabled()
 def _fdvp_router_graph_max_rows():

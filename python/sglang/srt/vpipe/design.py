@@ -123,9 +123,13 @@ ARMS: Final[dict[str, dict[str, Any]]] = {
         "skipper": "deterministic_mock",
         "phases": "decode",
         "regime_switch": True,
-        "mock_token_skip_rate": 0.30,
-        "mock_skipped_depth_ratio": 0.50,
-        "mock_seed": 20260909,
+        # These three are NOT free parameters: they are the values the deleted
+        # arm_env_vdec_randomskip.sh exported, carried over verbatim. Choosing new ones
+        # while "porting" the arm would be a silent design change (global rule R3) that
+        # makes the generality arm incomparable to every earlier RandomSkip result.
+        "mock_token_skip_rate": 0.5,
+        "mock_skipped_depth_ratio": 0.5,
+        "mock_seed": 1234,
     },
 }
 DEFAULT_ARM: Final[str] = "integrated_it4"
