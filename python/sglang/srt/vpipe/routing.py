@@ -184,8 +184,8 @@ def fd_parity_trace_tensor(
 ) -> None:
     """Persist one target row for deterministic direct-vs-full-graph parity diagnostics."""
 
-    directory = os.environ.get("SGLANG_FD_PARITY_TRACE_DIR", "")
-    target_epoch = int(os.environ.get("SGLANG_FD_PARITY_TRACE_EPOCH", "0") or "0")
+    directory = ""  # [D-609] pinned; trace knob, not configurable
+    target_epoch = 0
     if not directory or tensor is None or token_epoch != target_epoch:
         return
     path = Path(directory)
@@ -239,7 +239,7 @@ def fd_parity_trace_context(layer_id: int, forward_batch):
             "FlexiDepth prefill parity trace prefix lengths do not match requests"
         )
     offset = int(
-        os.environ.get("SGLANG_FD_PARITY_TRACE_PREFILL_OFFSET", "-1") or "-1"
+        "-1"  # [D-609] pinned; trace knob, not configurable
     )
     request_tokens = lengths[request_index]
     normalized_offset = offset if offset >= 0 else request_tokens + offset
@@ -251,9 +251,10 @@ def fd_parity_trace_context(layer_id: int, forward_batch):
     token_position = prefix_lengths[request_index] + normalized_offset
     return row, token_position
 def _fdvp_fused_router_dec_head():
-    return os.environ.get(
-        "SGLANG_FD_VP_FUSED_ROUTER_DEC_HEAD", "0"
-    ).strip().lower() in {
+    # [D-609] OFF: the L2 fused-router switch was never adopted into a served arm.
+    return False
+    if False:
+        _ = {
         "1",
         "true",
         "yes",
@@ -265,7 +266,7 @@ def _fdvp_router_graph_max_rows():
     try:
         return max(
             0,
-            int(os.environ.get("SGLANG_FD_VP_ROUTER_GRAPH_MAX_ROWS", "64") or "64"),
+            64,  # [D-609] pinned; trace knob, not configurable
         )
     except ValueError:
         return 64
@@ -274,8 +275,7 @@ def _fdvp_router_graph_max_entries():
         return max(
             0,
             int(
-                os.environ.get("SGLANG_FD_VP_ROUTER_GRAPH_MAX_ENTRIES", "4")
-                or "4"
+                "4"  # [D-609] pinned; trace knob, not configurable
             ),
         )
     except ValueError:
