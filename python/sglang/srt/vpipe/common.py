@@ -33,6 +33,7 @@ import os
 from sglang.srt.vpipe.design import (  # [D-609] the design is code
     SERVED_FUSED_PROJECT_INPUT,
     SERVED_REGIME_SWITCH,
+    skipper_deployed,
 )
 import torch
 import torch.nn.functional as F
@@ -637,7 +638,9 @@ def vp_decode_coverage_target(model_runner) -> Optional[int]:
         return None
     if flexidepth_execution_mode() != FD_EXECUTION_FULL_GRAPH:
         return None
-    if not str(os.environ.get("SGLANG_FD_WEIGHTS", "")).strip():
+    # [D-609] the skipper is deployed iff the active arm names one; host path
+    # comes from the committed host config, never from a shell export.
+    if not skipper_deployed():
         return None
     target = int(model_runner.max_running_requests)
     if target <= 0:

@@ -11,6 +11,10 @@ visible beside it."""
 
 from __future__ import annotations
 
+from sglang.srt.vpipe.design import (  # [D-609]
+    moe_config_dir,
+)
+
 from typing import Mapping, Sequence
 import hashlib
 import json
@@ -628,7 +632,8 @@ def model_runner_runtime_attestation(
     prefill_backend = getattr(
         prefill_config.backend, "value", str(prefill_config.backend)
     )
-    external_moe_config = bool(os.environ.get("SGLANG_MOE_CONFIG_DIR", "").strip())
+    # [D-609] host path from the committed config
+    external_moe_config = bool(moe_config_dir().strip())
     skipper_adapter = resolve_full_graph_skipper()
     skipper_attestation = skipper_adapter.attestation()
     skipper_attestation["routed_layer_count"] = loaded_layer_count
