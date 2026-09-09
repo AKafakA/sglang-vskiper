@@ -26,26 +26,23 @@ PORT="${VP_GATE_PORT:-30250}"
 MODEL="${VP_GATE_MODEL:-$W/models/Meta-Llama-3-8B-Instruct-53346005}"
 SUITE="${VP_GATE_SUITE:-$W/suites/gsm8k.first100.requests.jsonl}"
 OUT=$OUTROOT/$ARM
-ENVFILE="${VP_GATE_ARM_DIR:-$GATES_DIR/arms}/arm_env_${ARM}.sh"
-[ -f "$ENVFILE" ] || { echo "FATAL: no arm env $ENVFILE"; exit 2; }
 rm -rf "$OUT"; mkdir -p "$OUT"
-set -a
-# shellcheck disable=SC1090
-source "$ENVFILE"
-set +a
-if [ "${VP_GATE_NO_FD_WEIGHTS:-0}" = "1" ]; then
-  # Weightless-skipper arms (AdaSkip: requires_flexidepth_weights=False —
-  # validation REFUSES loaded FD weights for them).
-  unset SGLANG_FD_WEIGHTS
-else
-  export SGLANG_FD_WEIGHTS="${VP_GATE_FD_WEIGHTS:-$W/flexidepth_router_weights.pt}"
-fi
-if [ -n "${SGLANG_VP_ADASKIP_PROFILE:-}" ]; then
-  export SGLANG_VP_ADASKIP_PROFILE="${VP_GATE_ADASKIP_PROFILE:-$TREE/test/vp/fixtures/adaskip_fixed_profile.json}"
-fi
-if [ -n "${SGLANG_FD_FULL_GRAPH_CONDITIONAL_GRAPH_HELPER:-}" ]; then
-  export SGLANG_FD_FULL_GRAPH_CONDITIONAL_GRAPH_HELPER="${VP_GATE_SM_HELPER:-$W/helper-sm75/libvpipe_cuda_conditional_graph.so}"
-fi
+# [D-609] Arms are NAMED, not exported. The arm_env_*.sh scripts are deleted: an
+# export that fails to reach the server is indistinguishable from one that worked,
+# which is how eighteen hours ran on a rejected design. The arm goes into the
+# durable file the served path reads, and the design comes from the tree.
+python3 - "$ARM" "$TREE" <<'ARMPY'
+import sys, pathlib
+arm, tree = sys.argv[1], pathlib.Path(sys.argv[2])
+sys.path.insert(0, str(tree / "python"))
+from sglang.srt.vpipe.design import resolve_arm       # fails closed on an unknown arm
+resolve_arm(arm)
+(tree / "deploy").mkdir(exist_ok=True)
+(tree / "deploy" / "active_arm").write_text(arm + "\n")
+print(f"active arm -> {arm}")
+ARMPY
+[ $? -eq 0 ] || { echo "FATAL: arm $ARM is not a canonical arm"; exit 2; }
+export SGLANG_VP_HOST_CONFIG="${VP_GATE_HOST_CONFIG:-$TREE/deploy/hosts/vast-a100.json}"
 unset SGLANG_MOE_CONFIG_DIR
 # Stock mode: strip EVERY vpipe knob (including the weights remap above) so
 # the server is genuinely stock — the per-family stock-inertness gate serves
