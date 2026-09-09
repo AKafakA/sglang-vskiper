@@ -34,9 +34,8 @@ _MOCK_CONFIG_ENVS = (
     FULL_GRAPH_MOCK_SKIPPED_DEPTH_RATIO_ENV,
     FULL_GRAPH_MOCK_SEED_ENV,
 )
-_FD_PARITY_TRACE_ENABLED = bool(
-    os.environ.get("SGLANG_FD_PARITY_TRACE_RID", "").strip()
-)
+# [D-609] pinned off; parity tracing is a debug facility, not a served feature.
+_FD_PARITY_TRACE_ENABLED = False
 FD_EXECUTION_MODE_ENV = "SGLANG_FD_EXECUTION_MODE"
 FD_ACTIVE_PHASES_ENV = "SGLANG_FD_ACTIVE_PHASES"
 FD_EXECUTION_DIRECT_EAGER = "direct_eager"

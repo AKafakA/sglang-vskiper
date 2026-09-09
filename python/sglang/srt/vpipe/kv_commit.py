@@ -32,7 +32,7 @@ def _fdvp_record_cache_counter(name, delta=1):
     state = _fdvp_state()
     state[name] = int(state.get(name, 0)) + int(delta)
 def _fdvp_trace_enabled():
-    return os.environ.get("SGLANG_FD_VP_TRACE") == "1"
+    return False  # [D-609] pinned; trace knob, not configurable
 def _fdvp_state():
     _fdvp_install_trace_signal_handlers()
     if _FDVP_TRACE_STATE:
@@ -77,7 +77,7 @@ def _fdvp_install_trace_signal_handlers():
     _FDVP_TRACE_SIGNAL_HANDLERS_INSTALLED = True
 _FDVP_TRACE_SIGNAL_HANDLERS_INSTALLED = False
 def _fdvp_trace_signal_flush_enabled():
-    return os.environ.get("SGLANG_FD_VP_TRACE_SIGNAL_FLUSH", "1") != "0"
+    return True  # [D-609] pinned; trace knob, not configurable
 def _fdvp_signal_emit_and_exit(signum, _frame):
     _fdvp_emit(f"signal_{int(signum)}")
     signal.signal(signum, signal.SIG_DFL)
@@ -92,7 +92,7 @@ def _fdvp_emit(reason):
         return
     payload = {"event": "FDVP_TRACE", "reason": reason, **_FDVP_TRACE_STATE}
     line = json.dumps(payload, sort_keys=True)
-    path = os.environ.get("SGLANG_FD_VP_TRACE_FILE", "")
+    path = ""  # [D-609] pinned; trace knob, not configurable
     if path:
         with open(path, "a", encoding="utf-8") as f:
             f.write(line + "\n")

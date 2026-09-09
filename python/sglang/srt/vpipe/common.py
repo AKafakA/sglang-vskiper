@@ -29,6 +29,11 @@ import msgspec
 import signal
 import json as _json
 import os
+
+from sglang.srt.vpipe.design import (  # [D-609] the design is code
+    SERVED_FUSED_PROJECT_INPUT,
+    SERVED_REGIME_SWITCH,
+)
 import torch
 import torch.nn.functional as F
 from sglang.srt.vpipe.env import (
@@ -1033,29 +1038,23 @@ class RegimeSwitchConfig(
         self.prefill.validate()
         self.decode.validate()
 def fdvp_fused_project_input_enabled():
-    return os.environ.get(
-        "SGLANG_FD_VP_FUSED_PROJECT_INPUT", "0"
-    ).strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    # [D-609] design constant, not an environment read
+    return SERVED_FUSED_PROJECT_INPUT
 def fdvp_fused_project_input_shared_storage_enabled():
-    return os.environ.get(
-        "SGLANG_FD_VP_FUSED_PROJECT_INPUT_SHARED_STORAGE", "0"
-    ).strip().lower() in {
+    return False  # [D-609] design constant, not an environment read
+    if False:
+        _ = {
         "1",
         "true",
         "yes",
         "on",
     }
 def _fdvp_router_graph_enabled():
-    return os.environ.get("SGLANG_FD_VP_ROUTER_GRAPH", "0") == "1"
+    return False  # [D-609] pinned off; trace knob, no served purpose
 def _fdvp_timing_enabled():
-    return os.environ.get("SGLANG_FD_VP_TRACE_TIMING") == "1"
+    return False  # [D-609] pinned off; trace knob, no served purpose
 def fd_parity_trace_target() -> str:
-    return os.environ.get("SGLANG_FD_PARITY_TRACE_RID", "")
+    return ""  # [D-609] pinned off; trace knob, no served purpose
 def resolve_full_graph_skipper(
     environ: Optional[Mapping[str, str]] = None,
 ) -> FullGraphSkipperAdapter:
@@ -1156,43 +1155,8 @@ def full_graph_skipper_name(
             f"{FULL_GRAPH_SKIPPER_ENV} must be one of {choices}; got {name!r}"
         )
     return name
-# [D-609] THE SERVED DESIGN. Both admission legs, as code.
-#
-# This used to be supplied as JSON in SGLANG_VP_REGIME_SWITCH, and an unset
-# variable meant the switch was OFF -- so a deployment that set nothing silently
-# ran with the mechanism disabled, and a deployment whose variable failed to
-# reach the server was indistinguishable from one where it worked. That is
-# exactly what happened on 2026-09-09: an orchestrator exported a low-row
-# override for eighteen hours of A100 time, every manifest recorded the default,
-# and every output gate passed while the wrong system was measured.
-#
-# The owner's ruling: "remove the knobs and record the decisions and then run it"
-# -- the design lives in the tree. Deploying this tree IS configuring the
-# experiment. There is no variable to fail to apply.
-#
-# Prefill leg: min_tokens 1536 (the lower bound stands; raising it to 3072 was
-# tested and refuted, D-603). NO max_tokens -- the upper gate is deleted (D-596).
-# Decode leg: KV-token hysteresis, prod_allrun below / skip above.
-SERVED_REGIME_SWITCH = {
-    "version": 1,
-    "prefill": {
-        "enabled": True,
-        "min_tokens": 1536,
-        "row_correction_alpha": 0.0,
-        "include_mixed": True,
-        "engagement_min": 0.35,
-        "engagement_probe_every": 64,
-    },
-    "decode": {
-        "enabled": True,
-        "enter_rows": 176,
-        "exit_rows": 144,
-        "low_body": "prod_allrun",
-        "high_body": "skip",
-        "enter_kv_tokens": 200000,
-        "exit_kv_tokens": 160000,
-    },
-}
+# [D-609] The served design lives in vpipe/design.py -- ONE definition, imported
+# here rather than duplicated, so it cannot drift between modules.
 
 
 def regime_switch_config(
