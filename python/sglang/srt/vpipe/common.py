@@ -1110,7 +1110,12 @@ def flexidepth_active_phases(
     """
 
     values = os.environ if environ is None else environ
-    # [D-609] phases come from the ACTIVE ARM, not the environment
+    # [D-609] phases come from the ACTIVE ARM, not the environment.
+    # [D-611] An arm serving NO skipper routes no phases. Reporting "both" there was a
+    # true-looking field that is false, and the launch gate cannot catch it: intended and
+    # resolved would both state the same wrong thing.
+    if not skipper_deployed():
+        return frozenset()
     value = str(active_arm().get("phases") or "both").strip().lower()
     if value not in _VALID_ACTIVE_PHASES:
         choices = ", ".join(sorted(_VALID_ACTIVE_PHASES))
