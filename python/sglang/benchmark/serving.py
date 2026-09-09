@@ -714,6 +714,19 @@ async def async_request_sglang_generate(
             )
         sampling_params.update(sampling_overrides)
         sampling_params["max_new_tokens"] = request_func_input.output_len
+        # [Audit D-624 #2] `**request_body` is splatted LAST below, so any prompt-bearing key in
+        # the extra request body silently REPLACES the frozen prompt -- while validation has
+        # already hashed the frozen one. The artifact would certify prompt [1,2] while the
+        # server received [9,8], and server-reported input usage would agree with the payload,
+        # not with the suite. The prompt is the experiment's identity: refuse to let a
+        # convenience field overwrite it.
+        _prompt_keys = {"text", "input_ids", "prompt"} & set(request_body)
+        if _prompt_keys:
+            raise ValueError(
+                "extra_request_body must not carry prompt-bearing keys "
+                f"{sorted(_prompt_keys)}: the frozen suite prompt is hash-validated and "
+                "cannot be overridden per request (D-624 #2)"
+            )
         payload = {
             ("text" if isinstance(prompt, str) else "input_ids"): prompt,
             "sampling_params": sampling_params,
@@ -1607,7 +1620,19 @@ async def benchmark(
         )
         pbar_total *= args.mooncake_num_rounds
     else:
-        request_generator = get_request(input_requests, request_rate)
+        # [Audit D-624 #1] `use_trace_timestamps` is a parameter of this function and was
+        # NEVER FORWARDED, so get_request() fell back to Poisson draws with relative sleeps --
+        # while the run's own summary reports "trace" (see the request_rate fields below) and
+        # the frozen arrival file is hashed into the artifacts. Every cell would certify a
+        # traffic pattern it did not follow, and two arms handed identical arrival files would
+        # each generate their own independent arrivals. That breaks the paired comparison the
+        # campaign exists to make.
+        request_generator = get_request(
+            input_requests,
+            request_rate,
+            use_trace_timestamps=use_trace_timestamps,
+            slowdown_factor=mooncake_slowdown_factor,
+        )
 
     # Prepare LoRA request distribution parameters
     if lora_request_distribution == "distinct":
