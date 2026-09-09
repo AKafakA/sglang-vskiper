@@ -69,13 +69,59 @@ def find_vp_runtime(info: dict[str, Any]) -> dict[str, Any]:
     return vp
 
 
+def intended(tree: Path, arm: str) -> dict[str, Any]:
+    """What a CLEAN process resolves for this arm, from the deployed tree.
+
+    [Codex F8] The intended state is not "the constants" -- the constants pass through
+    arm gating (``mechanism()``, ``arm_phases()``, per-leg pruning) before they become
+    what is served. Re-implementing that gating here would create a second copy free to
+    drift from the first, which is the same class of bug as the one being fixed.
+
+    So the gate resolves through the DEPLOYED TREE'S OWN resolvers, in an environment
+    scrubbed of every ``SGLANG_*`` value. Intended = what a clean process resolves;
+    served = what the server actually resolved. A difference means the server's
+    environment, arm file, or code diverged -- which is the whole question.
+    """
+
+    import os
+
+    scrubbed = {
+        k: v
+        for k, v in os.environ.items()
+        # the host-config POINTER survives: it names a committed file, it is not a value
+        if not k.startswith("SGLANG_") or k == "SGLANG_VP_HOST_CONFIG"
+    }
+    saved = dict(os.environ)
+    sys.path.insert(0, str(tree / "python"))
+    try:
+        os.environ.clear()
+        os.environ.update(scrubbed)
+        # Select the arm IN MEMORY. A verification tool must never write to the tree it
+        # is verifying -- an interrupted run would leave deploy/active_arm rewritten.
+        from sglang.srt.vpipe import design as _d
+
+        _d._ARM_CACHE.clear()
+        _d._ARM_CACHE["name"] = arm
+        from sglang.srt.vpipe.common import resolved_design_attestation
+
+        return resolved_design_attestation()
+    finally:
+        os.environ.clear()
+        os.environ.update(saved)
+        sys.path.remove(str(tree / "python"))
+
+
 def diff(expected: Any, observed: Any, path: str = "") -> list[str]:
     """Recursive comparison that reports EVERY difference, not just the first."""
     out: list[str] = []
     if isinstance(expected, dict) and isinstance(observed, dict):
         for key in sorted(set(expected) | set(observed)):
             if key not in expected:
-                continue  # the server may attest more than the design pins; that is fine
+                # [Codex F11] An EXTRA served field is a mismatch, not a courtesy. The
+                # first version skipped unknown keys, so a served prefill.max_tokens=6144
+                # -- the exact knob D-596 deleted -- produced ZERO differences.
+                out.append(f"  {path}/{key}: SERVED BUT NOT INTENDED = {observed[key]!r}")
+                continue
             if key not in observed:
                 out.append(f"  {path}/{key}: MISSING from the served attestation")
                 continue
@@ -99,19 +145,19 @@ def main() -> int:
     design.resolve_arm(args.arm)  # fails closed on an unknown name
 
     vp = find_vp_runtime(fetch(args.url))
-    served_arm = vp.get("arm")
-    served_design = vp.get("design")
+    served = vp.get("served_design")
+    served_arm = None if served is None else served.get("arm")
 
     problems: list[str] = []
-    if served_arm is None or served_design is None:
+    if served is None or served_arm is None:
         problems.append(
-            "  the server does not publish 'arm'/'design' -- it predates the input gate "
-            "(D-614); redeploy the current tree before running a campaign"
+            "  the server does not publish vp_runtime.served_design -- it predates the "
+            "resolved-state gate (D-611); redeploy the current tree before any cell"
         )
     else:
         if served_arm != args.arm:
             problems.append(f"  arm: intended {args.arm!r} != served {served_arm!r}")
-        problems.extend(diff(design.design_attestation(), served_design, "design"))
+        problems.extend(diff(intended(args.tree, args.arm), served, "served_design"))
 
     print(f"intended arm : {args.arm}")
     print(f"served arm   : {served_arm}")

@@ -28,6 +28,7 @@ from typing import Any, Callable, Optional
 import torch
 from sglang.srt.vpipe.common import (
     regime_switch_config,
+    resolved_design_attestation,
 )
 from sglang.srt.vpipe.env import (
     COMPACT_ACCOUNTING_CAPACITY_FRACTION,
@@ -318,6 +319,12 @@ def scheduler_runtime_attestation(scheduler: Any) -> dict[str, Any]:
             "decode_passes": int(scheduler.vp_bc_decode_passes),
         },
         "model": model_state,
+        # [D-611, Codex F7/F8] TOP-LEVEL and RESOLVED. The first attempt put these inside
+        # the seam's dict, which lands under "model" -- so the gate looked one level too
+        # shallow and would have rejected every correct server. And it published the
+        # DECLARED constants, which the gate then compared against the same constants: a
+        # tautology. This is what the resolvers actually returned this boot.
+        "served_design": resolved_design_attestation(),
     }
     # (c3) coverage-dense evidence block (design 2026-08-04). Emitted ONLY when
     # the mechanism is armed (FD skip-decode deployed AND the
