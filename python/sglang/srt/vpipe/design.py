@@ -118,10 +118,19 @@ ARMS: Final[dict[str, dict[str, Any]]] = {
     # FlexiDepth, both phases -- THE SERVED SYSTEM the paper reports.
     "integrated_it4": {"skipper": "flexidepth", "phases": "both", "regime_switch": True},
     # Arbitrary per-token routes with no semantics: the substrate-generality arm. Proves
-    # the runtime assumes nothing about the policy that produced a route.
-    "vdec_randomskip": {
+    # the runtime assumes nothing about the policy that produced a route, and carries the
+    # skip-rate x depth trade-off study.
+    #
+    # [D-619] BOTH phases, and named to say so. It was `vdec_randomskip`, decode-only, but
+    # the study overlays FlexiDepth's operating point on this surface and the served system
+    # (integrated_it4) routes both phases -- a decode-only mock would confound skip
+    # magnitude with phase coverage. The mock itself is phase-agnostic: prepare_batch
+    # `del phase` and derives routes from (request_ids, token_epochs), so this is
+    # configuration, not new code. The old name would have been a label asserting something
+    # the system does not do.
+    "integrated_randomskip": {
         "skipper": "deterministic_mock",
-        "phases": "decode",
+        "phases": "both",
         "regime_switch": True,
         # These three are NOT free parameters: they are the values the deleted
         # arm_env_vdec_randomskip.sh exported, carried over verbatim. Choosing new ones
