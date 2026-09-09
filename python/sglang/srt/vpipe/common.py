@@ -35,6 +35,7 @@ from sglang.srt.vpipe.design import (  # [D-609] the design is code
     SERVED_FUSED_PROJECT_INPUT,
     SERVED_REGIME_SWITCH,
     active_arm,
+    arm_phases,
     mechanism,
     skipper_deployed,
 )
@@ -1193,7 +1194,18 @@ def regime_switch_config(
             f'"off" (= baseline arm). Configuring the design by environment is '
             f"forbidden (D-609); it is a constant in vpipe/common.py. Got {raw!r}"
         )
-    raw = _json.dumps(SERVED_REGIME_SWITCH)
+    # [D-611] An arm routes only the phases it has. The regime switch carries BOTH
+    # admission legs, but a prefill-only arm must not run the decode leg: its stock low
+    # band is dispatched through the FlexiDepth conditional decode backend, which does
+    # not exist without a decode phase (decode_cuda_graph_runner asserts exactly that).
+    # The deleted arm_env_vpre_binarycohort.sh expressed this by exporting a prefill-only
+    # config; with the scripts gone, the arm's phases have to say it.
+    design = dict(SERVED_REGIME_SWITCH)
+    phases = arm_phases()
+    for leg in ("prefill", "decode"):
+        if leg not in phases:
+            design[leg] = {**design[leg], "enabled": False}
+    raw = _json.dumps(design)
     # Memoized on the raw string: the gate (flexidepth_phase_enabled)
     # consults this ~32-48x per pass, and the config is boot-constant —
     # re-decoding the JSON per call taxed every regime-on pass.
