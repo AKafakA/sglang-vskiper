@@ -103,9 +103,6 @@ from sglang.srt.vpipe.env import (
 from sglang.srt.vpipe.mlp_compact import (
     full_graph_dual_compact_min_rows,
 )
-from sglang.srt.vpipe.routing import (
-    full_graph_forced_route,
-)
 
 
 
@@ -498,11 +495,6 @@ def validate_full_graph_model_configuration(
     device_route_tape = full_graph_device_route_tape_enabled(values)
     device_route_digest = full_graph_device_route_digest_enabled(values)
     scheduler_convergence = full_graph_scheduler_convergence_enabled(values)
-    forced_route = full_graph_forced_route(values)
-    if forced_route is not None and skipper_adapter.requires_stable_request_ids:
-        raise ValueError(
-            f"{FD_FORCE_ROUTE_ENV} is unsupported by {skipper_adapter.name}"
-        )
     forced_all_run_fastpath = full_graph_forced_all_run_fastpath_enabled(values)
     forced_all_run_production_attention = (
         full_graph_forced_all_run_production_attention_enabled(values)
@@ -629,7 +621,7 @@ def validate_full_graph_model_configuration(
                 f"{FD_CONDITIONAL_GRAPH_ENV}=1 requires decode in "
                 f"{FD_ACTIVE_PHASES_ENV}"
             )
-        if forced_route is not None or forced_all_run_fastpath:
+        if forced_all_run_fastpath:
             raise ValueError(
                 f"{FD_CONDITIONAL_GRAPH_ENV}=1 requires dynamic routing"
             )
@@ -649,7 +641,7 @@ def validate_full_graph_model_configuration(
             raise ValueError(
                 f"{FD_DEFER_PROJECT_KV_ENV}=1 requires " + ", ".join(missing)
             )
-    if forced_all_run_fastpath and forced_route is not True:
+    if forced_all_run_fastpath:
         raise ValueError(
             f"{FD_FORCED_ALL_RUN_FASTPATH_ENV}=1 requires "
             f"{FD_FORCE_ROUTE_ENV}=all_run"
@@ -762,14 +754,6 @@ def validate_full_graph_model_configuration(
     ):
         raise ValueError(
             f"{FD_DEVICE_ROUTE_TAPE_ENV}=1 requires "
-            f"{FD_EXECUTION_MODE_ENV}={FD_EXECUTION_FULL_GRAPH}"
-        )
-    if (
-        forced_route is not None
-        and flexidepth_execution_mode(values) != FD_EXECUTION_FULL_GRAPH
-    ):
-        raise ValueError(
-            f"{FD_FORCE_ROUTE_ENV} requires "
             f"{FD_EXECUTION_MODE_ENV}={FD_EXECUTION_FULL_GRAPH}"
         )
     if execution_mode != FD_EXECUTION_FULL_GRAPH:

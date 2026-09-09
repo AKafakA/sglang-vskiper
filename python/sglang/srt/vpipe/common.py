@@ -33,6 +33,8 @@ import os
 from sglang.srt.vpipe.design import (  # [D-609] the design is code
     SERVED_EXECUTION_MODE,
     SERVED_FUSED_PROJECT_INPUT,
+    SERVED_FUSED_ROUTER_NORM,
+    SERVED_GATE_MODE,
     SERVED_REGIME_SWITCH,
     active_arm,
     active_arm_name,
@@ -253,8 +255,9 @@ def full_graph_fused_router_norm_enabled(
     Fails closed on a non-boolean value.
     """
 
-    values = os.environ if environ is None else environ
-    raw = str(values.get(FD_FUSED_ROUTER_NORM_ENV, "0")).strip().lower()
+    # [D-609] design constant. OFF keeps routing bit-identical to the released
+    # checkpoint; the fused kernel moves rows within epsilon of the 0.5 threshold.
+    raw = "1" if SERVED_FUSED_ROUTER_NORM else "0"
     true_values = {"1", "true", "yes", "on"}
     false_values = {"0", "false", "no", "off", ""}
     if raw not in true_values | false_values:
@@ -272,8 +275,9 @@ def full_graph_gate_mode(environ: Optional[Mapping[str, str]] = None) -> str:
     deployment is unchanged, and fails closed on any other value.
     """
 
-    values = os.environ if environ is None else environ
-    mode = str(values.get(FD_GATE_MODE_ENV, "released")).strip().lower()
+    # [D-609] design constant -- a property of the CHECKPOINT, never a tuning knob.
+    # A Qwen3/ste_hard checkpoint would carry its own value as an ARM field.
+    mode = SERVED_GATE_MODE
     if mode not in _VALID_GATE_MODES:
         choices = ", ".join(sorted(_VALID_GATE_MODES))
         raise ValueError(
@@ -1095,10 +1099,6 @@ def resolve_full_graph_skipper(
         float(arm["mock_skipped_depth_ratio"]),
         int(arm["mock_seed"]),
     )
-def forced_route_action(value: Optional[bool]) -> Optional[LogicalAction]:
-    if value is None:
-        return None
-    return LogicalAction.RUN if value else LogicalAction.PROJECT_ONLY
 def flexidepth_active_phases(
     environ: Optional[Mapping[str, str]] = None,
 ) -> frozenset[str]:
