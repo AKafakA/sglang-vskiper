@@ -20,15 +20,18 @@ V="${VP_GATE_PYTHON:-$W/sglang-sm75/.venv/bin/python}"
 PORT="${VP_GATE_PORT:-30258}"
 MODEL="${VP_GATE_MODEL:-$W/models/Meta-Llama-3-8B-Instruct-53346005}"
 SUITE="${VP_GATE_SUITE:-$W/suites/gsm8k.first100.requests.jsonl}"
-ENVFILE="${VP_GATE_ARM_DIR:-$GATES_DIR/arms}/arm_env_${ARM}.sh"
-[ -f "$ENVFILE" ] || { echo "FATAL: no arm env $ENVFILE"; exit 2; }
+# [Codex F13] The arm_env_*.sh scripts are deleted (D-609): every canonical invocation of
+# this gate exited 2 before launching a server. The arm is now selected by NAME through the
+# durable file the served path reads, exactly as box_vpcov_arm.sh does.
+TREE="${VP_GATE_TREE:-$(cd "$GATES_DIR/../../.." && pwd)}"
+printf '%s\n' "$ARM" > "$TREE/deploy/active_arm"
+export SGLANG_VP_HOST_CONFIG="${SGLANG_VP_HOST_CONFIG:-$TREE/deploy/hosts/vast-a100.json}"
 CRASHES=0
 for BOOT in $(seq 1 "$BOOTS"); do
   # Scrub the treatment namespace EVERY iteration (the r2 env-leak lesson).
   while read -r v; do unset "$v"; done < <(env | grep -Eo '^SGLANG_(FD|VP)_[A-Z0-9_]+')
   set -a
   # shellcheck disable=SC1090
-  source "$ENVFILE"
   set +a
   if [ "${VP_GATE_NO_FD_WEIGHTS:-0}" = "1" ]; then
     unset SGLANG_FD_WEIGHTS

@@ -86,6 +86,18 @@ if ! curl -sf -m 3 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
   exit 3
 fi
 curl -s -m 10 "http://127.0.0.1:$PORT/server_info" > "$OUT/server_info.json"
+
+# [Codex F10] THE INPUT GATE, before any work runs. Previously this launcher fetched
+# server_info and went straight to the probe, so it could measure a wrongly resolved arm --
+# the failure the gate was written to prevent, with the gate sitting unused beside it.
+# A non-zero exit here means DO NOT MEASURE: tear the server down and fail the arm.
+if ! $V "$TREE/test/vp/gates/verify_served_design.py" \
+      --url "http://127.0.0.1:$PORT" --arm "$ARM" --tree "$TREE" 2>&1 | tee -a "$OUT/posture.txt"; then
+  echo "INPUT GATE FAILED for arm $ARM -- refusing to probe" | tee -a "$OUT/posture.txt"
+  kill $SPID 2>/dev/null; sleep 5; kill -9 $SPID 2>/dev/null
+  exit 4
+fi
+
 $V "$TREE/test/vp/fdpre_label_probe.py" --url "http://127.0.0.1:$PORT" \
   --requests-jsonl "$SUITE" --first-n 32 \
   --concurrency 8 --max-new-tokens 128 --topk 20 \
