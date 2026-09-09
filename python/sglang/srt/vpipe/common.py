@@ -31,7 +31,9 @@ import json as _json
 import os
 
 from sglang.srt.vpipe.design import (  # [D-609] the design is code
+    SERVED_EXECUTION_MODE,
     SERVED_FUSED_PROJECT_INPUT,
+    active_arm,
     SERVED_REGIME_SWITCH,
     skipper_deployed,
 )
@@ -833,9 +835,10 @@ def flexidepth_execution_mode(
 ) -> str:
     """Return the explicit execution mode and reject misspelled modes."""
 
-    values = os.environ if environ is None else environ
-    mode = values.get(FD_EXECUTION_MODE_ENV, FD_EXECUTION_DIRECT_EAGER)
-    mode = str(mode or FD_EXECUTION_DIRECT_EAGER).strip().lower()
+    # [D-609] The served execution mode is a constant. It defaulted to
+    # direct_eager, so a clean deployment could not run with CUDA graphs at all --
+    # another design value that had to be pushed in from outside to be correct.
+    mode = SERVED_EXECUTION_MODE
     if mode not in _VALID_EXECUTION_MODES:
         choices = ", ".join(sorted(_VALID_EXECUTION_MODES))
         raise ValueError(
@@ -1102,7 +1105,8 @@ def flexidepth_active_phases(
     """
 
     values = os.environ if environ is None else environ
-    value = str(values.get(FD_ACTIVE_PHASES_ENV, "both") or "both").strip().lower()
+    # [D-609] phases come from the ACTIVE ARM, not the environment
+    value = str(active_arm().get("phases") or "both").strip().lower()
     if value not in _VALID_ACTIVE_PHASES:
         choices = ", ".join(sorted(_VALID_ACTIVE_PHASES))
         raise ValueError(
