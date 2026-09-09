@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""Refuse to start a campaign whose prerequisites are not staged.
+
+WHY THIS EXISTS. On 2026-09-09 the A100 was destroyed and re-rented. The re-stage was built
+from a historical setup record instead of from the campaign's own requirements, so the
+**stock upstream SGLang baseline tree was missing** -- the tree every paired performance cell
+is measured against. Nothing objected. It surfaced only because the owner asked.
+
+That is the same failure as D-609: an intended state that nothing enforced. `verify_served_design`
+closes it for the SERVER's configuration; this closes it for the campaign's INPUTS.
+
+The baseline is not optional and is not interchangeable with the `stock` ARM:
+
+    upstream 602c8615a1   the honest EXTERNAL baseline -- every paired performance cell
+    stock arm             OUR fork with the skipper inert -- proves the tree adds nothing
+                          when off; a 32-request correctness control, NOT a baseline
+
+D-597 measured the two within 0.15 %, but that was one measurement. Treating it as permanent
+licence to skip upstream would be assuming exactly what wants checking.
+
+Exit non-zero = DO NOT RUN. A campaign script must treat that as fatal, never a warning.
+
+    campaign_preflight.py --tree <fork tree> --upstream <upstream tree> --workdir <staging root>
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+
+def check(label: str, ok: bool, detail: str = "") -> bool:
+    print(f"  {'OK  ' if ok else 'FAIL'}  {label:<38}{detail}")
+    return ok
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--tree", type=Path, required=True, help="the served fork tree")
+    ap.add_argument("--upstream", type=Path, required=True, help="stock upstream baseline tree")
+    ap.add_argument("--workdir", type=Path, required=True, help="staging root (models, suites)")
+    ap.add_argument("--require-suites", action="store_true",
+                    help="also demand campaign suites + banks (STEP 3 onward)")
+    a = ap.parse_args()
+
+    ok = True
+    print("CAMPAIGN PREFLIGHT -- prerequisites derived from the PLAN, not from a prior setup")
+
+    ok &= check("served fork tree", (a.tree / "python/sglang/srt/vpipe/design.py").is_file(), str(a.tree))
+
+    # The upstream tree must be GENUINELY stock. It shares most of its files with the fork, so
+    # "the directory exists" proves nothing -- count the vpipe package instead.
+    up_vpipe = a.upstream / "python/sglang/srt/vpipe"
+    up_present = (a.upstream / "python/sglang/srt/model_executor/model_runner.py").is_file()
+    ok &= check("upstream baseline tree present", up_present, str(a.upstream))
+    ok &= check("upstream is GENUINELY stock", up_present and not up_vpipe.exists(),
+                "vpipe/ package must be absent" if up_vpipe.exists() else "no vpipe/ package")
+
+    arm_file = a.tree / "deploy" / "active_arm"
+    ok &= check("deploy/active_arm present", arm_file.is_file(),
+                arm_file.read_text().strip() if arm_file.is_file() else "MISSING (no default, D-611)")
+
+    hosts = sorted((a.tree / "deploy" / "hosts").glob("*.json")) if (a.tree / "deploy" / "hosts").is_dir() else []
+    ok &= check("host config present", bool(hosts), hosts[0].name if hosts else "none")
+    if hosts:
+        cfg = json.loads(hosts[0].read_text())
+        for key in ("flexidepth_weights", "conditional_graph_helper", "moe_config_dir"):
+            p = str(cfg.get(key, "") or "")
+            ok &= check(f"host path {key}", bool(p) and Path(p).exists(), p or "unset")
+
+    models = list((a.workdir / "models").glob("*/*.safetensors")) if (a.workdir / "models").is_dir() else []
+    ok &= check("served model weights", bool(models), f"{len(models)} shards")
+
+    if a.require_suites:
+        suites = list((a.workdir / "serving-fullcells").glob("*.requests.jsonl"))
+        ok &= check("campaign suites", bool(suites), f"{len(suites)} suites")
+        banks = list((a.workdir / "banks").glob("*")) if (a.workdir / "banks").is_dir() else []
+        ok &= check("equal-work banks", bool(banks), f"{len(banks)} banks")
+
+    if not ok:
+        print("\nREFUSING: a campaign run against missing prerequisites produces cells that "
+              "cannot be compared to a baseline. Stage what is missing first.")
+        return 1
+    print("\nOK: prerequisites staged. Campaign may proceed.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
