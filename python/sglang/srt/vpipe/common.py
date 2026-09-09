@@ -1247,7 +1247,9 @@ def resolved_design_attestation() -> dict[str, Any]:
     return {
         "source": "resolvers, at boot (D-611)",
         "arm": active_arm_name(),
-        "skipper": full_graph_skipper_name(),
+        # stock serves no skipper; reporting the fallback adapter name there would be a
+        # true-looking field that is false -- the shape of defect this file exists to end
+        "skipper": full_graph_skipper_name() if skipper_deployed() else None,
         "regime_switch": (
             None
             if switch is None

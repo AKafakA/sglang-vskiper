@@ -132,7 +132,6 @@ ARMS: Final[dict[str, dict[str, Any]]] = {
         "mock_seed": 1234,
     },
 }
-DEFAULT_ARM: Final[str] = "integrated_it4"
 
 
 def resolve_arm(name: str) -> dict[str, Any]:
@@ -262,7 +261,16 @@ def active_arm_name() -> str:
 
     if "name" not in _ARM_CACHE:
         f = _repo_root() / _ACTIVE_ARM_FILE
-        name = f.read_text().strip() if f.is_file() else DEFAULT_ARM
+        if not f.is_file():
+            # [Codex F12] No silent default. Substituting a default arm here would quietly
+            # serve the integrated skipper for a deployment that forgot to state its arm --
+            # the "default that quietly applies" property that let a wrong configuration
+            # run for eighteen hours. An unstated arm is an incomplete deployment.
+            raise ValueError(
+                f"{_ACTIVE_ARM_FILE} is missing from the deployed tree ({f}). The arm is "
+                f"not defaulted: write one of {sorted(ARMS)} into that file (D-609/D-611)."
+            )
+        name = f.read_text().strip()
         resolve_arm(name)  # fail closed on an unknown name
         _ARM_CACHE["name"] = name
     return _ARM_CACHE["name"]
