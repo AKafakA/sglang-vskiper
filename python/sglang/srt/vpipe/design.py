@@ -117,6 +117,27 @@ ARMS: Final[dict[str, dict[str, Any]]] = {
     "vpre_binarycohort": {"skipper": "flexidepth", "phases": "prefill", "regime_switch": True},
     # FlexiDepth, both phases -- THE SERVED SYSTEM the paper reports.
     "integrated_it4": {"skipper": "flexidepth", "phases": "both", "regime_switch": True},
+    # [D-627] THE QUALITY POSTURE. Identical to integrated_it4 except that admission is OFF,
+    # so every routed pass routes regardless of load.
+    #
+    # This restores what the deleted arm_env_*.sh scripts did: they exported NO
+    # SGLANG_VP_REGIME_SWITCH, so the mechanism was off and the arm always routed. The D-611
+    # refactor set regime_switch=True on every routed arm, and Codex flagged it (review 1, P1
+    # F4) -- I dismissed it as matching the campaign manifest. It does match the CAMPAIGN. It
+    # does not match the QUALITY lane, and the two need opposite postures:
+    #
+    #   performance : admission ON  -- measures the served design under real load
+    #   quality     : admission OFF -- measures the SKIPPER; quality must not depend on load
+    #
+    # Measured consequence of getting this wrong: an lm-eval run at concurrency 16 sits far
+    # below enter_rows=176, so the decode leg stays in prod_allrun. A quality run on
+    # 2026-09-09 executed 16,702 decode passes with skip=0 -- it measured a system that never
+    # skipped, and every quality number from it is void.
+    "integrated_alwaysskip": {
+        "skipper": "flexidepth",
+        "phases": "both",
+        "regime_switch": False,
+    },
     # Arbitrary per-token routes with no semantics: the substrate-generality arm. Proves
     # the runtime assumes nothing about the policy that produced a route, and carries the
     # skip-rate x depth trade-off study.
