@@ -133,6 +133,12 @@ def regime_switch_attestation(
                 "min_tokens": config.prefill.min_tokens,
                 "row_correction_alpha": config.prefill.row_correction_alpha,
                 "include_mixed": config.prefill.include_mixed,
+                # [D-609] The engagement gate was CONFIGURED but never ATTESTED, so
+                # /server_info could not confirm it and the launch gate could not check
+                # it. A design parameter that cannot be read back is the exact hole that
+                # let a rejected configuration run for eighteen hours.
+                "engagement_min": config.prefill.engagement_min,
+                "engagement_probe_every": config.prefill.engagement_probe_every,
             },
             "decode": {
                 "enabled": config.decode.enabled,
