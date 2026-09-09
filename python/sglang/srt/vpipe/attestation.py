@@ -125,7 +125,6 @@ def regime_switch_attestation(
             "prefill": {
                 "enabled": config.prefill.enabled,
                 "min_tokens": config.prefill.min_tokens,
-                "max_tokens": config.prefill.max_tokens,
                 "row_correction_alpha": config.prefill.row_correction_alpha,
                 "include_mixed": config.prefill.include_mixed,
             },

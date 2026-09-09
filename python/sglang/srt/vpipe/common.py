@@ -874,14 +874,16 @@ class RegimeSwitchPrefillConfig(
     min_tokens: int
     row_correction_alpha: float
     include_mixed: bool
-    # Upper token gate (2026-08-20, length-controlled prefill A/B): routed
-    # prefill WINS on small passes (gsm8k@10, pass p50 ~1.0K tokens,
-    # TTFT −9.6/−13.4% over two reps) and LOSES on large packed passes
-    # (coqa@40, pass p50 ~7.0K, TTFT +29%) — the thin-projector cohort
-    # lanes eat the savings at large shapes. Passes with effective tokens
-    # ABOVE this gate run the dense body. None = no upper gate, byte-
-    # identical to the pre-existing sub-threshold-only behavior.
-    max_tokens: Optional[int] = None
+    # [D-596] `max_tokens` (the upper token gate) is DELETED. Its 2026-08-20
+    # premise -- the routed body loses on large packed passes -- was falsified by
+    # the rebuilt body and by the per-token profile, which INVERTS it (cost falls
+    # with pass size). Measured removal (D-579): +9.5 % of gsm8k overload passes
+    # move dense->routed for TTFT -6.1 % / E2E -2.8 %, and it is provably inert on
+    # coqa (byte-identical prefill counters, both arms). The engagement escape
+    # below is the mechanism that decides this properly, from measured routing
+    # share rather than a token bracket. Setting the key is now refused by
+    # forbid_unknown_fields, so a stale config fails the boot instead of silently
+    # reinstating the gate.
     # [P8 v2, D-339] Engagement-keyed escape: token thresholds cannot
     # separate engaged large packs (gsm8k 2-4K: routed WINS) from
     # low-engagement ones (mmlu_pro 2.5K: routed loses). When set, the
@@ -914,16 +916,6 @@ class RegimeSwitchPrefillConfig(
                 "regime switch prefill.row_correction_alpha must be "
                 "non-negative"
             )
-        if self.max_tokens is not None:
-            if self.max_tokens <= 0:
-                raise ValueError(
-                    "regime switch prefill.max_tokens must be positive"
-                )
-            if self.max_tokens < self.min_tokens:
-                raise ValueError(
-                    "regime switch prefill.max_tokens must not undercut "
-                    "min_tokens (the FD window would be empty)"
-                )
 class RegimeSwitchDecodeConfig(
     msgspec.Struct, frozen=True, forbid_unknown_fields=True
 ):

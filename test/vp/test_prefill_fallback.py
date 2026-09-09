@@ -2,7 +2,7 @@
 (SGLANG_FD_FULL_GRAPH_PREFILL_FALLBACK_MIN_PROJECT=<share>).
 
 Below the PROJECT-share threshold a routed layer must run the exact dense full-dual body (bit-identical to
-`_full_dual_mlp`, padded rows zeroed) and count the decision; at or above it the dispatcher must continue to the
+`_native_dense_mlp`, padded rows zeroed) and count the decision; at or above it the dispatcher must continue to the
 configured body and count only the check. The env reader fails closed on malformed values. CPU-only environments run
 the reader tests and skip the GPU dispatch tests.
 """
@@ -82,7 +82,7 @@ def test_env_reader_fails_closed():
 
 @cuda
 @pytest.mark.parametrize("rows,run_frac", [(771, 0.92), (2048, 0.9)])
-def test_low_project_share_falls_back_to_full_dual(monkeypatch, rows, run_frac):
+def test_low_project_share_falls_back_to_native_dense(monkeypatch, rows, run_frac):
     import sglang.srt.server_args as sa
     from sglang.srt.vpipe import mlp as vp_mlp
 
@@ -97,7 +97,7 @@ def test_low_project_share_falls_back_to_full_dual(monkeypatch, rows, run_frac):
         # it must be bit-identical to that body and agree with the full-dual reference to fp16 rounding
         ref = vp_mlp._dense_filtered_project_mlp(layer, proj, h, w, run_mask)
         ref = torch.where(valid.view(-1, 1), ref, torch.zeros_like(ref))
-        dual = vp_mlp._full_dual_mlp(layer, proj, h, w, run_mask)
+        dual = vp_mlp._native_dense_mlp(layer, proj, h, w, run_mask)
         dual = torch.where(valid.view(-1, 1), dual, torch.zeros_like(dual))
         before = vp_mlp._PREFILL_FALLBACK.get(key, (0, 0))
         out = vp_mlp.fd_conditional_mlp_full_graph(
