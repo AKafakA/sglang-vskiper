@@ -630,6 +630,129 @@ def _resume_artifacts_match(
     return audit.get("status") == "passed"
 
 
+GATES = ROOT / "test/vp/gates"
+
+# Lanes whose artifacts CAN carry an empty generation. Equal-work and probe lanes are
+# excluded because `ignore_eos` fills an immediate EOS to budget there, which makes a
+# zero-empty result vacuous -- verify_zero_empty refuses such an artifact by design.
+# `mixed_or_unknown` is deliberately INCLUDED: an intent we do not recognise must be
+# checked, never silently waved through.
+_NATURAL_INTENTS = frozenset(
+    {
+        "paper_quality",
+        "natural_serving",
+        "natural_serving_watchdog",
+        "mixed_or_unknown",
+    }
+)
+
+
+def _arm_routes_decode(server_info: Any) -> bool:
+    """Does the LIVE server report a skipper that routes the decode phase?
+
+    Read from `vp_runtime.served_design`, the D-609 attestation block -- what the server
+    says it resolved, never a flag we passed. Verified against captured server_info:
+    a baseline arm reports {arm: stock, skipper: None, active_phases: []} and a routed
+    arm {arm: integrated_*, skipper: flexidepth, active_phases: [decode, prefill]}.
+
+    A missing block is a REFUSAL, not a False. It means the served tree predates the
+    D-609 attestation, so we cannot tell what ran -- and "measured the wrong system while
+    every gate passed" is the exact failure this harness exists to prevent.
+    """
+    try:
+        served = server_info["internal_states"][0]["vp_runtime"]["served_design"]
+    except (KeyError, IndexError, TypeError) as error:
+        raise RuntimeError(
+            "live /server_info carries no vp_runtime.served_design: the served tree "
+            "predates the D-609 design attestation, so the resolved arm cannot be "
+            "verified. Deploy the current tree."
+        ) from error
+    return "decode" in (served.get("active_phases") or [])
+
+
+def _cell_gates(
+    *,
+    output_file: Path,
+    arrival_file: Path,
+    server_info_before: Path,
+    server_info_after: Path,
+    evaluation_intent: str,
+    routes_decode: bool,
+    env: dict[str, str],
+) -> list[str]:
+    """Run the per-cell gates. Returns the names of the ones that REFUSED.
+
+    Every gate here already exits 0/1 via `raise SystemExit(main())`, so the contract is
+    just: call it, keep the exit code, and let the caller fail the cell. Never pipe a
+    gate into `tail`/`sed` -- that discards the status, which is how a refusing gate came
+    to print FATAL and be followed by a DONE marker.
+    """
+    checks: list[tuple[str, list[str]]] = [
+        (
+            "arrival_fidelity",
+            [
+                sys.executable,
+                str(GATES / "verify_arrival_fidelity.py"),
+                "--arrival",
+                str(arrival_file),
+                "--artifact",
+                str(output_file),
+            ],
+        )
+    ]
+    if evaluation_intent in _NATURAL_INTENTS:
+        checks.append(
+            (
+                "zero_empty",
+                [
+                    sys.executable,
+                    str(GATES / "verify_zero_empty.py"),
+                    "--artifact",
+                    str(output_file),
+                ],
+            )
+        )
+    if routes_decode:
+        checks.append(
+            (
+                "skipping_executed",
+                [
+                    sys.executable,
+                    str(GATES / "verify_skipping_executed.py"),
+                    "--before",
+                    str(server_info_before),
+                    "--after",
+                    str(server_info_after),
+                ],
+            )
+        )
+    failed: list[str] = []
+    for name, command in checks:
+        if subprocess.run(command, cwd=ROOT, env=env, check=False).returncode != 0:
+            failed.append(name)
+    return failed
+
+
+def _invalidate_cell_artifacts(paths: list[Path]) -> list[str]:
+    """Rename a refused cell's artifacts out of the way.
+
+    The benchmark child writes the .jsonl itself, so a gate cannot prevent the write --
+    only make sure nothing downstream mistakes it for a passing cell. Same treatment as
+    cell_gates.py. The runner refuses to overwrite an existing artifact, so a rerun
+    needs these gone.
+    """
+    renamed: list[str] = []
+    for path in paths:
+        if not path.exists():
+            continue
+        target = path.with_name(f"INVALID.{path.name}")
+        if target.exists():
+            target.unlink()
+        path.rename(target)
+        renamed.append(str(target))
+    return renamed
+
+
 def _run_cell(
     args: argparse.Namespace,
     workload: str,
@@ -657,6 +780,11 @@ def _run_cell(
     stdout_file = args.output_dir / f"{label}.stdout.log"
     command_file = args.output_dir / f"{label}.command.json"
     arrival_file = args.output_dir / f"{label}.arrival.requests.jsonl"
+    # PER-CELL server_info. The run-level pair spans every workload x qps x rep, so it can
+    # certify a suite but not the cell that just ran -- and the skipping gate is a per-cell
+    # question.
+    server_info_before_file = args.output_dir / f"{label}.server_info.before.json"
+    server_info_after_file = args.output_dir / f"{label}.server_info.after.json"
     seed = args.seed + rep - 1
     arrival_schedule = _materialize_arrival_schedule(
         requests_path,
@@ -834,7 +962,11 @@ def _run_cell(
         print(json.dumps(command_record, sort_keys=True), flush=True)
         return command_record
 
-    _validate_live_deployment(args.host, args.port, args.deployment)
+    server_info_before = _validate_live_deployment(
+        args.host, args.port, args.deployment
+    )
+    _write_json(server_info_before_file, server_info_before)
+    routes_decode = _arm_routes_decode(server_info_before)
 
     sampler = subprocess.Popen(
         sampler_command,
@@ -856,6 +988,10 @@ def _run_cell(
     finally:
         _stop_process_group(sampler, timeout_s=10)
     ended = time.time()
+    _write_json(
+        server_info_after_file,
+        _fetch_json(f"http://{args.host}:{args.port}/server_info"),
+    )
     audit_command = [
         sys.executable,
         str(ROOT / "test/vp/validate_qps_artifact.py"),
@@ -886,6 +1022,16 @@ def _run_cell(
         score_command.append("--allow-code-execution")
     subprocess.run(score_command, cwd=ROOT, env=child_environment, check=True)
     accounting_passed = audit_result.returncode == 0
+    failed_gates = _cell_gates(
+        output_file=output_file,
+        arrival_file=arrival_file,
+        server_info_before=server_info_before_file,
+        server_info_after=server_info_after_file,
+        evaluation_intent=workload_record.get("evaluation_intent", "mixed_or_unknown"),
+        routes_decode=routes_decode,
+        env=child_environment,
+    )
+    cell_passed = accounting_passed and not failed_gates
     command_record.update(
         {
             "started_unix_s": started,
@@ -897,7 +1043,13 @@ def _run_cell(
             "load_file": str(load_file),
             "stdout_file": str(stdout_file),
             "score_command": score_command,
-            "status": "completed" if accounting_passed else "accounting_failed",
+            "routes_decode": routes_decode,
+            "failed_gates": failed_gates,
+            "status": (
+                "completed"
+                if cell_passed
+                else ("accounting_failed" if not accounting_passed else "gate_failed")
+            ),
             "artifacts": {
                 "arrival_schedule": _artifact_record(arrival_file),
                 "benchmark": _artifact_record(output_file),
@@ -911,16 +1063,23 @@ def _run_cell(
             },
         }
     )
-    _write_json(command_file, command_record)
-    if not accounting_passed:
+    if not cell_passed:
+        reason = "strict_accounting" if not accounting_passed else "gates"
+        command_record["invalidated_artifacts"] = _invalidate_cell_artifacts(
+            [output_file, score_file, audit_file]
+        )
+        _write_json(command_file, command_record)
         print(
             f"REJECTED workload={workload} qps={qps:g} rep={rep} "
-            f"reason=strict_accounting output={output_file}",
+            f"reason={reason} gates={','.join(failed_gates) or '-'} "
+            f"output={output_file}",
             flush=True,
         )
         raise StrictAccountingError(
-            f"strict accounting validation failed for {label}"
+            f"cell {label} refused: reason={reason} "
+            f"failed_gates={failed_gates or '[]'}"
         )
+    _write_json(command_file, command_record)
     print(
         f"COMPLETED workload={workload} qps={qps:g} rep={rep} "
         f"elapsed={ended - started:.1f}s output={output_file}",
