@@ -113,11 +113,22 @@ def served_arm(port: int) -> str:
         ) from error
 
 
+def arm_is_upstream(spec: dict[str, Any], arm: str) -> bool:
+    """Is this arm GENUINE upstream SGLang, served from its own tree?
+
+    The paper's baseline is a freshly-cloned upstream checkout with no vpipe/ package
+    (owner order D-587), NOT ARMS["stock"] -- which is this fork with the skipper off and
+    whose own comment falsely claimed to be upstream for months.
+    """
+    return arm == spec.get("upstream_arm_name", "upstream")
+
+
 class Server:
     """One booted arm. Boot, attest, tear down -- and never leave a process behind."""
 
     def __init__(self, spec: dict[str, Any], arm: str, port: int, log_path: Path) -> None:
         self.spec, self.arm, self.port, self.log_path = spec, arm, port, log_path
+        self.upstream = arm_is_upstream(spec, arm)
         self.process: subprocess.Popen[bytes] | None = None
 
     def command(self) -> list[str]:
@@ -135,12 +146,19 @@ class Server:
 
     def __enter__(self) -> Server:
         tree = Path(self.spec["tree"])
-        # The arm is selected IN THE TREE, never through the environment (D-609).
-        (tree / "deploy/active_arm").write_text(self.arm + "\n")
         environment = dict(os.environ)
-        environment["PYTHONPATH"] = str(tree / "python")
         environment["SGLANG_IS_FLASHINFER_AVAILABLE"] = "false"
-        environment["SGLANG_VP_HOST_CONFIG"] = str(tree / self.spec["host_config"])
+        if self.upstream:
+            # Served from the upstream tree, with NO vpipe environment at all. There is no
+            # active_arm to write and no host config to point at -- that tree has neither.
+            environment["PYTHONPATH"] = str(Path(self.spec["upstream_tree"]) / "python")
+            for key in ("SGLANG_VP_HOST_CONFIG", "SGLANG_FD_WEIGHTS"):
+                environment.pop(key, None)
+        else:
+            # The arm is selected IN THE TREE, never through the environment (D-609).
+            (tree / "deploy/active_arm").write_text(self.arm + "\n")
+            environment["PYTHONPATH"] = str(tree / "python")
+            environment["SGLANG_VP_HOST_CONFIG"] = str(tree / self.spec["host_config"])
         handle = self.log_path.open("wb")
         self.process = subprocess.Popen(
             self.command(), stdout=handle, stderr=subprocess.STDOUT,
@@ -157,6 +175,23 @@ class Server:
         else:
             raise RuntimeError(f"{self.arm} server never became healthy; see {self.log_path}")
 
+        if self.upstream:
+            # For upstream the ABSENCE of the block is the attestation, and its PRESENCE
+            # means the fork was launched by mistake -- the exact confusion that made every
+            # prior campaign measure ARMS["stock"] while calling it upstream.
+            info = server_info(self.port)
+            try:
+                design = info["internal_states"][0]["vp_runtime"]["served_design"]
+            except (KeyError, IndexError, TypeError):
+                design = None
+            if design is not None:
+                raise RuntimeError(
+                    f"arm {self.arm!r} is declared upstream but the live server carries "
+                    f"vp_runtime.served_design ({design.get('arm')!r}) — this is our fork. "
+                    "Refusing to record it as upstream."
+                )
+            log(f"    {self.arm} up on :{self.port}, attested UPSTREAM (no vp_runtime)")
+            return self
         live = served_arm(self.port)
         if live != self.arm:
             raise RuntimeError(
@@ -225,13 +260,64 @@ def run_arm_cells(spec: dict[str, Any], dataset: str, rates: dict[str, float],
              "--evidence-class", spec.get("evidence_class", "development"),
              "--host", "127.0.0.1", "--port", str(port), "--reps", "1",
              "--min-prompts", str(rows), "--duration-s", str(duration),
-             "--runner-source-revision", spec["source_revision"]],
+             "--runner-source-revision", spec["source_revision"]]
+            + (["--upstream-baseline"] if arm_is_upstream(spec, arm) else []),
             check=False, stdout=(cell_root / "runner.log").open("wb"),
             stderr=subprocess.STDOUT,
         )
         (cell_root / "server_info.after.json").write_text(
             json.dumps(server_info(port), indent=2, sort_keys=True) + "\n")
     return completed.returncode
+
+
+def cell_artifact(cell_root: Path, suite: str) -> Path | None:
+    """The one results .jsonl for a suite, excluding the sidecar arrival/load traces."""
+    matches = [p for p in (cell_root / "cells").rglob(f"{suite}_qps*_rep*.jsonl")
+               if "arrival" not in p.name and "load" not in p.name]
+    return matches[0] if len(matches) == 1 else None
+
+
+def cross_arm_work_gate(spec: dict[str, Any], dataset: str, rates: dict[str, float],
+                        rep: int, out_dir: Path) -> list[str]:
+    """GR-1a — did the two arms do the SAME WORK? Returns the rate labels that FAILED.
+
+    This gate cannot live in run_qps_evaluation's per-cell gates: it compares two arms, and
+    a cell knows only its own. So it has had NO CALLER anywhere in the repo -- `cell_gates.py`,
+    the file that runs it, is invoked by nothing -- and cross-arm claims on unmatched work is
+    the failure that already cost this project ~$100 and two weeks, with a final warning
+    attached. A pairing driver is the only place it can be enforced, so it is enforced here.
+
+    An UNCHECKED pair is a FAILED pair, never a passing one: a missing artifact fails the
+    rate rather than skipping it.
+    """
+    baseline, treatment = spec["arms"]["baseline"], spec["arms"]["treatment"]
+    failed: list[str] = []
+    for label in rates:
+        suite = suite_name(dataset, label)
+        specs, missing = [], []
+        for role, arm in (("baseline", baseline), ("treatment", treatment)):
+            artifact = cell_artifact(out_dir / f"rep{rep}" / dataset / arm, suite)
+            if artifact is None:
+                missing.append(f"{role}({arm})")
+            else:
+                specs.append(f"{arm}={artifact}")
+        if missing:
+            log(f"    GR-1a {suite}: FAIL — no unique artifact for {', '.join(missing)}; "
+                "an unchecked pair is a failed pair")
+            failed.append(label)
+            continue
+        command = [sys.executable, str(Path(spec["tree"]) / "test/vp/cross_arm_work_gate.py"),
+                   "--cell", f"{suite}_rep{rep}"]
+        for item in specs:
+            command += ["--arm", item]
+        done = subprocess.run(command, cwd=Path(spec["tree"]), capture_output=True, text=True)
+        if done.returncode != 0:
+            tail = (done.stdout + done.stderr).strip().splitlines()
+            log(f"    GR-1a {suite}: FAIL — {tail[-1][:150] if tail else 'no output'}")
+            failed.append(label)
+        else:
+            log(f"    GR-1a {suite}: PASS (equal work across arms)")
+    return failed
 
 
 def main() -> int:
@@ -288,6 +374,18 @@ def main() -> int:
                               "path": str(args.out_dir / f"rep{rep}" / dataset / arm)})
                 (args.out_dir / "campaign_index.json").write_text(
                     json.dumps({"spec": str(args.spec), "cells": index}, indent=2) + "\n")
+
+            # Both arms of this (rep, dataset) are now on disk, which is the earliest moment
+            # GR-1a can be asked. A failure here does NOT stop the campaign -- it marks these
+            # rates unquotable, which is what the contract says a failed equal-work gate means.
+            work_failures = cross_arm_work_gate(spec, dataset, rates, rep, args.out_dir)
+            if work_failures:
+                failures += len(work_failures)
+            index.append({"rep": rep, "dataset": dataset, "gate": "GR-1a",
+                          "failed_rates": work_failures,
+                          "quotable": not work_failures})
+            (args.out_dir / "campaign_index.json").write_text(
+                json.dumps({"spec": str(args.spec), "cells": index}, indent=2) + "\n")
 
     log(f"--- campaign done: {len(index)} arm-runs, {failures} with a non-zero rc ---")
     return 1 if failures else 0
