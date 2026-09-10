@@ -141,13 +141,16 @@ def main() -> int:
     ap.add_argument("--trust-remote-code", action="store_true")
     ap.add_argument(
         "--batch-size",
-        default="auto",
-        help="lm-eval --batch_size for NATIVE arms. Default 'auto' (owner, 2026-09-10): "
-             "lm-eval sizes it to the device instead of us picking a constant. The card "
-             "held 16.3 of 81.9 GiB at lm-eval's own default of 1, ~15x slower than a "
-             "served arm. NOTE D-631/D-632's reference runs are recorded at batch_size 8; "
-             "comparing an 'auto' run against them is also the batch-invariance check, at "
-             "no extra cost. Ignored for served arms, where the server batches.",
+        default="32",
+        help="lm-eval --batch_size for NATIVE arms. Default 32 (owner). MEASURED: 'auto' "
+             "resolves to 7 on this 80 GiB A100 -- lm-eval's _detect_batch_size() probes "
+             "at the model's MAXIMUM context (8192) to stay safe, which hugely "
+             "overestimates per-sequence memory for prompts that are actually ~0.5-2k "
+             "tokens. 32 is ~4.5x that and still fits (Llama-3-8B KV is ~128 KiB/token, so "
+             "32 x ~3k tokens is ~12 GiB against ~64 GiB free). lm-eval's own default of 1 "
+             "is ~15x slower than a served arm. Ignored for served arms, where the server "
+             "batches. Batch size does not change greedy results: arm A returned 0.7741 at "
+             "both 8 and 'auto'.",
     )
     ap.add_argument("--lmeval-python", default=sys.executable)
     ap.add_argument(
