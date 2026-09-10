@@ -295,6 +295,46 @@ def cell_artifact(cell_root: Path, suite: str) -> Path | None:
     return matches[0] if len(matches) == 1 else None
 
 
+def cross_arm_config_gate(spec: dict[str, Any], dataset: str, rep: int,
+                          out_dir: Path) -> bool:
+    """Are the two arms the same engine apart from the treatment? Returns True on PASS.
+
+    Every other config gate checks ONE arm against its own intent. None of them can see
+    whether the two arms are comparable TO EACH OTHER -- which is the question a paired table
+    rests on, and which stopped being nearly free the moment the baseline became a separate
+    upstream tree 193 commits away (D-646). Identical CLI flags no longer imply identical
+    resolved configuration.
+
+    The allowlist comes from `spec["cross_arm_allow"]` and is a set of CLAIMS: each entry
+    says "this field differs and cannot flatter the treatment". It is built once from
+    `--report` on the smoke, then frozen.
+    """
+    baseline, treatment = spec["arms"]["baseline"], spec["arms"]["treatment"]
+    manifests = {
+        arm: out_dir / f"rep{rep}" / dataset / arm / "deployment_manifest.json"
+        for arm in (baseline, treatment)
+    }
+    missing = [a for a, m in manifests.items() if not m.is_file()]
+    if missing:
+        log(f"    G1c cross-arm config: FAIL — no manifest for {', '.join(missing)}")
+        return False
+    command = [sys.executable,
+               str(Path(spec["tree"]) / "test/vp/gates/verify_cross_arm_config.py")]
+    for arm, m in manifests.items():
+        command += ["--arm", f"{arm}={m}"]
+    for field in spec.get("cross_arm_allow", ["vp_runtime"]):
+        command += ["--allow", field]
+    done = subprocess.run(command, capture_output=True, text=True)
+    (out_dir / f"rep{rep}" / dataset / "cross_arm_config.txt").write_text(
+        done.stdout + done.stderr)
+    if done.returncode != 0:
+        tail = [l for l in done.stdout.splitlines() if l.startswith("  ! ")]
+        log(f"    G1c cross-arm config: FAIL — undeclared: {', '.join(t.strip('! ') for t in tail[:4])}")
+        return False
+    log("    G1c cross-arm config: PASS (arms differ only in declared fields)")
+    return True
+
+
 def cross_arm_work_gate(spec: dict[str, Any], dataset: str, rates: dict[str, float],
                         rep: int, out_dir: Path) -> list[str]:
     """GR-1a — did the two arms do the SAME WORK? Returns the rate labels that FAILED.
@@ -436,12 +476,16 @@ def main() -> int:
             # Both arms of this (rep, dataset) are now on disk, which is the earliest moment
             # GR-1a can be asked. A failure here does NOT stop the campaign -- it marks these
             # rates unquotable, which is what the contract says a failed equal-work gate means.
+            config_ok = cross_arm_config_gate(spec, dataset, rep, args.out_dir)
+            if not config_ok:
+                failures += 1
             work_failures = cross_arm_work_gate(spec, dataset, rates, rep, args.out_dir)
             if work_failures:
                 failures += len(work_failures)
             index.append({"rep": rep, "dataset": dataset, "gate": "GR-1a",
                           "failed_rates": work_failures,
-                          "quotable": not work_failures})
+                          "cross_arm_config_ok": config_ok,
+                          "quotable": bool(config_ok) and not work_failures})
             (args.out_dir / "campaign_index.json").write_text(
                 json.dumps({"spec": str(args.spec), "cells": index}, indent=2) + "\n")
 
