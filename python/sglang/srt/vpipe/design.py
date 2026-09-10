@@ -109,7 +109,28 @@ SERVED_FUSED_ROUTER_NORM: Final[bool] = False
 # vary between arms. Selected by name -- never by exported variables. These replace
 # test/vp/gates/arms/arm_env_*.sh, which are deleted.
 ARMS: Final[dict[str, dict[str, Any]]] = {
-    # Stock upstream SGLang: no skipper at all. The paper's baseline arm.
+    # OUR FORK WITH THE SKIPPER OFF. Read that again: this is NOT upstream SGLang, and this
+    # comment used to claim it was ("Stock upstream SGLang ... the paper's baseline arm"),
+    # which is how at least three sessions concluded the baseline was already upstream and
+    # built campaigns on it. It is this tree -- same 193 commits, same hook sites in
+    # models/llama.py, same vpipe package imported -- with the treatment not applied.
+    #
+    # THE PAPER'S BASELINE IS NOT THIS ARM. It is a separate freshly-cloned upstream tree at
+    # commit 602c8615a1 carrying no vpipe/ package at all, staged and content-verified
+    # against deploy/upstream_baseline.json and served by its own PYTHONPATH (owner order
+    # D-587: "it has to be the based directly-freshly cloned sglang without our changes").
+    #
+    # This arm's legitimate role is the CONTROL that measures what our fork costs when it is
+    # not treating anything -- D-597 found +0.06 %/+0.14 % output TPS against fresh upstream,
+    # i.e. nothing. But that was measured at 150 commits past upstream and HEAD is now 193,
+    # and an equivalence carried across a design change is what voided the v1.3 table. Serve
+    # upstream for the baseline and this becomes a control rather than a load-bearing
+    # assumption.
+    #
+    # TODO (owner 2026-09-10): rename this key. NOT to "upstream" -- that would make the old
+    # lie permanent -- but to something that says what it is, e.g. "fork_noskip". Deferred
+    # only because the name is written into deploy/active_arm, expect_stock.json and every
+    # manifest already on the boxes.
     "stock": {"skipper": None, "phases": None, "regime_switch": False},
     # FlexiDepth, decode phase only.
     "vdec_fd": {"skipper": "flexidepth", "phases": "decode", "regime_switch": True},
