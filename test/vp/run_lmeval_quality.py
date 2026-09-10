@@ -136,6 +136,16 @@ def main() -> int:
     ap.add_argument("--base-url", default="", help="serving endpoint, for arms C/D")
     ap.add_argument("--tokenizer", default="", help="tokenizer path, with --base-url")
     ap.add_argument("--num-concurrent", type=int, default=16)
+    ap.add_argument(
+        "--upstream-baseline",
+        action="store_true",
+        help="The served endpoint is GENUINE upstream SGLang (a separate tree with no "
+             "vpipe/ package), which is what arm C of the 2x2 must be: the gate condition "
+             "reads 'no quality collapse vs UPSTREAM sglang', and arm C had always been "
+             "ARMS['stock'] -- this fork with the skipper off -- so the comparison the gate "
+             "names was never actually run. Inverts the attestation: vp_runtime must be "
+             "ABSENT, and its presence refuses the run as a mislaunched fork.",
+    )
     ap.add_argument("--hf-model", default="", help="model path, for native arms A/B")
     ap.add_argument("--hf-dtype", default="")
     ap.add_argument("--trust-remote-code", action="store_true")
@@ -185,8 +195,10 @@ def main() -> int:
 
         info = _fetch_json(f"{args.base_url.rstrip('/')}/server_info")
         before.write_text(json.dumps(info, indent=2, sort_keys=True) + "\n")
-        routes_decode = _arm_routes_decode(info)
-        print(f"served arm routes decode: {routes_decode}")
+        routes_decode = _arm_routes_decode(info, upstream_baseline=args.upstream_baseline)
+        print("served arm: "
+              + ("UPSTREAM (no vp_runtime, as required)" if args.upstream_baseline
+                 else f"routes decode: {routes_decode}"))
 
     command = _lmeval_command(args, task, kind)
     print("+ " + " ".join(command), flush=True)
