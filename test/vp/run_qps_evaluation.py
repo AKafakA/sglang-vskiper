@@ -647,7 +647,14 @@ _NATURAL_INTENTS = frozenset(
 )
 
 
-def _arm_routes_decode(server_info: Any) -> bool:
+def _served_design(server_info: Any) -> Any | None:
+    try:
+        return server_info["internal_states"][0]["vp_runtime"]["served_design"]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
+def _arm_routes_decode(server_info: Any, *, upstream_baseline: bool = False) -> bool:
     """Does the LIVE server report a skipper that routes the decode phase?
 
     Read from `vp_runtime.served_design`, the D-609 attestation block -- what the server
@@ -655,18 +662,40 @@ def _arm_routes_decode(server_info: Any) -> bool:
     a baseline arm reports {arm: stock, skipper: None, active_phases: []} and a routed
     arm {arm: integrated_*, skipper: flexidepth, active_phases: [decode, prefill]}.
 
-    A missing block is a REFUSAL, not a False. It means the served tree predates the
-    D-609 attestation, so we cannot tell what ran -- and "measured the wrong system while
-    every gate passed" is the exact failure this harness exists to prevent.
+    On OUR tree a missing block is a REFUSAL, not a False. It means the served tree
+    predates the D-609 attestation, so we cannot tell what ran -- and "measured the wrong
+    system while every gate passed" is the exact failure this harness exists to prevent.
+
+    `upstream_baseline` INVERTS that, and this is the point rather than a loophole. The
+    paper's baseline is genuinely upstream SGLang (owner order D-587: "directly-freshly
+    cloned sglang without our changes"), a tree with no vpipe/ package at all -- so it can
+    never carry this block, and the refusal above made the real baseline UNMEASURABLE by
+    this harness. That is part of why every campaign to date silently used ARMS["stock"],
+    our own fork with the skipper switched off, while calling it upstream.
+
+    So with the flag we assert the block is ABSENT and refuse if it is PRESENT: a
+    vp_runtime block on a cell declared upstream means the fork was launched by mistake,
+    which is the confusion this whole flag exists to make impossible. Absence is not
+    tolerated here, it is the positive attestation -- upstream's /server_info exposes no
+    source identity of its own (version "0.0.0.dev0"), so this is the only identity signal
+    available at the endpoint, and the tree's content hash carries the rest.
     """
-    try:
-        served = server_info["internal_states"][0]["vp_runtime"]["served_design"]
-    except (KeyError, IndexError, TypeError) as error:
+    served = _served_design(server_info)
+    if upstream_baseline:
+        if served is not None:
+            raise RuntimeError(
+                "cell declared --upstream-baseline but the live server DOES carry "
+                f"vp_runtime.served_design ({served.get('arm')!r}): this is our fork, not "
+                "a freshly-cloned upstream tree. Refusing to label it upstream."
+            )
+        return False
+    if served is None:
         raise RuntimeError(
             "live /server_info carries no vp_runtime.served_design: the served tree "
             "predates the D-609 design attestation, so the resolved arm cannot be "
-            "verified. Deploy the current tree."
-        ) from error
+            "verified. Deploy the current tree, or pass --upstream-baseline if this "
+            "cell is deliberately serving genuine upstream SGLang."
+        )
     return "decode" in (served.get("active_phases") or [])
 
 
@@ -966,7 +995,9 @@ def _run_cell(
         args.host, args.port, args.deployment
     )
     _write_json(server_info_before_file, server_info_before)
-    routes_decode = _arm_routes_decode(server_info_before)
+    routes_decode = _arm_routes_decode(
+        server_info_before, upstream_baseline=arguments.upstream_baseline
+    )
 
     sampler = subprocess.Popen(
         sampler_command,
@@ -1161,6 +1192,16 @@ def main() -> None:
     parser.add_argument("--allow-dirty", action="store_true")
     parser.add_argument("--resume-completed", action="store_true")
     parser.add_argument("--continue-after-accounting-rejection", action="store_true")
+    parser.add_argument(
+        "--upstream-baseline",
+        action="store_true",
+        help="This cell serves GENUINE upstream SGLang (a separate tree with no vpipe/ "
+             "package, per owner order D-587), not ARMS['stock'] which is our fork with "
+             "the skipper off. Inverts the attestation: vp_runtime.served_design must be "
+             "ABSENT, and its PRESENCE refuses the cell as a mislaunched fork. Without "
+             "this flag an upstream server cannot be measured at all, which is why the "
+             "real baseline never was.",
+    )
     parser.add_argument(
         "--allow-code-execution",
         action="store_true",
