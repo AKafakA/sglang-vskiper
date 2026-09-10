@@ -35,9 +35,10 @@ The spec is data, not code (QPS grids are contract data):
      "python": "/opt/vpipe/venv/bin/python",
      "model_path": "/dev/shm/vpipe/models/Meta-Llama-3-8B-Instruct-53346005",
      "suites_dir": "/dev/shm/vpipe/suites",
+     "staging_root": "/dev/shm/vpipe",
      "host_config": "deploy/hosts/vast-a100.json",
      "expect_dir": "/opt/vpipe/campaign",
-     "arms": {"baseline": "stock", "treatment": "integrated_it4"},
+     "arms": {"baseline": "upstream", "treatment": "integrated_it4"},
      "datasets": {"gsm8k": {"r11p25": 11.25, "r14p25": 14.25, "r18p75": 18.75}}}
 """
 from __future__ import annotations
@@ -70,14 +71,14 @@ def suite_name(dataset: str, label: str) -> str:
 def preflight(spec: dict[str, Any]) -> list[str]:
     """Everything checkable before a GPU is touched. Returns complaints."""
     problems: list[str] = []
-    required = ("tree", "python", "model_path", "suites_dir", "expect_dir",
+    required = ("tree", "python", "model_path", "suites_dir", "staging_root", "expect_dir",
                 "host_config", "arms", "datasets", "source_revision")
     missing = [key for key in required if key not in spec]
     if missing:
         return [f"spec is missing required keys: {', '.join(missing)}"]
     tree = Path(spec["tree"])
     suites = Path(spec["suites_dir"])
-    for key in ("tree", "python", "model_path", "suites_dir", "expect_dir"):
+    for key in ("tree", "python", "model_path", "suites_dir", "staging_root", "expect_dir"):
         if not Path(spec[key]).exists():
             problems.append(f"{key} does not exist: {spec[key]}")
     if not (tree / spec["host_config"]).is_file():
@@ -427,7 +428,15 @@ def main() -> int:
             command = [sys.executable,
                        str(Path(spec["tree"]) / "test/vp/gates/campaign_preflight.py"),
                        "--tree", spec["tree"], "--upstream", spec["upstream_tree"],
-                       "--workdir", spec["suites_dir"],
+                       # The STAGING ROOT, which holds models/ beside suites/. Passing
+                       # suites_dir made the gate look for models/ inside it and report
+                       # "served model weights  0 shards" on a box with the model staged
+                       # one level up (D-664).
+                       "--workdir", spec["staging_root"],
+                       # The campaign's own host config, NAMED. The gate used to pick the
+                       # alphabetically first deploy/hosts/*.json for itself and validated
+                       # CSD3 paths on a Vast box (D-664).
+                       "--host-config", spec["host_config"],
                        "--serving-pythonpath", str(serving)]
             if upstream:
                 command.append("--serving-is-upstream")

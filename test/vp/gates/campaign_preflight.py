@@ -45,6 +45,15 @@ def main() -> int:
                          "verified tree, binding the check to the process that will serve")
     ap.add_argument("--serving-is-upstream", action="store_true",
                     help="the launch under test is the upstream baseline, not the fork")
+    ap.add_argument(
+        "--host-config",
+        type=Path,
+        required=True,
+        help="the host config THIS run will serve with, e.g. deploy/hosts/vast-a100.json "
+             "(relative to --tree, or absolute). Required, and deliberately not defaulted: "
+             "the gate previously globbed deploy/hosts/*.json and validated the "
+             "alphabetically first one, so it checked CSD3 paths on a Vast box.",
+    )
     ap.add_argument("--require-suites", action="store_true",
                     help="also demand campaign suites + banks (STEP 3 onward)")
     a = ap.parse_args()
@@ -114,13 +123,28 @@ def main() -> int:
     ok &= check("deploy/active_arm present", arm_file.is_file(),
                 arm_file.read_text().strip() if arm_file.is_file() else "MISSING (no default, D-611)")
 
-    hosts = sorted((a.tree / "deploy" / "hosts").glob("*.json")) if (a.tree / "deploy" / "hosts").is_dir() else []
-    ok &= check("host config present", bool(hosts), hosts[0].name if hosts else "none")
-    if hosts:
-        cfg = json.loads(hosts[0].read_text())
+    # THE HOST CONFIG IS NAMED, NOT GUESSED.
+    #
+    # This block used to glob deploy/hosts/*.json, sort, and validate hosts[0] -- the
+    # ALPHABETICALLY FIRST config, which on this tree is csd3.json. On 2026-09-10 the paired
+    # smoke ran on the Vast A100 and was refused for missing /rds/user/wd312/... paths: it had
+    # checked CSD3's host config, on a box that is not CSD3, while the campaign's own contract
+    # named deploy/hosts/vast-a100.json.
+    #
+    # The false refusal was the harmless half. Had the first config's paths happened to exist,
+    # the preflight would have PASSED -- certifying a host config the run does not use, which
+    # is precisely the shape of D-609 (a value that never reached the server while every gate
+    # went green). A preflight that picks its own subject is not checking the deployment.
+    host_arg = a.host_config
+    host_path = host_arg if host_arg.is_absolute() else a.tree / host_arg
+    ok &= check("host config present", host_path.is_file(),
+                str(host_path) if host_path.is_file() else f"MISSING {host_path}")
+    if host_path.is_file():
+        cfg = json.loads(host_path.read_text())
         for key in ("flexidepth_weights", "conditional_graph_helper", "moe_config_dir"):
-            p = str(cfg.get(key, "") or "")
-            ok &= check(f"host path {key}", bool(p) and Path(p).exists(), p or "unset")
+            value = str(cfg.get(key, "") or "")
+            ok &= check(f"host path {key}", bool(value) and Path(value).exists(),
+                        value or "unset")
 
     models = list((a.workdir / "models").glob("*/*.safetensors")) if (a.workdir / "models").is_dir() else []
     ok &= check("served model weights", bool(models), f"{len(models)} shards")
