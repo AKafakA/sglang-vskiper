@@ -110,6 +110,65 @@ def _runner_environment(
     return result
 
 
+# THE CELL SIZE IS DECLARED, NOT INHERITED FROM WHOEVER BUILT THE SUITE.
+#
+# Owner, 2026-09-10: "4000 is a requirement" ... "4000 for bbh only", after finding that a
+# rebuild of the BBH suite had passed --num-requests 3600 -- copied from gsm8k, with no
+# authority -- and that 26 ladder cells had been measured against it. gsm8k's 3600 and coqa's
+# 4000 both date from 09-04 and match v1.3; BBH was the only size ever changed, and it was
+# changed silently.
+#
+# Nothing in the harness had ever asserted a suite's size, so a wrong-sized suite produced
+# cells that passed every other gate: accounting balanced, no empties, duration derived
+# correctly -- all true OF THE WRONG SUITE. Row counts only ever appeared as `wc -l`, which
+# reports what IS rather than what was agreed.
+#
+# Enforced in the runner, not in the build scripts, for the reason the duration rule had to
+# move here too: a rule that lives in a script comes back the next time someone writes a
+# script. A dataset with no declared size is not asserted -- these three are the campaign's,
+# and inventing sizes for smokes and diagnostics would be a gate firing on its own guesses.
+DECLARED_SUITE_ROWS = {"gsm8k": 3600, "coqa": 4000, "bbh_cot": 4000}
+
+# A suite name is <dataset> followed by its protocol (`coqa.d179`) or its equal-work pinning
+# (`coqa_eqw_r27p5`). Matched longest-first so `bbh_cot` is never read as a `bbh` variant.
+_SUITE_SUFFIXES = (".", "_eqw", "_nat", "_vprebank")
+
+
+def declared_rows_for(workload: str) -> tuple[str, int] | None:
+    """The dataset and its agreed row count, or None when the suite is not a campaign one."""
+    for dataset in sorted(DECLARED_SUITE_ROWS, key=len, reverse=True):
+        if workload == dataset or any(
+            workload.startswith(dataset + suffix) for suffix in _SUITE_SUFFIXES
+        ):
+            return dataset, DECLARED_SUITE_ROWS[dataset]
+    return None
+
+
+def _refuse_undeclared_cell_size(
+    workload: str, available: int, diagnostic: bool = False
+) -> None:
+    """Refuse a measurement cell whose suite is not the declared size.
+
+    A DECLARED diagnostic is exempt: `gsm8k.first100` is a real 100-row smoke suite, and by
+    contract a `--partial-suite-diagnostic` cell is never performance evidence, so it cannot
+    launder a wrong-sized cell into the table. The 26 BBH ladder cells passed no such flag --
+    they claimed to be measurements -- so the exemption does not reopen the hole it closes.
+    """
+    declared = declared_rows_for(workload)
+    if declared is None or diagnostic:
+        return
+    dataset, expected = declared
+    if available != expected:
+        raise ValueError(
+            f"REFUSING {workload}: the suite holds {available} rows but {dataset} is declared "
+            f"at {expected} (DECLARED_SUITE_ROWS). Cells measured against a differently-sized "
+            f"suite are not comparable to the rest of the campaign, and every other gate "
+            f"passes on them because each one is true of the wrong suite.\n"
+            f"  Rebuild the suite at {expected}, or change the declaration if the owner has "
+            f"ruled a new size -- never pass a mismatch through."
+        )
+
+
 def _count_rows(path: Path) -> int:
     with path.open(encoding="utf-8") as source:
         return sum(1 for line in source if line.strip())
@@ -795,6 +854,7 @@ def _run_cell(
     if workload_record is None:
         workload_record = _workload_record(requests_path, metadata_path)
     available = _count_rows(requests_path)
+    _refuse_undeclared_cell_size(workload, available, args.partial_suite_diagnostic)
     if args.duration_s is None or args.min_prompts is None:
         # Derive, exactly as the bank harvest has always done it.
         min_prompts = available
