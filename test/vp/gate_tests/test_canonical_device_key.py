@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""One artifact per architecture: the interconnect suffix is not a tuning axis.
+"""ONE artifact per architecture: neither interconnect nor capacity is a tuning axis.
 
-`torch.cuda.get_device_name()` returns "NVIDIA A100-SXM4-80GB" on one A100 80GB and
-"NVIDIA A100 80GB PCIe" on another. Same GA100 die, and this artifact holds Triton TILE
-parameters, which are architectural. Keying on the raw name meant a tree built from tracked
+Owner ruling 2026-09-10: *"all a100 has to be run the same kernel, smx or pcie suffix,
+removing it"* -- so every A100 spelling resolves to one file, and "both A100s ran the same
+kernel" becomes a property of the lookup rather than a claim someone has to check.
+
+`torch.cuda.get_device_name()` returns "NVIDIA A100-SXM4-80GB" on one A100 80GB,
+"NVIDIA A100 80GB PCIe" on another, and "NVIDIA A100-SXM4-40GB" on the 40 GiB node. Same
+GA100 die -- 108 SMs, 192 KB shared memory per SM -- and this artifact holds Triton TILE
+parameters, which are PER-SM resources. Keying on the raw name meant a tree built from tracked
 files could not boot on the PCIe card at all -- exactly how the P0 smoke failed -- and was
 "fixed" on the box by hand-copying the SXM4 file under a PCIe name, leaving the deployment
 dependent on an untracked artifact claiming a measurement nobody had made.
@@ -40,20 +45,34 @@ kernel = _load_kernel()
 
 
 @pytest.mark.parametrize(
-    "raw", ["NVIDIA A100-SXM4-80GB", "NVIDIA A100 80GB PCIe", "NVIDIA_A100_80GB"]
+    "raw",
+    [
+        "NVIDIA A100-SXM4-80GB",
+        "NVIDIA A100 80GB PCIe",
+        "NVIDIA A100-SXM4-40GB",
+        "NVIDIA A100-PCIE-40GB",
+        "NVIDIA_A100",
+    ],
 )
-def test_every_a100_80gb_spelling_maps_to_one_key(raw):
-    assert kernel.canonical_device_key(raw) == "NVIDIA_A100_80GB"
+def test_every_a100_spelling_maps_to_one_key(raw):
+    assert kernel.canonical_device_key(raw) == "NVIDIA_A100"
 
 
-def test_the_committed_artifact_exists_under_that_key():
-    key = kernel.canonical_device_key("NVIDIA A100 80GB PCIe")
-    assert (CONFIGS / f"{key}.json").is_file(), f"no tuned artifact for key {key}"
+def test_the_two_campaign_nodes_resolve_to_the_SAME_artifact():
+    """The headline row runs on the 80 GiB PCIe box and the generality row on the 40 GiB SXM4
+    node. If these two ever diverged, the two rows would be measured on different tiles while
+    every log still said 'A100'."""
+    headline = kernel.canonical_device_key("NVIDIA A100 80GB PCIe")
+    generality = kernel.canonical_device_key("NVIDIA A100-SXM4-40GB")
+    assert headline == generality
+    assert (CONFIGS / f"{headline}.json").is_file(), f"no tuned artifact for key {headline}"
 
 
-def test_memory_technology_is_NOT_stripped():
-    """H100 80GB HBM3 and HBM2e are genuinely different parts; only form factor is noise."""
-    assert kernel.canonical_device_key("NVIDIA H100 80GB HBM3") == "NVIDIA_H100_80GB_HBM3"
+def test_capacity_is_stripped_but_memory_TECHNOLOGY_is_not():
+    """Capacity changes HBM size, not SM count or shared memory per SM, so it cannot change
+    which tile shape fits. HBM3 vs HBM2e is a genuinely different part and stays in the key."""
+    assert kernel.canonical_device_key("NVIDIA H100 80GB HBM3") == "NVIDIA_H100_HBM3"
+    assert kernel.canonical_device_key("NVIDIA H100 PCIe HBM2e") == "NVIDIA_H100_HBM2e"
 
 
 def test_no_form_factor_suffix_survives_in_any_committed_artifact():
@@ -67,4 +86,4 @@ def test_a_card_with_no_artifact_fails_closed_and_says_what_exists():
     with pytest.raises(RuntimeError) as exc:
         kernel.load_tuned_configs("NVIDIA GeForce RTX 4090")
     assert "tuned-config artifact missing" in str(exc.value)
-    assert "NVIDIA_A100_80GB" in str(exc.value)  # the refusal lists what IS available
+    assert "NVIDIA_A100" in str(exc.value)  # the refusal lists what IS available

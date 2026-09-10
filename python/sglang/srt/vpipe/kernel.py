@@ -520,30 +520,42 @@ def count_silu_mul_rowloop(
         block_i,
         num_programs,
     )
-# Interconnect form factor is not a tuning axis. `torch.cuda.get_device_name()` returns
-# "NVIDIA A100-SXM4-80GB" on one A100 80GB and "NVIDIA A100 80GB PCIe" on another, but they
-# are the same GA100 die -- 108 SMs, 192 KB shared memory per SM, identical warp scheduling
-# -- and this artifact holds Triton TILE PARAMETERS (block_m/n/k, num_warps, num_stages),
-# which are a property of that architecture. SXM and PCIe parts differ in memory bandwidth
-# and power cap, which move absolute throughput but not which tile shape fits.
+# EVERY A100 RUNS ONE KERNEL (owner, 2026-09-10: "all a100 has to be run the same kernel,
+# smx or pcie suffix, removing it"). `torch.cuda.get_device_name()` spells the same GA100
+# part four ways -- "NVIDIA A100-SXM4-80GB", "NVIDIA A100 80GB PCIe", "NVIDIA A100-SXM4-40GB",
+# "NVIDIA A100-PCIE-40GB" -- and this artifact holds Triton TILE PARAMETERS (block_m/n/k,
+# num_warps, num_stages). Those are PER-SM resources, and all four are 108 SMs with 192 KB of
+# shared memory per SM. Interconnect and capacity move memory bandwidth and power cap, which
+# change absolute throughput but not which tile shape fits.
 #
-# So the suffix is stripped and both resolve to one artifact. Memory-technology tokens are
-# NOT stripped: H100 80GB HBM3 and HBM2e are genuinely different parts.
+# Two token classes are therefore stripped, and only two:
+#   form factor   SXM*/PCIE
+#   capacity      a bare <n>GB token
+# Memory TECHNOLOGY is NOT stripped: H100 HBM3 and HBM2e are genuinely different parts.
+#
+# The campaign reason this is a correctness rule, not tidiness: the headline row and the
+# hardware-generality row are measured on two different A100s, and a per-node artifact would
+# make "same kernel" an assumption instead of a property of the lookup.
 _FORM_FACTOR_TOKENS = ("SXM5", "SXM4", "SXM3", "SXM2", "SXM", "PCIE")
+_CAPACITY_TOKEN = re.compile(r"^\d+GB$", re.IGNORECASE)
 
 
 def canonical_device_key(device_name: str) -> str:
     """Normalise a CUDA device name to its tuned-artifact key.
 
     >>> canonical_device_key("NVIDIA A100-SXM4-80GB")
-    'NVIDIA_A100_80GB'
+    'NVIDIA_A100'
     >>> canonical_device_key("NVIDIA A100 80GB PCIe")
-    'NVIDIA_A100_80GB'
+    'NVIDIA_A100'
+    >>> canonical_device_key("NVIDIA A100-SXM4-40GB")
+    'NVIDIA_A100'
     """
     parts = [
         token
         for token in re.split(r"[\s_-]+", device_name.strip())
-        if token and token.upper() not in _FORM_FACTOR_TOKENS
+        if token
+        and token.upper() not in _FORM_FACTOR_TOKENS
+        and not _CAPACITY_TOKEN.match(token)
     ]
     return "_".join(parts)
 
