@@ -55,36 +55,55 @@ def run(tmp_path, **kw):
     return runner._run_cell(cell_args(tmp_path, **kw), "gsm8k.d179", 8.0, 1, requests, metadata)
 
 
-def test_fixed_duration_is_REFUSED(tmp_path):
-    """180 s at 8 qps submits 1440 of 3600 -- and at 18 qps it would submit 3240. Two rates,
-    two different amounts of work, one curve. This is the case that must not run."""
+def test_a_caller_supplied_duration_is_REFUSED_at_the_parameter(tmp_path):
+    """180 s at 8 qps would submit 1440 of 3600, and at 18 qps 3240 -- two rates, two amounts
+    of work, one curve. The refusal now fires on the PARAMETER rather than on the resulting
+    shortfall, so the wrong thing is not expressible at all for a measurement cell."""
     with pytest.raises(ValueError) as caught:
         run(tmp_path, min_prompts=400, duration_s=180)
     message = str(caught.value)
-    assert "REFUSING" in message
-    assert "1440 of 3600" in message, message
-    assert "rows / qps" in message
+    assert "DIAGNOSTIC overrides" in message, message
+    assert "rows/qps" in message
 
 
-def test_the_refusal_tells_the_caller_the_derived_duration(tmp_path):
-    """A refusal that does not say what to do instead gets worked around, not fixed."""
-    with pytest.raises(ValueError) as caught:
-        run(tmp_path, min_prompts=400, duration_s=180)
-    assert "--min-prompts 3600" in str(caught.value)
-    assert "--duration-s 450" in str(caught.value)   # 3600 / 8
-
-
-def test_derived_duration_passes_the_check(tmp_path):
-    """rows/qps = 3600/8 = 450 s submits exactly the suite. It must get PAST this check --
-    it fails later on the missing endpoint, which is a different error entirely."""
+def test_derivation_happens_when_nothing_is_supplied(tmp_path):
+    """The default path: give the runner neither, and it computes both from the suite and the
+    rate. It must get PAST this check and fail later on the missing endpoint."""
     with pytest.raises(Exception) as caught:
-        run(tmp_path, min_prompts=ROWS, duration_s=450)
+        run(tmp_path, min_prompts=None, duration_s=None)
+    assert "DIAGNOSTIC overrides" not in str(caught.value)
     assert "REFUSING" not in str(caught.value)
 
 
-def test_diagnostic_escape_is_explicit(tmp_path):
-    """Smokes may submit a partial suite, but only by SAYING SO -- and by contract such a
-    cell is never performance evidence."""
+def test_there_is_no_fixed_duration_DEFAULT_any_more():
+    """The rule was previously enforced by a post-hoc refusal while --duration-s still
+    DEFAULTED to 180.0 -- so a caller that simply omitted the flag got exactly the value the
+    rule forbids. Assert the default is gone, from the parser itself."""
+    import argparse
+    parser = argparse.ArgumentParser()
+    src = Path(runner.__file__).read_text()
+    assert 'parser.add_argument("--duration-s", type=float, default=180.0)' not in src
+    assert '--duration-s", type=float, default=None' in src
+    assert '--min-prompts", type=int, default=None' in src
+
+
+def test_the_diagnostic_escape_still_works(tmp_path):
+    """Smokes may submit a partial suite, but only by SAYING SO -- and by contract such a cell
+    is never performance evidence."""
     with pytest.raises(Exception) as caught:
         run(tmp_path, min_prompts=32, duration_s=2, diagnostic=True)
+    assert "DIAGNOSTIC overrides" not in str(caught.value)
     assert "REFUSING" not in str(caught.value)
+
+
+def test_the_derived_duration_never_over_subscribes_the_suite(tmp_path):
+    """duration = floor(rows/qps) can still round up past the suite at fractional rates, which
+    is why the harvest's own derivation decrements. Check the real campaign rates."""
+    import math
+    for rows, qps in [(3600, 8.25), (3600, 10.45), (3600, 13.75),
+                      (4000, 22.5), (4000, 28.5), (4000, 37.5), (3600, 11), (4000, 27)]:
+        d = math.floor(rows / qps)
+        while math.ceil(qps * d) > rows:
+            d -= 1
+        assert math.ceil(qps * d) <= rows, (rows, qps, d)
+        assert rows - math.ceil(qps * d) < qps, f"{rows}@{qps}: leaves a whole extra second"

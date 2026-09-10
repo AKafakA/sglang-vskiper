@@ -794,8 +794,22 @@ def _run_cell(
     workload_record = getattr(args, "workload_records", {}).get(workload)
     if workload_record is None:
         workload_record = _workload_record(requests_path, metadata_path)
-    requested_count = _requested_count(args.min_prompts, qps, args.duration_s)
     available = _count_rows(requests_path)
+    if args.duration_s is None or args.min_prompts is None:
+        # Derive, exactly as the bank harvest has always done it.
+        min_prompts = available
+        duration_s = math.floor(available / qps)
+        while math.ceil(qps * duration_s) > available:
+            duration_s -= 1
+        args.min_prompts, args.duration_s = min_prompts, float(duration_s)
+    elif not args.partial_suite_diagnostic:
+        raise ValueError(
+            "--duration-s / --min-prompts are DIAGNOSTIC overrides and require "
+            "--partial-suite-diagnostic. A measurement cell derives them from its suite and "
+            "rate (duration = rows/qps); a caller-chosen duration makes each rate submit a "
+            "different number of requests, so its cells cannot be compared (owner rule 2)."
+        )
+    requested_count = _requested_count(args.min_prompts, qps, args.duration_s)
     if requested_count > available:
         raise ValueError(
             f"{workload} QPS {qps:g} needs {requested_count} requests for "
@@ -1184,8 +1198,19 @@ def main() -> None:
     parser.add_argument("--rep-start", type=int, default=1)
     parser.add_argument("--campaign-total-reps", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--duration-s", type=float, default=180.0)
-    parser.add_argument("--min-prompts", type=int, default=256)
+    # NOT caller-supplied for a measurement cell, and NO default. Owner rule 2 (D-651):
+    # "no fixed duration allowed". A cell's duration is a FUNCTION of its suite and its rate
+    # -- duration = rows/qps -- so the runner derives both itself and a wrong value cannot be
+    # expressed. They stayed as parameters after D-651 with `--duration-s` defaulting to
+    # 180.0, i.e. the rule was enforced by a post-hoc refusal while a fixed duration remained
+    # the DEFAULT: omit the flag and you got exactly the value the rule exists to forbid.
+    # They are now overrides usable ONLY with --partial-suite-diagnostic, for smokes.
+    parser.add_argument("--duration-s", type=float, default=None,
+                        help="DIAGNOSTIC ONLY, requires --partial-suite-diagnostic. A "
+                             "measurement cell derives duration as rows/qps.")
+    parser.add_argument("--min-prompts", type=int, default=None,
+                        help="DIAGNOSTIC ONLY, requires --partial-suite-diagnostic. A "
+                             "measurement cell submits its whole suite.")
     parser.add_argument("--warmup-requests", type=int, default=8)
     parser.add_argument("--load-sample-interval-ms", type=int, default=1000)
     parser.add_argument(
