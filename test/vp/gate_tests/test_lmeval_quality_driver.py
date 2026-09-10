@@ -34,6 +34,7 @@ def _args(**kw) -> argparse.Namespace:
     base = dict(
         base_url="", tokenizer="", num_concurrent=16, hf_model="", hf_dtype="",
         trust_remote_code=False, lmeval_python="python3", output_dir=Path("/tmp/out"),
+        batch_size="8",
     )
     base.update(kw)
     return argparse.Namespace(**base)
@@ -124,3 +125,15 @@ def test_suite_name_defaults_to_workload_but_is_overridable(tmp_path):
         driver._prompt_kind(tmp_path, "coqa")
     # The refusal must say what IS there, or the next person repeats the same guess.
     assert "coqa.d179" in str(exc.value)
+
+
+def test_native_arm_gets_a_batch_size_and_served_does_not():
+    """lm-eval's default batch_size is 1, which ran a native arm ~15x slower than a served
+    one AND silently differed from the batch_size=8 of D-631/D-632's reference runs. Served
+    arms must NOT get it -- the server does the batching."""
+    native = driver._lmeval_command(_args(hf_model="/m", batch_size="8"), "gsm8k", "chat_messages")
+    assert native[native.index("--batch_size") + 1] == "8"
+    served = driver._lmeval_command(
+        _args(base_url="http://h:1", tokenizer="/m", batch_size="8"), "gsm8k", "chat_messages"
+    )
+    assert "--batch_size" not in served
