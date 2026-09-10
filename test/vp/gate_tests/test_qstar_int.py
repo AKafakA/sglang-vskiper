@@ -167,3 +167,47 @@ def test_a_properly_bracketed_curve_is_flagged_neither_way():
     curve = [(30, 3000.0), (31, 3200.0), (32, 3400.0), (33, 3410.0), (34, 3415.0)]
     knee, blockers = q.verdict(curve)
     assert knee == 32 and blockers == []
+
+
+# --- the plateau-wide band: a single noisy rung must not become a knee ---
+
+_COQA_FLAT = [(22, 1130.4), (23, 1131.8), (24, 1133.5), (25, 1127.9), (26, 1135.0),
+              (27, 1146.7), (28, 1138.3), (29, 1135.8), (30, 1134.9), (31, 1136.2),
+              (32, 1135.2), (33, 1138.6)]
+
+
+def test_a_plateau_wide_band_is_REFUSED_even_though_a_rung_grew():
+    """Measured on coqa 2026-09-10, and the reason CLIMB exists.
+
+    The band spans 1130.4 -> 1138.6 tok/s: +0.7 % of throughput for a +50 % offered rate,
+    i.e. saturation from the opening rung. But rung 27 beat the running maximum by 1.45 % and
+    every LATER rung fell below it, so the growth rule returned 27 and the contiguity and
+    bottom-rung guards both passed it as "BRACKETED, contiguous". Acting on that would have
+    pinned every coqa cell deep in overload."""
+    knee, blockers = q.verdict(_COQA_FLAT)
+    assert knee == 27, "the growth rule still reads 27 off this curve"
+    assert any("never climbed" in b for b in blockers), blockers
+
+
+def test_the_bottom_rung_guard_alone_cannot_catch_it():
+    """Rung 27 genuinely grew, so the knee is not the bottom rung and that guard stays silent.
+    Recording this because it is exactly why a second, independent guard was needed."""
+    _, blockers = q.verdict(_COQA_FLAT)
+    assert not any("BOTTOM RUNG" in b for b in blockers), blockers
+
+
+def test_a_real_climb_is_not_refused():
+    """gsm8k's measured curve: the knee sits +18.3 % above the opening rung. The guard must
+    not fire on a genuine knee, or it would refuse every valid ladder."""
+    gsm8k = [(8, 826.7), (9, 876.0), (10, 936.3), (11, 977.7), (12, 984.7), (13, 985.5),
+             (14, 986.7), (15, 987.0), (16, 986.4), (17, 986.0), (18, 986.4)]
+    knee, blockers = q.verdict(gsm8k)
+    assert knee == 11
+    assert blockers == [], blockers
+
+
+def test_climb_threshold_is_five_percent_of_the_opening_rung():
+    assert q.CLIMB == 0.05
+    # +4 % over the opening rung is not a climb; +6 % is
+    assert any("never climbed" in b for b in q.verdict([(10, 1000.0), (11, 1040.0)])[1])
+    assert not any("never climbed" in b for b in q.verdict([(10, 1000.0), (11, 1060.0)])[1])

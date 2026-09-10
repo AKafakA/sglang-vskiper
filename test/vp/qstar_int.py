@@ -43,6 +43,7 @@ import sys
 from pathlib import Path
 
 GROWTH = 0.01  # a rung "grows" when it beats the running maximum by >= 1%
+CLIMB = 0.05   # ...and the band as a whole must have CLIMBED this much to hold a knee
 
 
 class LadderError(RuntimeError):
@@ -148,6 +149,25 @@ def verdict(curve: list[tuple[float, float]]) -> tuple[float, list[str]]:
             f"Q* = {knee:g} IS THE TOP RUNG — the curve never plateaued, so the knee is not "
             "bracketed. WIDEN the band upward (next INTEGER rungs, never a multiplier) and "
             "re-measure."
+        )
+    # A KNEE MEANS THROUGHPUT CLIMBED TO GET THERE. On a band lying entirely inside the
+    # plateau, one noisy rung can clear the 1% threshold and be reported as a knee. Measured
+    # on coqa, 2026-09-10: rungs 22..33 spanned 1130.4 -> 1138.6 tok/s, i.e. +0.7% for a +50%
+    # offered rate (saturation throughout), yet rung 27 at 1146.7 beat the running maximum by
+    # 1.45% while EVERY later rung fell below it. The rule returned 27 and reported
+    # "BRACKETED, contiguous". Q* = 27 would have pinned every coqa cell deep in overload.
+    #
+    # The bottom-rung guard cannot catch it, because that rung genuinely grew. So compare the
+    # knee against the band's OPENING rung: a real knee sits well above it (gsm8k's was +18.3%)
+    # while a plateau-wide band leaves it inside the noise.
+    first_tps = curve[0][1]
+    knee_tps = next(tps for rate, tps in curve if rate == knee)
+    if len(curve) > 1 and first_tps > 0 and knee_tps < first_tps * (1.0 + CLIMB):
+        blockers.append(
+            f"Q* = {knee:g} is only {100 * (knee_tps / first_tps - 1):+.2f}% above the band's "
+            f"OPENING rung ({curve[0][0]:g}) — the band never climbed, so it lies inside a "
+            f"plateau and no knee is bracketed. A single noisy rung can clear the growth "
+            f"threshold on a flat band. WIDEN the band DOWNWARD and re-measure."
         )
     if len(curve) > 1 and knee == min(rate for rate, _ in curve):
         # The mirror of the top-rung case, and easier to miss: the FIRST rung always counts
