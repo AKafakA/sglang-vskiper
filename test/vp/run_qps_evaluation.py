@@ -996,7 +996,7 @@ def _run_cell(
     )
     _write_json(server_info_before_file, server_info_before)
     routes_decode = _arm_routes_decode(
-        server_info_before, upstream_baseline=arguments.upstream_baseline
+        server_info_before, upstream_baseline=args.upstream_baseline
     )
 
     sampler = subprocess.Popen(
