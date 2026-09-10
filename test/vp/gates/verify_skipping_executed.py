@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 
 
-def counters(path: Path) -> dict:
+def _vp_runtime(path: Path) -> dict:
     data = json.loads(path.read_text())
     states = data.get("internal_states") or []
     if not states:
@@ -37,7 +37,44 @@ def counters(path: Path) -> dict:
             f"FATAL: {path} has no vp_runtime. A quality run on a stock/no-skipper arm has "
             "nothing to verify here -- do not run this gate against the baseline arm."
         )
-    return ((vp.get("regime_switch") or {}).get("counters") or {})
+    return vp
+
+
+def skip_and_total(path: Path) -> tuple[int, int, str]:
+    """(skipped, total, source) -- read the counter block that APPLIES to the served arm.
+
+    There are two, and which one carries the evidence depends on the arm:
+
+      regime_switch.counters   admission-gated arms (integrated_it4). Counts DECODE PASSES
+                               as skip vs prod_allrun. This is what D-627 was caught with.
+      fd_c3.counters           always-route arms (integrated_alwaysskip), whose defining
+                               property is `regime_switch: False` -- so its counters are
+                               permanently zero and reading them says "nothing ran". Counts
+                               TOKENS as fd_tokens_skip_body vs fd_tokens_prod_allrun_band.
+
+    Reading only the first refused `integrated_alwaysskip` -- the arm the 2x2 quality gate
+    depends on -- while fd_c3 showed 4,975 tokens through the skip body against 0 in the
+    all-RUN band. Fail-closed was correct; blind to the arm was not.
+    """
+    vp = _vp_runtime(path)
+    regime = vp.get("regime_switch") or {}
+    if regime.get("enabled"):
+        decode = (regime.get("counters") or {}).get("decode") or {}
+        return (
+            int(decode.get("skip", 0)),
+            int(decode.get("skip", 0)) + int(decode.get("prod_allrun", 0)),
+            "regime_switch.counters.decode (passes)",
+        )
+    c3 = vp.get("fd_c3") or {}
+    if c3.get("enabled"):
+        counts = c3.get("counters") or {}
+        skipped = int(counts.get("fd_tokens_skip_body", 0))
+        allrun = int(counts.get("fd_tokens_prod_allrun_band", 0))
+        return skipped, skipped + allrun, "fd_c3.counters (tokens)"
+    sys.exit(
+        f"FATAL: {path} has neither an enabled regime_switch nor fd_c3, so no counter "
+        "block attests whether the skipper executed. Refusing rather than assuming."
+    )
 
 
 def main() -> int:
@@ -45,22 +82,28 @@ def main() -> int:
     ap.add_argument("--before", type=Path, required=True)
     ap.add_argument("--after", type=Path, required=True)
     ap.add_argument("--min-skip-share", type=float, default=0.5,
-                    help="minimum share of decode passes that must have run the SKIP body")
+                    help="minimum share of routed work that must have run the SKIP body")
     a = ap.parse_args()
 
-    b, c = counters(a.before), counters(a.after)
-    bd, cd = (b.get("decode") or {}), (c.get("decode") or {})
-    skip = int(cd.get("skip", 0)) - int(bd.get("skip", 0))
-    allrun = int(cd.get("prod_allrun", 0)) - int(bd.get("prod_allrun", 0))
-    total = skip + allrun
+    before_skip, before_total, source = skip_and_total(a.before)
+    after_skip, after_total, after_source = skip_and_total(a.after)
+    if source != after_source:
+        sys.exit(
+            f"FATAL: counter source changed mid-run ({source} -> {after_source}). The server "
+            "was restarted or reconfigured between the snapshots; the delta is meaningless."
+        )
+    skip = after_skip - before_skip
+    total = after_total - before_total
+    allrun = total - skip
 
-    print(f"decode passes during the run : {total}")
+    print(f"counter source               : {source}")
+    print(f"routed work during the run   : {total}")
     print(f"  skip body (routed)         : {skip}")
-    print(f"  prod_allrun (NO skipping)  : {allrun}")
+    print(f"  all-RUN (NO skipping)      : {allrun}")
 
     if total == 0:
-        print("\nREFUSING: zero decode passes recorded between the two snapshots. Either the "
-              "counters were captured outside the run window, or nothing ran.")
+        print("\nREFUSING: zero work recorded between the two snapshots. Either the counters "
+              "were captured outside the run window, or nothing ran.")
         return 1
 
     share = skip / total
@@ -72,9 +115,9 @@ def main() -> int:
               "(integrated_alwaysskip), or drive load above the admission threshold (D-627).")
         return 1
     if share < a.min_skip_share:
-        print(f"\nREFUSING: only {share:.1%} of decode passes routed. A quality number that is "
-              "mostly the no-skip body attributes the skipper's quality to a system that "
-              "largely was not it.")
+        print(f"\nREFUSING: only {share:.1%} of routed work went through the skip body. A "
+              "quality number that is mostly the no-skip body attributes the skipper's "
+              "quality to a system that largely was not it.")
         return 1
 
     print("\nOK: the skipper executed. This measurement describes the routed system.")
