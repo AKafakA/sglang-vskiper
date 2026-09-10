@@ -100,3 +100,45 @@ def test_growth_threshold_is_one_percent_of_the_running_max():
     # +0.9% does not clear it, +1.1% does
     assert q.growing_rungs([(5, 1000.0), (6, 1009.0)])[1][2] is False
     assert q.growing_rungs([(5, 1000.0), (6, 1011.0)])[1][2] is True
+
+
+# --- the machine-readable knee, which a drive loop acts on unsupervised ---
+
+
+def test_emit_refuses_the_recorded_curve_even_though_its_knee_is_right():
+    """The recorded BBH curve is the one whose answer we know -- and it is STILL not a curve
+    an unsupervised loop may act on. It has non-integer rungs (38.75, 48.44, the multiplier's
+    fingerprints) and interior gaps (13-19, 29-30, 32-34). qstar() reads 35 off it correctly,
+    because that is what it was validated to do; verdict() additionally refuses to hand it to
+    a caller, which is what stops a drive loop from re-measuring the contaminated band it was
+    given instead of a clean one."""
+    assert q.qstar(BBH) == 35
+    _, blockers = q.verdict(BBH)
+    assert any("non-integer" in b for b in blockers), blockers
+    assert any("NOT contiguous" in b for b in blockers), blockers
+
+
+def test_emit_refuses_a_knee_sitting_on_the_top_rung():
+    """The dangerous case for an UNSUPERVISED loop: a curve still climbing at its edge has
+    not found a knee, and a caller reading stdout must not receive one. verdict() returns a
+    blocker, so --emit exits non-zero and prints nothing."""
+    rising = [(float(n), 1000.0 * n) for n in range(5, 12)]
+    knee, blockers = q.verdict(rising)
+    assert knee == 11
+    assert any("TOP RUNG" in b for b in blockers), blockers
+
+
+def test_emit_refuses_a_gappy_band():
+    knee, blockers = q.verdict([(7, 1000.0), (8, 1100.0), (11, 1300.0), (12, 1310.0)])
+    assert any("NOT contiguous" in b for b in blockers), blockers
+
+
+def test_emit_propagates_no_growth_as_an_error():
+    with pytest.raises(q.LadderError):
+        q.verdict([(5, 1000.0)][:0] or [])
+
+
+def test_a_bracketed_contiguous_curve_has_no_blockers():
+    curve = [(7, 1000.0), (8, 1100.0), (9, 1250.0), (10, 1255.0), (11, 1256.0)]
+    knee, blockers = q.verdict(curve)
+    assert knee == 9 and blockers == []

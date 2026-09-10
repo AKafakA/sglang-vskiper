@@ -135,6 +135,23 @@ def read_cells(cells: Path) -> tuple[list[tuple[float, float]], list[str]]:
     return curve, skipped
 
 
+def verdict(curve: list[tuple[float, float]]) -> tuple[float, list[str]]:
+    """(knee, blockers). A non-empty blockers list means the knee is NOT usable yet.
+
+    Separated from report() so --emit answers exactly the question report() prints, rather
+    than a second implementation of it that could drift. Raises LadderError if no rung grew.
+    """
+    knee = qstar(curve)
+    blockers = check_contiguous([rate for rate, _ in curve])
+    if knee == max(rate for rate, _ in curve):
+        blockers.append(
+            f"Q* = {knee:g} IS THE TOP RUNG — the curve never plateaued, so the knee is not "
+            "bracketed. WIDEN the band upward (next INTEGER rungs, never a multiplier) and "
+            "re-measure."
+        )
+    return knee, blockers
+
+
 def report(curve: list[tuple[float, float]], skipped: list[str]) -> int:
     if skipped:
         print("SKIPPED CELLS (not silently dropped):")
@@ -156,26 +173,20 @@ def report(curve: list[tuple[float, float]], skipped: list[str]) -> int:
             running_max = max(running_max, tps)
 
     print()
-    for problem in problems:
-        print(f"⚠ {problem}")
     try:
-        knee = qstar(curve)
+        knee, blockers = verdict(curve)
     except LadderError as error:
-        print(f"\nNO Q*: {error}")
+        print(f"NO Q*: {error}")
         return 1
+    for problem in blockers:
+        print(f"⚠ {problem}")
 
-    top = max(rate for rate, _ in curve)
     print(f"\nQ* = {knee:g}")
-    if knee == top:
-        print(
-            "⚠ Q* IS THE TOP RUNG — the curve never plateaued, so the knee is NOT bracketed.\n"
-            "  WIDEN the band upward and re-measure. Do not accept a knee at the edge, and\n"
-            "  do NOT extend by a multiplier: choose the next integer rungs."
-        )
+    if blockers:
         return 1
     print(f"  cells at {{0.75, 0.95, 1.25}} x Q* = "
           f"{0.75 * knee:g} / {0.95 * knee:g} / {1.25 * knee:g}")
-    return 1 if problems else 0
+    return 0
 
 
 # The recorded BBH curve (D-591). Its answer is known: 35. Rung 22 ties rung 21, which is
@@ -215,12 +226,38 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("cells", nargs="?", type=Path, help="runner --output-dir of the ladder")
     ap.add_argument("--self-test", action="store_true")
+    ap.add_argument(
+        "--emit",
+        action="store_true",
+        help="print ONLY the knee, for a drive loop. Exits non-zero -- printing nothing -- "
+             "whenever the knee is not usable (no growth, a gappy band, or a knee sitting "
+             "on the top rung, which means the curve never plateaued). A caller that reads "
+             "stdout therefore cannot mistake an unbracketed edge for a measured knee; the "
+             "reason goes to stderr so the loop can log it and widen the band.",
+    )
     args = ap.parse_args()
     if args.self_test:
         return self_test()
     if not args.cells:
         ap.error("give a cells directory, or --self-test")
     curve, skipped = read_cells(args.cells)
+    if args.emit:
+        if not curve:
+            print("no valid rungs", file=sys.stderr)
+            return 1
+        try:
+            knee, blockers = verdict(curve)
+        except LadderError as error:
+            print(str(error), file=sys.stderr)
+            return 1
+        for line in skipped:
+            print(f"skipped {line}", file=sys.stderr)
+        if blockers:
+            for problem in blockers:
+                print(problem, file=sys.stderr)
+            return 1
+        print(f"{knee:g}")
+        return 0
     return report(curve, skipped)
 
 
