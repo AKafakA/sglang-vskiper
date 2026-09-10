@@ -192,6 +192,24 @@ class Server:
                 )
             log(f"    {self.arm} up on :{self.port}, attested UPSTREAM (no vp_runtime)")
             return self
+        # G1b — INTENDED vs RESOLVED design, on the live server, before the cell runs.
+        # verify_served_design's only invocation sites were cell_gates.py (which nothing
+        # calls) and a box smoke script, so no campaign has ever run it. It is a PRE gate
+        # because a wrong configuration cannot be repaired once the GPU is spent.
+        gate = Path(self.spec["tree"]) / "test/vp/gates/verify_served_design.py"
+        done = subprocess.run(
+            [sys.executable, str(gate), "--url", f"http://127.0.0.1:{self.port}",
+             "--arm", self.arm, "--tree", self.spec["tree"]],
+            capture_output=True, text=True,
+        )
+        if done.returncode != 0:
+            tail = (done.stdout + done.stderr).strip().splitlines()
+            raise RuntimeError(
+                f"G1 served-design gate REFUSED arm {self.arm!r}: "
+                f"{tail[-1][:200] if tail else 'no output'}"
+            )
+        log(f"    G1 served design == intended design ({self.arm})")
+
         live = served_arm(self.port)
         if live != self.arm:
             raise RuntimeError(
@@ -306,8 +324,23 @@ def cross_arm_work_gate(spec: dict[str, Any], dataset: str, rates: dict[str, flo
                 "an unchecked pair is a failed pair")
             failed.append(label)
             continue
+        # --out is REQUIRED by the gate's own CLI. Omitting it made every invocation exit 2
+        # on argparse before reading a single artifact -- which this wrapper would have
+        # recorded as a work-identity FAILURE, marking all 54 paired cells unquotable after
+        # a ten-hour run. The verdict is written beside the cells so it is evidence, not
+        # just an exit code.
+        verdict = out_dir / f"rep{rep}" / dataset / f"workgate_{suite}.json"
+        # --reference names the arm whose per-request lengths ARE the identity table. Its
+        # default is "V-dec-rs", a legacy arm this campaign does not have, so leaving it
+        # unset raised `reference arm 'V-dec-rs' not among arms` on every call -- the second
+        # of two independent ways this gate would have failed 100% of cells while looking
+        # like a genuine work-identity refusal in the log.
+        #
+        # The BASELINE is the reference: the equal-work suite is pinned from banked baseline
+        # lengths, so the treatment is what must match it, not the other way round.
         command = [sys.executable, str(Path(spec["tree"]) / "test/vp/cross_arm_work_gate.py"),
-                   "--cell", f"{suite}_rep{rep}"]
+                   "--cell", f"{suite}_rep{rep}", "--out", str(verdict),
+                   "--reference", baseline]
         for item in specs:
             command += ["--arm", item]
         done = subprocess.run(command, cwd=Path(spec["tree"]), capture_output=True, text=True)
@@ -340,6 +373,31 @@ def main() -> int:
         return 2
     log(f"preflight OK: {len(spec['datasets'])} datasets, "
         f"{sum(len(r) for r in spec['datasets'].values())} rates, arms {spec['arms']}")
+
+    # G1a — campaign_preflight, whose ONLY caller was the dead cell_gates.py. It is the gate
+    # whose literal job is "upstream baseline staged and genuinely stock", and it had never
+    # been run against a genuine upstream tree: its manifest claimed 2319 files when the
+    # commit yields 2079, so no correct tree could pass it (D-646). Run once per arm here,
+    # binding the PYTHONPATH about to be exported to the tree just content-verified --
+    # hashing a directory does not bind it to the process that serves (audit D-624 #6).
+    if "upstream_tree" in spec:
+        for role, arm in spec["arms"].items():
+            upstream = arm_is_upstream(spec, arm)
+            serving = (Path(spec["upstream_tree"]) if upstream else Path(spec["tree"])) / "python"
+            command = [sys.executable,
+                       str(Path(spec["tree"]) / "test/vp/gates/campaign_preflight.py"),
+                       "--tree", spec["tree"], "--upstream", spec["upstream_tree"],
+                       "--workdir", spec["suites_dir"],
+                       "--serving-pythonpath", str(serving)]
+            if upstream:
+                command.append("--serving-is-upstream")
+            done = subprocess.run(command, capture_output=True, text=True)
+            if done.returncode != 0:
+                print(f"G1a campaign preflight REFUSED for {role} arm {arm!r} — "
+                      "nothing has booted:", file=sys.stderr)
+                sys.stderr.write(done.stdout[-2500:] + done.stderr[-1000:])
+                return 2
+            log(f"  G1a campaign preflight PASS ({role}={arm}, serving {serving})")
     if args.dry_run:
         for dataset, rates in spec["datasets"].items():
             for label, rate in sorted(rates.items(), key=lambda kv: kv[1]):
