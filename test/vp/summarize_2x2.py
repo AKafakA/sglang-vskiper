@@ -32,7 +32,12 @@ from pathlib import Path
 # The metric each dataset is scored on, and its stderr key. Declared, not discovered.
 METRICS = {
     "gsm8k": ("exact_match,flexible-extract", "exact_match_stderr,flexible-extract"),
-    "bbh_cot": ("exact_match,flexible-extract", "exact_match_stderr,flexible-extract"),
+    # lm-eval emits `get-answer` for bbh_cot_fewshot, not flexible-extract. D-641: this
+    # filter only scores a response containing "the answer is", and the arms differ sharply
+    # on that -- stock 76.5% vs vSkipper 95.5% marker rate -- so it measures format
+    # compliance and correctness together. (D - C) alone is NOT quotable for BBH; only the
+    # difference-of-differences, which cancels a confound both pairs share.
+    "bbh_cot": ("exact_match,get-answer", "exact_match_stderr,get-answer"),
     "coqa": ("f1,none", "f1_stderr,none"),
 }
 
@@ -112,6 +117,13 @@ def main() -> int:
     print()
     print("  NOTE gate 2 passing means our gap MATCHES the checkpoint's. It does not mean")
     print("  the gap is zero -- report (D - C) itself alongside it.")
+    if args.dataset == "bbh_cot":
+        print()
+        print("  WARNING (D-641) bbh_cot's `get-answer` filter scores only responses that")
+        print("  contain 'the answer is'. Measured marker rates differ sharply by arm")
+        print("  (stock 76.5% vs vSkipper 95.5%), so this metric mixes FORMAT COMPLIANCE")
+        print("  with correctness. Quote the difference-of-differences, which cancels a")
+        print("  confound shared by both pairs -- never (D - C) on its own.")
     return 0 if (not collapse and faithful) else 1
 
 
