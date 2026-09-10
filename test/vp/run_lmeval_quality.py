@@ -113,6 +113,9 @@ def _lmeval_command(args: argparse.Namespace, task: str, kind: str) -> list[str]
         if args.trust_remote_code:
             model_args += ",trust_remote_code=True"
     command += ["--model", model, "--model_args", model_args, "--tasks", task]
+    if not args.base_url:
+        # Served arms are batched by the server; only the in-process model needs this.
+        command += ["--batch_size", str(args.batch_size)]
     if kind == "chat_messages":
         command += ["--apply_chat_template", "--fewshot_as_multiturn"]
     # --log_samples produces the samples_*.jsonl layout verify_zero_empty globs. Without
@@ -136,6 +139,14 @@ def main() -> int:
     ap.add_argument("--hf-model", default="", help="model path, for native arms A/B")
     ap.add_argument("--hf-dtype", default="")
     ap.add_argument("--trust-remote-code", action="store_true")
+    ap.add_argument(
+        "--batch-size",
+        default="8",
+        help="lm-eval --batch_size for NATIVE arms. Default 8, matching the batch size "
+             "D-631/D-632's reference runs used. lm-eval's own default is 1, which is "
+             "~15x slower than a served arm and would silently differ in methodology "
+             "from those runs. Ignored for served arms, where the server batches.",
+    )
     ap.add_argument("--lmeval-python", default=sys.executable)
     ap.add_argument(
         "--min-skip-share",
@@ -209,6 +220,7 @@ def main() -> int:
         "prompt_kind": kind,
         "arm": args.arm,
         "routes_decode": routes_decode,
+        "batch_size": (args.batch_size if not args.base_url else None),
         "lmeval_command": command,
         "lmeval_returncode": lmeval_rc,
         "failed_gates": failed,
