@@ -358,7 +358,7 @@ DATASET_PROTOCOLS: dict[str, dict[str, Any]] = {
         # step by step.\n", until ["</s>", "Q", "\n\n"], filter regex
         # "(?<=the answer is )(.*)(?=.)" take_first, exact_match on the
         # target; max_gen_toks 1024.
-        "id": "lm-eval-0.4.9.1:bbh_cot_fewshot-v4:3shot-fixed-multiturn",
+        "id": "lm-eval-0.4.9.1:bbh_cot_fewshot-v4:3shot-fixed-raw",
         "source": "SaylorTwift/bbh:27-tasks",
         "evaluation_split": "test",
         "quality_semantics": "paper_exact",
@@ -1086,9 +1086,22 @@ def _bbh_cot_question(text: str) -> str:
 
 
 def load_bbh_cot(limit: int) -> list[WorkloadItem]:
-    """BBH chain-of-thought (owner D-570): each task's description + its three
-    fixed lm-eval CoT shots as user/assistant turns, then the question; tasks
-    interleaved round-robin so any prefix of the pool is task-balanced."""
+    """BBH chain-of-thought: description + three fixed lm-eval CoT shots as a RAW
+    CONTINUATION, then the question; tasks interleaved round-robin so any prefix of the
+    pool is task-balanced.
+
+    RAW, not chat (D-643). `doc_to_text` is "Q: {{input}}\nA: Let's think step by step.\n"
+    -- a continuation prompt -- every exemplar ends "So the answer is X.", so the answer
+    marker the sole `get-answer` filter needs is PROMPT-INDUCED, and `until`'s "\n\n" is
+    the few-shot separator. Under a chat template the model stops continuing and starts
+    answering: it writes its own preamble, emits a paragraph break, and generation dies at
+    that "\n\n" before any reasoning exists.
+
+    Measured cost of getting this wrong: stock's marker rate was 76.7% under chat vs 98.1%
+    under raw, and (D - C) INVERTED from +10.83 pp to -6.54 pp -- a 17 pp swing in the
+    direction that flattered us. Raw does not collapse this checkpoint on BBH (0.0% empty
+    both arms), unlike raw gsm8k's 55% (D-632), so the risk that forces chat on gsm8k does
+    not apply here."""
     import datasets
 
     protocol = DATASET_PROTOCOLS["bbh_cot"]
@@ -1096,17 +1109,19 @@ def load_bbh_cot(limit: int) -> list[WorkloadItem]:
     for task in BBH_COT_TASKS:
         spec = _bbh_cot_task_spec(task)
         rows = datasets.load_dataset("SaylorTwift/bbh", task, split="test")
-        shot_messages: list[dict[str, str]] = []
-        for shot_index, shot in enumerate(spec["fewshot_config"]["samples"]):
-            question = _bbh_cot_question(shot["input"])
-            if shot_index == 0:
-                question = spec["description"] + question
-            shot_messages.extend(
-                [
-                    {"role": "user", "content": question},
-                    {"role": "assistant", "content": shot["target"]},
-                ]
-            )
+        # lm-eval's own assembly, verified byte-identical against a served raw run:
+        #   <description>\n\n  then each  "Q: <in>\nA: Let's think step by step.\n<target>"
+        #   joined by "\n\n" (the few-shot separator), then the question with no target.
+        # target_delimiter is "", so the CoT target follows doc_to_text's trailing newline
+        # directly.
+        shot_block = "\n\n".join(
+            _bbh_cot_question(shot["input"]) + shot["target"]
+            for shot in spec["fewshot_config"]["samples"]
+        )
+        # NOTE spec["description"] ALREADY ends with "\n\n" -- adding another produced a
+        # 2-byte divergence from lm-eval, caught by the byte-equality check against a real
+        # served run rather than by reading the yaml.
+        prefix = spec["description"] + shot_block + "\n\n"
         items: list[WorkloadItem] = []
         for index, row in enumerate(rows):
             items.append(
@@ -1114,11 +1129,8 @@ def load_bbh_cot(limit: int) -> list[WorkloadItem]:
                     dataset="bbh_cot",
                     item_id=f"{task}:test:{index}",
                     phase="decode",
-                    prompt=[
-                        *shot_messages,
-                        {"role": "user", "content": _bbh_cot_question(row["input"])},
-                    ],
-                    prompt_kind="chat_messages",
+                    prompt=prefix + _bbh_cot_question(row["input"]),
+                    prompt_kind="raw_completion",
                     reference_output_len=None,
                     metric="bbh_cot_exact_match",
                     gold=row["target"],
@@ -1127,8 +1139,10 @@ def load_bbh_cot(limit: int) -> list[WorkloadItem]:
                     task_reference_max_output_len=protocol[
                         "task_reference_max_output_len"
                     ],
-                    # lm-eval generation_kwargs.until, verbatim, plus the chat EOS
-                    stop=["</s>", "Q", "\n\n", "<|im_end|>"],
+                    # lm-eval generation_kwargs.until, verbatim. NO chat EOS: this is
+                    # the raw protocol, and "\n\n" is meaningful here (it separates
+                    # exemplars) precisely because the prompt is a raw continuation.
+                    stop=["</s>", "Q", "\n\n"],
                     evaluator_data={"task": task, "source_split": "test"},
                 )
             )
