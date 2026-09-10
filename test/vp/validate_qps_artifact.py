@@ -366,6 +366,35 @@ def validate_record(
             "failed/filtered finish reasons present (a request that did not finish is a "
             f"failed request, not a datum): {counts}"
         )
+    # [D-628] ZERO-EMPTY HARD GATE (owner order, 2026-09-10). A request that returns no text
+    # is LOST OUTPUT, not a low score: it silently deflates quality and inflates
+    # throughput-per-token, and it survived from D-066 (2026-08-09) to now because nothing
+    # asserted it. finish_reason cannot catch it -- `stop`/`matched: 128009` (<|eot_id|>) is
+    # also the NORMAL healthy ending, 82% of a clean run -- so the body must be checked.
+    #
+    # Equal-work rows are EXEMPT and must be: `ignore_eos` fills the budget, so a first-token
+    # EOS is invisible there. That exemption is exactly why every headline performance cell
+    # missed this, so exempting them here is not a loophole -- it records where the gate has
+    # no power, and the natural lane is where it bites.
+    generated_texts = arrays["generated_texts"]
+    empty_rows = [
+        index
+        for index, text in enumerate(generated_texts)
+        if not str(text or "").strip()
+        and (
+            expected_output_policies is None
+            or index >= len(expected_output_policies)
+            or expected_output_policies[index] != "production_max_equal_work"
+        )
+    ]
+    if empty_rows:
+        errors.append(
+            f"{len(empty_rows)} natural-lane requests returned EMPTY text "
+            f"(first rows {empty_rows[:10]}). Lost output, not a datum. Check the prompt "
+            "protocol first: raw few-shot rendering reproduces this at 42-52% while the chat "
+            "protocol measures 0.0% on the same tree (D-628)."
+        )
+
     length_finish_indices = [
         index for index, reason in enumerate(finish_reasons) if reason == "length"
     ]
