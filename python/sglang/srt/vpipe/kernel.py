@@ -34,6 +34,7 @@ the frozen tree so route digests and numerics are unchanged.
 from __future__ import annotations
 
 import functools
+import re
 from typing import Optional
 
 import torch
@@ -519,6 +520,34 @@ def count_silu_mul_rowloop(
         block_i,
         num_programs,
     )
+# Interconnect form factor is not a tuning axis. `torch.cuda.get_device_name()` returns
+# "NVIDIA A100-SXM4-80GB" on one A100 80GB and "NVIDIA A100 80GB PCIe" on another, but they
+# are the same GA100 die -- 108 SMs, 192 KB shared memory per SM, identical warp scheduling
+# -- and this artifact holds Triton TILE PARAMETERS (block_m/n/k, num_warps, num_stages),
+# which are a property of that architecture. SXM and PCIe parts differ in memory bandwidth
+# and power cap, which move absolute throughput but not which tile shape fits.
+#
+# So the suffix is stripped and both resolve to one artifact. Memory-technology tokens are
+# NOT stripped: H100 80GB HBM3 and HBM2e are genuinely different parts.
+_FORM_FACTOR_TOKENS = ("SXM5", "SXM4", "SXM3", "SXM2", "SXM", "PCIE")
+
+
+def canonical_device_key(device_name: str) -> str:
+    """Normalise a CUDA device name to its tuned-artifact key.
+
+    >>> canonical_device_key("NVIDIA A100-SXM4-80GB")
+    'NVIDIA_A100_80GB'
+    >>> canonical_device_key("NVIDIA A100 80GB PCIe")
+    'NVIDIA_A100_80GB'
+    """
+    parts = [
+        token
+        for token in re.split(r"[\s_-]+", device_name.strip())
+        if token and token.upper() not in _FORM_FACTOR_TOKENS
+    ]
+    return "_".join(parts)
+
+
 @functools.cache
 def load_tuned_configs(device_name: str) -> dict:
     """Load the committed per-device config artifact; fail closed.
@@ -527,22 +556,27 @@ def load_tuned_configs(device_name: str) -> dict:
     the moe-configs pattern). A missing artifact for an active
     binary_cohort deployment is a configuration error, never a silent
     heuristic fallback (design v2.1 attestation contract).
+
+    The lookup key is the CANONICAL device name -- see `canonical_device_key`.
     """
 
     import json
     from pathlib import Path
 
-    path = (
-        Path(__file__).parent
-        / "binary_cohort_configs"
-        / f"{device_name.replace(' ', '_')}.json"
-    )
+    key = canonical_device_key(device_name)
+    path = Path(__file__).parent / "binary_cohort_configs" / f"{key}.json"
     if not path.exists():
+        available = sorted(
+            p.stem for p in (Path(__file__).parent / "binary_cohort_configs").glob("*.json")
+        )
         raise RuntimeError(
             f"binary_cohort tuned-config artifact missing for device "
-            f"{device_name!r} (expected {path})"
+            f"{device_name!r} (canonical key {key!r}, expected {path}). "
+            f"Available: {available}"
         )
     return json.loads(path.read_text())
+
+
 def select_config(
     tuned: dict, op: str, expected_count: int
 ) -> dict[str, int]:
