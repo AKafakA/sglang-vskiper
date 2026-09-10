@@ -40,13 +40,30 @@ def _flatten(value):
 
 
 def _from_lmeval(directory: Path) -> tuple[int, list[str]]:
+    """Aggregate EVERY samples file, not just the newest.
+
+    A grouped task writes one file per subtask -- bbh_cot_fewshot writes 27, covering 6,511
+    docs. Reading only the last file would examine 250 of them and certify the run on 3.8% of
+    its output, which is how a gate passes while the defect it exists to catch sits in the
+    other 26 files.
+    """
     files = sorted(glob.glob(f"{directory}/**/samples_*.jsonl", recursive=True))
     if not files:
         sys.exit(f"FATAL: no lm-eval samples under {directory}")
-    rows = [json.loads(line) for line in open(files[-1]) if line.strip()]
-    # RAW resps, never filtered_resps -- see (2) above.
-    empties = [r.get("doc_id") for r in rows if not _flatten(r.get("resps")).strip()]
-    return len(rows), [str(d) for d in empties]
+    total = 0
+    empties: list[str] = []
+    for path in files:
+        subtask = Path(path).name
+        for line in open(path):
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            total += 1
+            # RAW resps, never filtered_resps -- see (2) above.
+            if not _flatten(row.get("resps")).strip():
+                empties.append(f"{subtask}:{row.get('doc_id')}")
+    print(f"samples files    : {len(files)}")
+    return total, empties
 
 
 def _from_artifact(path: Path) -> tuple[int, list[str]]:
