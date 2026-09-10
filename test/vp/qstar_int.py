@@ -149,6 +149,16 @@ def verdict(curve: list[tuple[float, float]]) -> tuple[float, list[str]]:
             "bracketed. WIDEN the band upward (next INTEGER rungs, never a multiplier) and "
             "re-measure."
         )
+    if len(curve) > 1 and knee == min(rate for rate, _ in curve):
+        # The mirror of the top-rung case, and easier to miss: the FIRST rung always counts
+        # as growth (there is no lower rung for it to beat), so a curve that is already flat
+        # when the band opens returns its own bottom rung. That is not a knee, it is the
+        # statement that the knee is at or below where we started looking.
+        blockers.append(
+            f"Q* = {knee:g} IS THE BOTTOM RUNG — the first rung counts as growth by "
+            "construction, so this says only that nothing above it grew. The knee is at or "
+            "below the band. WIDEN the band DOWNWARD and re-measure."
+        )
     return knee, blockers
 
 

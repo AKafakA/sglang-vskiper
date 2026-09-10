@@ -142,3 +142,28 @@ def test_a_bracketed_contiguous_curve_has_no_blockers():
     curve = [(7, 1000.0), (8, 1100.0), (9, 1250.0), (10, 1255.0), (11, 1256.0)]
     knee, blockers = q.verdict(curve)
     assert knee == 9 and blockers == []
+
+
+def test_emit_refuses_a_knee_sitting_on_the_bottom_rung():
+    """The mirror of the top-rung case. The first rung has no lower rung to beat, so it is
+    marked as growth unconditionally -- meaning a curve that is ALREADY flat when the band
+    opens hands back its own opening rate. An unsupervised loop would then calibrate the whole
+    campaign to wherever it happened to start looking."""
+    flat_from_the_start = [(30, 3000.0), (31, 3005.0), (32, 2990.0), (33, 3010.0)]
+    knee, blockers = q.verdict(flat_from_the_start)
+    assert knee == 30
+    assert any("BOTTOM RUNG" in b for b in blockers), blockers
+
+
+def test_a_single_rung_is_not_called_a_bottom_rung_knee():
+    """One rung is degenerate, not a direction to widen; it is only the top rung."""
+    knee, blockers = q.verdict([(30, 3000.0)])
+    assert knee == 30
+    assert any("TOP RUNG" in b for b in blockers), blockers
+    assert not any("BOTTOM RUNG" in b for b in blockers), blockers
+
+
+def test_a_properly_bracketed_curve_is_flagged_neither_way():
+    curve = [(30, 3000.0), (31, 3200.0), (32, 3400.0), (33, 3410.0), (34, 3415.0)]
+    knee, blockers = q.verdict(curve)
+    assert knee == 32 and blockers == []
