@@ -58,17 +58,25 @@ def _fetch_json(url: str) -> Any:
         return json.load(response)
 
 
-def _prompt_kind(suite_dir: Path, workload: str) -> str:
+def _prompt_kind(suite_dir: Path, suite_name: str) -> str:
     """Read the protocol the PERF lane froze for this dataset.
+
+    `suite_name` is the FILE PREFIX, which is not the workload name: the built suites are
+    `coqa.d179`, `gsm8k.d179`, `bbh_cot.d179`. Defaults to the workload, overridable with
+    --suite-name.
 
     One value for the whole suite: a suite that mixes prompt kinds has no single
     lm-eval protocol, and silently picking one would be the drift this guards against.
     """
-    metadata = suite_dir / f"{workload}.metadata.jsonl"
+    metadata = suite_dir / f"{suite_name}.metadata.jsonl"
     if not metadata.is_file():
+        candidates = sorted(p.name.replace(".metadata.jsonl", "")
+                            for p in suite_dir.glob("*.metadata.jsonl"))
         sys.exit(
             f"FATAL: no frozen suite at {metadata}. The quality protocol is read from "
-            "the perf suite so the two lanes cannot drift; build the suite first."
+            "the perf suite so the two lanes cannot drift.\n"
+            f"       Suites present in {suite_dir}: {', '.join(candidates) or '(none)'}\n"
+            "       Pass --suite-name with the right prefix, or build the suite first."
         )
     kinds = set()
     with metadata.open() as handle:
@@ -118,6 +126,9 @@ def main() -> int:
     ap.add_argument("--workload", choices=sorted(TASKS), required=True)
     ap.add_argument("--arm", required=True, help="label recorded in the manifest")
     ap.add_argument("--suite-dir", type=Path, required=True)
+    ap.add_argument("--suite-name", default="",
+                    help="frozen-suite file prefix; defaults to --workload. "
+                         "The built suites are coqa.d179 / gsm8k.d179 / bbh_cot.d179.")
     ap.add_argument("--output-dir", type=Path, required=True)
     ap.add_argument("--base-url", default="", help="serving endpoint, for arms C/D")
     ap.add_argument("--tokenizer", default="", help="tokenizer path, with --base-url")
@@ -140,9 +151,10 @@ def main() -> int:
         ap.error("--base-url needs --tokenizer")
 
     task = TASKS[args.workload]
-    kind = _prompt_kind(args.suite_dir, args.workload)
+    suite_name = args.suite_name or args.workload
+    kind = _prompt_kind(args.suite_dir, suite_name)
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    print(f"workload={args.workload} task={task} protocol={kind} arm={args.arm}")
+    print(f"workload={args.workload} suite={suite_name} task={task} protocol={kind} arm={args.arm}")
 
     routes_decode = False
     before = args.output_dir / "server_info.before.json"
@@ -192,6 +204,7 @@ def main() -> int:
 
     manifest = {
         "workload": args.workload,
+        "suite_name": suite_name,
         "lmeval_task": task,
         "prompt_kind": kind,
         "arm": args.arm,

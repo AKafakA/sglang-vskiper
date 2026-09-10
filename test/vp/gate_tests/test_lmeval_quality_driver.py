@@ -113,3 +113,14 @@ def test_bbh_uses_the_cot_task_not_the_broken_one():
     """`bbh_fewshot` scores 0.0 through a leading-space artifact (D-616)."""
     assert driver.TASKS["bbh_cot"] == "bbh_cot_fewshot"
     assert "bbh_fewshot" not in driver.TASKS.values()
+
+
+def test_suite_name_defaults_to_workload_but_is_overridable(tmp_path):
+    """The built suites are `coqa.d179`, not `coqa` -- the workload name is NOT the file
+    prefix. Reading only the workload made the driver refuse every real suite on the box."""
+    _suite(tmp_path, "coqa.d179", ["raw_completion"])
+    assert driver._prompt_kind(tmp_path, "coqa.d179") == "raw_completion"
+    with pytest.raises(SystemExit) as exc:
+        driver._prompt_kind(tmp_path, "coqa")
+    # The refusal must say what IS there, or the next person repeats the same guess.
+    assert "coqa.d179" in str(exc.value)
