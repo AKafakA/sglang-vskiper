@@ -1,0 +1,297 @@
+#!/usr/bin/env python3
+"""Drive the paired performance campaign: N reps x datasets x rates x two arms.
+
+Why this is a committed file. Every performance table this project has produced came from
+hand-written shell on an ephemeral box, and every one of those scripts is now gone. That is
+not only a reproducibility complaint -- it is how the v1.3 table came to be measured on a
+design that no longer exists (73 commits and four deleted mechanisms later), and how eleven
+of twelve drivers invoked gates through a pipe that discarded their exit status. A table
+that decides the paper is not a thing to re-improvise each time.
+
+What this enforces, structurally rather than by remembering:
+
+  * PAIRING. A cell is (dataset, rate, rep). Both arms measure the SAME pinned equal-work
+    suite at the SAME rate in the same rep, so the paired unit is a within-rep delta and the
+    CI is over reps. Cross-arm work identity is a code gate elsewhere (GR-1a); here the
+    guarantee is that neither arm can be handed different work, because both are handed one
+    suite name.
+  * ARM ORDER ALTERNATES BY REP PARITY. Odd reps run stock first, even reps run vSkipper
+    first. Arm order is worth ~3% on a shared node -- unalternated, that bias sits entirely
+    on one arm and is indistinguishable from the effect.
+  * EVERY PINNED SUITE EXISTS BEFORE ANYTHING BOOTS. A campaign that discovers a missing
+    suite in rep 4 has burned hours to find out what one stat() call knew at the start.
+  * THE SERVED ARM IS READ BACK, NOT ASSUMED. `deploy/active_arm` is what we asked for;
+    /server_info is what runs. A set flag is not an active treatment -- a whole night's
+    quality numbers once described the no-skip body while every input gate passed.
+  * GATES. Per-cell enforcement lives inside run_qps_evaluation and refuses a bad cell
+    there; this driver does not re-implement it and does not paper over its exit status.
+
+Usage:
+    run_paired_campaign.py --spec campaign.json --out-dir OUT [--reps 6] [--start-rep 1]
+
+The spec is data, not code (QPS grids are contract data):
+
+    {"tree": "/opt/vpipe/trees/tree-318bc23929",
+     "python": "/opt/vpipe/venv/bin/python",
+     "model_path": "/dev/shm/vpipe/models/Meta-Llama-3-8B-Instruct-53346005",
+     "suites_dir": "/dev/shm/vpipe/suites",
+     "host_config": "deploy/hosts/vast-a100.json",
+     "expect_dir": "/opt/vpipe/campaign",
+     "arms": {"baseline": "stock", "treatment": "integrated_it4"},
+     "datasets": {"gsm8k": {"r11p25": 11.25, "r14p25": 14.25, "r18p75": 18.75}}}
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shlex
+import signal
+import subprocess
+import sys
+import time
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+MODEL_REVISION = "53346005fb0ef11d3b6a83b12c895cca40156b6c"
+SERVED_MODEL_NAME = "NousResearch/Meta-Llama-3-8B-Instruct"
+
+
+def log(message: str) -> None:
+    print(f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}] {message}", flush=True)
+
+
+def suite_name(dataset: str, label: str) -> str:
+    """The pinned equal-work suite for one (dataset, rate). Built by the harvest."""
+    return f"{dataset}_eqw_{label}"
+
+
+def preflight(spec: dict[str, Any]) -> list[str]:
+    """Everything checkable before a GPU is touched. Returns complaints."""
+    problems: list[str] = []
+    required = ("tree", "python", "model_path", "suites_dir", "expect_dir",
+                "host_config", "arms", "datasets", "source_revision")
+    missing = [key for key in required if key not in spec]
+    if missing:
+        return [f"spec is missing required keys: {', '.join(missing)}"]
+    tree = Path(spec["tree"])
+    suites = Path(spec["suites_dir"])
+    for key in ("tree", "python", "model_path", "suites_dir", "expect_dir"):
+        if not Path(spec[key]).exists():
+            problems.append(f"{key} does not exist: {spec[key]}")
+    if not (tree / spec["host_config"]).is_file():
+        problems.append(f"host config missing: {tree / spec['host_config']}")
+    for role, arm in spec["arms"].items():
+        expect = Path(spec["expect_dir"]) / f"expect_{arm}.json"
+        if not expect.is_file():
+            problems.append(f"{role} arm {arm}: no expected-runtime file {expect}")
+    for dataset, rates in spec["datasets"].items():
+        for label in rates:
+            name = suite_name(dataset, label)
+            for suffix in ("requests.jsonl", "metadata.jsonl"):
+                path = suites / f"{name}.{suffix}"
+                if not path.is_file():
+                    problems.append(f"pinned suite missing: {path}")
+    return problems
+
+
+def server_info(port: int) -> Any:
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}/server_info", timeout=30) as r:
+        return json.load(r)
+
+
+def served_arm(port: int) -> str:
+    """What the live server says it is serving -- not what we asked it to serve."""
+    info = server_info(port)
+    try:
+        return str(info["internal_states"][0]["vp_runtime"]["served_design"]["arm"])
+    except (KeyError, IndexError, TypeError) as error:
+        raise RuntimeError(
+            "live /server_info carries no vp_runtime.served_design.arm; refusing to "
+            "attribute a measurement to an arm the server will not name"
+        ) from error
+
+
+class Server:
+    """One booted arm. Boot, attest, tear down -- and never leave a process behind."""
+
+    def __init__(self, spec: dict[str, Any], arm: str, port: int, log_path: Path) -> None:
+        self.spec, self.arm, self.port, self.log_path = spec, arm, port, log_path
+        self.process: subprocess.Popen[bytes] | None = None
+
+    def command(self) -> list[str]:
+        return [
+            self.spec["python"], "-m", "sglang.launch_server",
+            "--model-path", self.spec["model_path"],
+            "--revision", MODEL_REVISION,
+            "--served-model-name", SERVED_MODEL_NAME,
+            "--host", "127.0.0.1", "--port", str(self.port),
+            "--mem-fraction-static", "0.8", "--dtype=float16",
+            "--attention-backend=triton",
+            "--prefill-attention-backend=triton",
+            "--decode-attention-backend=triton",
+        ]
+
+    def __enter__(self) -> Server:
+        tree = Path(self.spec["tree"])
+        # The arm is selected IN THE TREE, never through the environment (D-609).
+        (tree / "deploy/active_arm").write_text(self.arm + "\n")
+        environment = dict(os.environ)
+        environment["PYTHONPATH"] = str(tree / "python")
+        environment["SGLANG_IS_FLASHINFER_AVAILABLE"] = "false"
+        environment["SGLANG_VP_HOST_CONFIG"] = str(tree / self.spec["host_config"])
+        handle = self.log_path.open("wb")
+        self.process = subprocess.Popen(
+            self.command(), stdout=handle, stderr=subprocess.STDOUT,
+            env=environment, start_new_session=True,
+        )
+        for _ in range(180):
+            if self.process.poll() is not None:
+                raise RuntimeError(f"{self.arm} server exited during boot; see {self.log_path}")
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{self.port}/health", timeout=3).read()
+                break
+            except Exception:
+                time.sleep(5)
+        else:
+            raise RuntimeError(f"{self.arm} server never became healthy; see {self.log_path}")
+
+        live = served_arm(self.port)
+        if live != self.arm:
+            raise RuntimeError(
+                f"asked for arm {self.arm!r} but the server is serving {live!r} — refusing "
+                "to record a measurement under the wrong arm name"
+            )
+        log(f"    {self.arm} up on :{self.port}, attested as {live!r}")
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        if self.process is None or self.process.poll() is not None:
+            return
+        os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
+        try:
+            self.process.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
+            self.process.wait(timeout=30)
+
+
+def run_arm_cells(spec: dict[str, Any], dataset: str, rates: dict[str, float],
+                  arm: str, rep: int, out_dir: Path, port: int) -> int:
+    """All rates for one (dataset, arm, rep) against ONE boot. Returns the runner's rc."""
+    tree = Path(spec["tree"])
+    cell_root = out_dir / f"rep{rep}" / dataset / arm
+    cell_root.mkdir(parents=True, exist_ok=True)
+    server_log = cell_root / "server.log"
+
+    with Server(spec, arm, port, server_log) as server:
+        (cell_root / "server_info.before.json").write_text(
+            json.dumps(server_info(port), indent=2, sort_keys=True) + "\n")
+
+        launch = cell_root / "launch_command.json"
+        launch.write_text(json.dumps(server.command()) + "\n")
+        manifest = cell_root / "deployment_manifest.json"
+        subprocess.run(
+            [spec["python"], str(tree / "test/vp/make_deployment_manifest.py"),
+             "--deployment-id", f"paired-{dataset}-{arm}-rep{rep}",
+             "--system-id", arm, "--model", SERVED_MODEL_NAME,
+             "--model-revision", MODEL_REVISION,
+             "--client-tokenizer-path", spec["model_path"],
+             "--source-revision", spec["source_revision"],
+             "--launch-command-file", str(launch),
+             "--expected-runtime-json", str(Path(spec["expect_dir"]) / f"expect_{arm}.json"),
+             "--host", "127.0.0.1", "--port", str(port), "--out", str(manifest)],
+            check=True, capture_output=True,
+        )
+
+        qps_config = cell_root / "qps.json"
+        qps_config.write_text(json.dumps(
+            {"workloads": {suite_name(dataset, label): [rate] for label, rate in rates.items()}}
+        ) + "\n")
+
+        # min_prompts is the whole pinned suite: the equal-work lane's work identity is the
+        # suite, so a partial pass is a different experiment, not a shorter one.
+        rows = sum(1 for _ in (Path(spec["suites_dir"]) /
+                               f"{suite_name(dataset, next(iter(rates)))}.requests.jsonl").open())
+        slowest = min(rates.values())
+        duration = int(rows // slowest)
+        completed = subprocess.run(
+            [spec["python"], str(tree / "test/vp/run_qps_evaluation.py"),
+             "--experiment", f"paired-{dataset}-{arm}-rep{rep}",
+             "--deployment-manifest", str(manifest),
+             "--model", SERVED_MODEL_NAME, "--workload-dir", spec["suites_dir"],
+             "--qps-config", str(qps_config), "--output-dir", str(cell_root / "cells"),
+             "--evidence-class", spec.get("evidence_class", "development"),
+             "--host", "127.0.0.1", "--port", str(port), "--reps", "1",
+             "--min-prompts", str(rows), "--duration-s", str(duration),
+             "--runner-source-revision", spec["source_revision"]],
+            check=False, stdout=(cell_root / "runner.log").open("wb"),
+            stderr=subprocess.STDOUT,
+        )
+        (cell_root / "server_info.after.json").write_text(
+            json.dumps(server_info(port), indent=2, sort_keys=True) + "\n")
+    return completed.returncode
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--spec", type=Path, required=True)
+    ap.add_argument("--out-dir", type=Path, required=True)
+    ap.add_argument("--reps", type=int, default=6)
+    ap.add_argument("--start-rep", type=int, default=1)
+    ap.add_argument("--port", type=int, default=32051)
+    ap.add_argument("--dry-run", action="store_true",
+                    help="preflight only: prove every suite and arm exists, boot nothing")
+    args = ap.parse_args()
+
+    spec = json.loads(args.spec.read_text())
+    problems = preflight(spec)
+    if problems:
+        print("PREFLIGHT FAILED — nothing has booted:", file=sys.stderr)
+        for problem in problems:
+            print(f"  - {problem}", file=sys.stderr)
+        return 2
+    log(f"preflight OK: {len(spec['datasets'])} datasets, "
+        f"{sum(len(r) for r in spec['datasets'].values())} rates, arms {spec['arms']}")
+    if args.dry_run:
+        for dataset, rates in spec["datasets"].items():
+            for label, rate in sorted(rates.items(), key=lambda kv: kv[1]):
+                log(f"  would run {dataset} {suite_name(dataset, label)} @ {rate}")
+        return 0
+
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    baseline, treatment = spec["arms"]["baseline"], spec["arms"]["treatment"]
+    index: list[dict[str, Any]] = []
+    failures = 0
+
+    for rep in range(args.start_rep, args.start_rep + args.reps):
+        # Alternate, so arm order cannot masquerade as the effect.
+        order = [baseline, treatment] if rep % 2 == 1 else [treatment, baseline]
+        for dataset, rates in spec["datasets"].items():
+            log(f"=== rep {rep} · {dataset} · order {' -> '.join(order)} ===")
+            for arm in order:
+                started = time.time()
+                try:
+                    rc = run_arm_cells(spec, dataset, rates, arm, rep, args.out_dir, args.port)
+                except Exception as error:  # boot / attestation / manifest
+                    log(f"    {arm}: FAILED — {error}")
+                    rc, failures = 1, failures + 1
+                else:
+                    if rc != 0:
+                        failures += 1
+                        log(f"    {arm}: runner rc={rc} (a refused cell is a refused cell)")
+                log(f"    {arm}: {int(time.time() - started) // 60} min, rc={rc}")
+                index.append({"rep": rep, "dataset": dataset, "arm": arm,
+                              "order": order, "rc": rc,
+                              "rates": rates,
+                              "path": str(args.out_dir / f"rep{rep}" / dataset / arm)})
+                (args.out_dir / "campaign_index.json").write_text(
+                    json.dumps({"spec": str(args.spec), "cells": index}, indent=2) + "\n")
+
+    log(f"--- campaign done: {len(index)} arm-runs, {failures} with a non-zero rc ---")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
