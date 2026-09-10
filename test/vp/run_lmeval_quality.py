@@ -142,15 +142,19 @@ def main() -> int:
     ap.add_argument(
         "--batch-size",
         default="32",
-        help="lm-eval --batch_size for NATIVE arms. Default 32 (owner). MEASURED: 'auto' "
-             "resolves to 7 on this 80 GiB A100 -- lm-eval's _detect_batch_size() probes "
-             "at the model's MAXIMUM context (8192) to stay safe, which hugely "
-             "overestimates per-sequence memory for prompts that are actually ~0.5-2k "
-             "tokens. 32 is ~4.5x that and still fits (Llama-3-8B KV is ~128 KiB/token, so "
-             "32 x ~3k tokens is ~12 GiB against ~64 GiB free). lm-eval's own default of 1 "
-             "is ~15x slower than a served arm. Ignored for served arms, where the server "
-             "batches. Batch size does not change greedy results: arm A returned 0.7741 at "
-             "both 8 and 'auto'.",
+        help="lm-eval --batch_size for NATIVE arms. Default 32 (owner). Two MEASURED "
+             "facts, one of which corrects this flag's original justification.\n"
+             "  (1) 'auto' resolves to 7 on an 80 GiB A100. _detect_batch_size() probes at "
+             "the model's MAXIMUM context (8192) and materialises (B, 8192, 128256) fp32 "
+             "logits -- ~8.4 GiB per sequence -- so it stops at 7 no matter how short the "
+             "real prompts are. It is a logits-buffer bound, not a KV bound.\n"
+             "  (2) 32 is NOT the ~4.5x speedup that ratio suggests. CORRECTED: 32 and "
+             "auto=7 finished BBH in the SAME wall time. HF's static batching pads every "
+             "member to the longest member's generation, so on a heterogeneous-length task "
+             "a wider batch buys throughput on the short members and then waits for the "
+             "long one. Widen the batch for headroom, not for speed.\n"
+             "Ignored for served arms, where the server batches. Batch size does not change "
+             "greedy results: arm A returned 0.7741 at both 8 and 'auto'.",
     )
     ap.add_argument("--lmeval-python", default=sys.executable)
     ap.add_argument(
