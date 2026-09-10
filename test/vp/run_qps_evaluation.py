@@ -801,6 +801,28 @@ def _run_cell(
             f"{workload} QPS {qps:g} needs {requested_count} requests for "
             f"{args.duration_s:g}s but only {available} are available"
         )
+
+    # NO FIXED CELL DURATION. A wall-clock deadline makes each rate submit a DIFFERENT number
+    # of requests (rate x duration) and truncates whatever is still in flight, so two cells at
+    # two rates did different work and cannot be compared -- fatal for a Q* curve, whose whole
+    # content is a comparison ACROSS rates, and for a paired table, whose unit is a delta
+    # between two cells. The duration must be DERIVED from the suite and the rate
+    # (duration = rows / qps), exactly as the bank harvest has always done it.
+    #
+    # Enforced HERE, not in the callers, because eleven driver scripts on the box carry a
+    # hardcoded --duration-s and fixing them one at a time is precisely how this survived: a
+    # rule that lives in scripts comes back. A cell that does not submit its whole suite is
+    # refused unless DECLARED a diagnostic, which by contract is never performance evidence.
+    if not args.partial_suite_diagnostic and requested_count != available:
+        raise ValueError(
+            f"REFUSING {workload} @ {qps:g} qps: this cell would submit {requested_count} of "
+            f"{available} requests. A fixed --duration-s makes every rate do different work, "
+            f"so its cells are not comparable to each other.\n"
+            f"  Derive it instead: --min-prompts {available} "
+            f"--duration-s {int(available / qps)}  (= rows / qps).\n"
+            f"  If this is a smoke that will never be reported as performance, pass "
+            f"--partial-suite-diagnostic."
+        )
     label = f"{workload}_qps{_qps_label(qps)}_rep{rep}"
     output_file = args.output_dir / f"{label}.jsonl"
     score_file = args.output_dir / f"{label}.score.json"
@@ -1206,6 +1228,15 @@ def main() -> None:
         "--allow-code-execution",
         action="store_true",
         help="Execute HumanEval completions during offline scoring on this host.",
+    )
+    parser.add_argument(
+        "--partial-suite-diagnostic",
+        action="store_true",
+        help="Permit a cell that submits only PART of its suite. Smoke and crash-freedom "
+             "runs ONLY: such a cell is not comparable to any other cell, because a fixed "
+             "duration makes each rate do different work, and by contract it is never "
+             "performance evidence. Every measurement cell submits the whole suite with the "
+             "duration derived as rows/qps.",
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
