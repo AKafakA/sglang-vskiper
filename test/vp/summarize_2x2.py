@@ -133,6 +133,10 @@ def main() -> int:
     ap.add_argument("--arm-dir", action="append", default=[],
                     help="ARM=DIRNAME, repeatable, e.g. --arm-dir C=upstream "
                          "--arm-dir D=integrated_alwaysskip. Defaults to the letter itself.")
+    ap.add_argument("--latex", type=Path,
+                    help="APPEND this dataset's row and its macros to a generated LaTeX file. "
+                         "One tool owns the statistic: the paper must never carry a "
+                         "difference-of-differences computed anywhere but here.")
     ap.add_argument("--skip-upstream-check", action="store_true",
                     help="Read a HISTORICAL arm-C directory that predates the "
                          "upstream_baseline field. Never for a new campaign: it disables the "
@@ -181,6 +185,34 @@ def main() -> int:
     print()
     print("  NOTE gate 2 passing means our gap MATCHES the checkpoint's. It does not mean")
     print("  the gap is zero -- report (D - C) itself alongside it.")
+
+    if args.latex:
+        # Signed, in percentage points, to one decimal -- the same precision the paper prints.
+        # `\pm` is the 95% half-width, so a reader can apply the straddle rule themselves.
+        disp = {"gsm8k": "GSM8K", "coqa": "CoQA", "bbh_cot": "BBH"}[args.dataset]
+        # The lm-eval key itself, escaped -- never a prettier name invented here, because the
+        # filter IS the measurement (D-641: gsm8k strict-match flips the sign of (B-A)).
+        metric_label = "\\texttt{" + metric.replace("_", r"\_") + "}"
+        macro = {"gsm8k": "Gsm", "coqa": "Coqa", "bbh_cot": "Bbh"}[args.dataset]
+        row = (f"{disp} & {metric_label} & "
+               f"{vals['A'][0]:.4f} & {vals['B'][0]:.4f} & "
+               f"{vals['C'][0]:.4f} & {vals['D'][0]:.4f} & "
+               f"{100*ba:+.2f} & {100*dc:+.2f} & "
+               f"{100*dod:+.2f} $\\pm$ {100*1.96*se_dod:.2f} & "
+               f"{'parity' if faithful else 'DECIDED'} \\\\")
+        macros = "\n".join([
+            f"\\newcommand{{\\vpQ{macro}BminusA}}{{{100*ba:+.2f}}}",
+            f"\\newcommand{{\\vpQ{macro}DminusC}}{{{100*dc:+.2f}}}",
+            f"\\newcommand{{\\vpQ{macro}Dod}}{{{100*dod:+.2f}}}",
+            f"\\newcommand{{\\vpQ{macro}ArmD}}{{{vals['D'][0]:.4f}}}",
+            f"\\newcommand{{\\vpQ{macro}ArmC}}{{{vals['C'][0]:.4f}}}",
+        ])
+        with args.latex.open("a") as handle:
+            handle.write(row + "\n")
+        macro_path = args.latex.with_name(args.latex.name.replace("rows", "macros"))
+        with macro_path.open("a") as handle:
+            handle.write(macros + "\n")
+        print(f"  appended a LaTeX row to {args.latex} and macros to {macro_path}")
     if args.dataset == "bbh_cot":
         print()
         print("  WARNING (D-641) bbh_cot's `get-answer` filter scores only responses that")
