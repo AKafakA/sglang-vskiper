@@ -118,3 +118,31 @@ def test_the_json_report_is_machine_readable(tmp_path):
     report = json.loads(target.read_text())
     assert report["baseline"] == "upstream" and report["treatment"] == "integrated_it4"
     assert any(r["metric"] == "TTFT p50" and r["n"] == 3 for r in report["rows"])
+
+
+def test_a_MISSING_ARM_DIRECTORY_is_reported_not_skipped(tmp_path):
+    """Found by running this tool against the live headline's partial output rather than only
+    against fixtures: an absent arm directory took a silent `break`, so the tool said "no gated
+    pair" without naming which dataset was missing or why.
+
+    This runs at the END of a campaign, where an absent arm means that dataset never completed.
+    Silently skipping makes "never ran" look identical to "not in the spec" -- D-593's rule one
+    level up."""
+    out = _build(tmp_path, 2)
+    import shutil
+    shutil.rmtree(out / "rep2" / "gsm8k" / "integrated_it4")
+    done = _run(out)
+    assert "REFUSED reps" in done.stdout
+    assert "rep2 gsm8k" in done.stdout
+    assert "integrated_it4" in done.stdout and "never ran" in done.stdout
+    assert "n = 1 gated rep" in done.stdout, "the surviving rep still reports"
+
+
+def test_both_arms_missing_is_reported_once_naming_both(tmp_path):
+    out = _build(tmp_path, 1)
+    import shutil
+    for arm in ("upstream", "integrated_it4"):
+        shutil.rmtree(out / "rep1" / "gsm8k" / arm)
+    done = _run(out)
+    assert done.returncode == 1
+    assert "upstream, integrated_it4" in done.stdout
