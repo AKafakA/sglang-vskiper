@@ -182,11 +182,16 @@ def assert_regime_switch_skipper_capability(adapter: Any) -> None:
             f"{adapter.name!r} declares "
             f"{sorted(action.name for action in adapter.supported_actions)}"
         )
-    if not adapter.requires_flexidepth_weights:
-        raise RuntimeError(
-            "regime switch requires FlexiDepth router/projector weights; "
-            f"adapter {adapter.name!r} does not require them"
-        )
+    # What the regime switch actually needs is a PROJECTOR: below the row
+    # threshold it runs the dense body, above it routes, and a routed row must
+    # still leave this layer's output and its own K/V behind. It never reads the
+    # policy's gate. Until D-701 this was written as "requires FlexiDepth
+    # router/projector weights", which refused any policy that brings its own
+    # gate -- including, on its own terms, the deterministic mock, which only
+    # passed because it inherited the FlexiDepth default it does not satisfy.
+    from sglang.srt.vpipe.skipper import resolve_projector
+
+    resolve_projector(adapter.projector_kind)
 def validate_full_graph_model_configuration(
     *,
     loaded_layers: list[int],

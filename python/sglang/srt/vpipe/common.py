@@ -85,8 +85,8 @@ from sglang.srt.vpipe.types import (
     _LOGICAL_ACTION_CODES,
 )
 from sglang.srt.vpipe.skipper import (
-    _ADAPTERS,
-    _deterministic_mock_adapter,
+    available_skippers,
+    build_skipper,
     configured_full_graph_skipper_name,
 )
 from sglang.srt.vpipe.kv_commit import (
@@ -1071,34 +1071,18 @@ def resolve_full_graph_skipper(
     mock_config_present = any(
         str(values.get(key, "")).strip() for key in _MOCK_CONFIG_ENVS
     )
-    if name != DETERMINISTIC_MOCK_FULL_GRAPH_SKIPPER:
-        if mock_config_present:
-            raise ValueError(
-                "deterministic mock settings require "
-                f"{FULL_GRAPH_SKIPPER_ENV}={DETERMINISTIC_MOCK_FULL_GRAPH_SKIPPER}"
-            )
-        return _ADAPTERS[name]
-
-    # [D-611] The mock's parameters come from the ARM definition, like its name. These
-    # are the RandomSkip trade-off study's independent variables (skip rate x depth), so
-    # they must be as durable and attestable as the design itself.
-    arm = active_arm()
-    missing = [
-        key
-        for key in ("mock_token_skip_rate", "mock_skipped_depth_ratio", "mock_seed")
-        if arm.get(key) is None
-    ]
-    if missing:
+    if name != DETERMINISTIC_MOCK_FULL_GRAPH_SKIPPER and mock_config_present:
         raise ValueError(
-            f"arm {active_arm_name()!r} selects the deterministic mock but omits "
-            + ", ".join(missing)
-            + " (define them in vpipe/design.py ARMS, D-611)"
+            "deterministic mock settings require "
+            f"{FULL_GRAPH_SKIPPER_ENV}={DETERMINISTIC_MOCK_FULL_GRAPH_SKIPPER}"
         )
-    return _deterministic_mock_adapter(
-        float(arm["mock_token_skip_rate"]),
-        float(arm["mock_skipped_depth_ratio"]),
-        int(arm["mock_seed"]),
-    )
+    # One registry lookup for every policy. A parameterised policy reads its own
+    # values out of the arm inside its factory (D-611), so the resolver no longer
+    # carries a branch per skipper -- which is what made a third skipper an edit
+    # in two places of library code (D-701).
+    arm = dict(active_arm())
+    arm.setdefault("name", active_arm_name())
+    return build_skipper(name, arm)
 def flexidepth_active_phases(
     environ: Optional[Mapping[str, str]] = None,
 ) -> frozenset[str]:
@@ -1160,12 +1144,7 @@ def full_graph_skipper_name(
 ) -> str:
     values = os.environ if environ is None else environ
     name = configured_full_graph_skipper_name(values)
-    known = frozenset(
-        (
-            *_ADAPTERS,
-            DETERMINISTIC_MOCK_FULL_GRAPH_SKIPPER,
-        )
-    )
+    known = frozenset(available_skippers())
     if name not in known:
         choices = ", ".join(sorted(known))
         raise ValueError(
