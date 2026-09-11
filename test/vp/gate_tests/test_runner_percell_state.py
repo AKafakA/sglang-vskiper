@@ -40,45 +40,33 @@ def test_run_cell_never_ASSIGNS_to_the_parser_namespace():
     assert not assignments, f"_run_cell assigns to args: {assignments}"
 
 
-def test_the_derived_values_are_LOCALS():
-    assert "duration_s, min_prompts = args.duration_s, args.min_prompts" in CODE
-    assert "_requested_count(min_prompts, qps, duration_s)" in CODE
+def test_the_cell_size_comes_from_the_SUITE(tmp_path=None):
+    """SUPERSEDED THE DERIVATION ENTIRELY (owner, 2026-09-11). The bug above was a symptom of
+    a mechanism that could not affect anything in the first place -- so rather than keeping
+    per-cell duration state correct, the duration was deleted. `requested_count = available`
+    is now the whole sizing rule, and there is no state left to leak."""
+    assert "requested_count = available" in CODE
+    assert "duration_s" not in CODE
+    assert "min_prompts" not in CODE
 
 
-def test_the_manifest_records_the_PER_CELL_duration():
-    """`duration_target_s: args.duration_s` would record cell 1's value on every later cell."""
-    assert '"duration_target_s": duration_s,' in CODE
-    assert '"duration_target_s": args.duration_s' not in CODE
+def test_the_manifest_records_no_duration_target():
+    """A recorded `duration_target_s` was what could have carried cell 1's value into cell 3's
+    evidence. The arrival schedule's own measured span is the honest descriptor and remains."""
+    assert "duration_target_s" not in CODE
+    assert "expected_injection_s" in CODE
 
 
-def test_the_diagnostic_refusal_still_exists():
-    """Without it, the first test protects nothing: a caller could pass a fixed duration again."""
-    assert "partial_suite_diagnostic" in CODE
-    assert "DIAGNOSTIC overrides" in BODY
+def _cell_size(available: int, qps: float) -> int:
+    """The sizing rule as the source states it: the suite, independent of the rate."""
+    del qps
+    return available
 
 
-def _derive(available: int, qps: float) -> tuple[int, float]:
-    """The arithmetic as the source states it -- rows/qps, never overshooting the suite."""
-    min_prompts = available
-    duration_s = math.floor(available / qps)
-    while math.ceil(qps * duration_s) > available:
-        duration_s -= 1
-    return min_prompts, float(duration_s)
-
-
-def test_each_rate_derives_its_OWN_duration():
-    """The three gsm8k headline rates on a 3600-row suite. If one cell's value leaked into the
-    next, two of these three would be wrong -- and wrong in the direction that makes a cell
-    submit less than its whole suite, which is what owner rule 2 forbids."""
-    got = {qps: _derive(3600, qps) for qps in (8.25, 10.45, 13.75)}
-    assert got[8.25] == (3600, 436.0)
-    assert got[10.45] == (3600, 344.0)
-    assert got[13.75] == (3600, 261.0)
-    for qps, (rows, dur) in got.items():
-        assert math.ceil(qps * dur) <= rows, (qps, dur, rows)
-
-
-def test_the_bbh_rates_derive_against_a_4000_row_suite():
+def test_every_rate_sends_the_WHOLE_suite():
+    """The invariant the duration was supposed to protect, now direct: the cell size does not
+    depend on the rate at all. Three gsm8k rates and three BBH rates, one answer each."""
+    for qps in (8.25, 10.45, 13.75):
+        assert _cell_size(3600, qps) == 3600
     for qps in (18.75, 23.75, 31.25):
-        rows, dur = _derive(4000, qps)
-        assert rows == 4000 and math.ceil(qps * dur) <= 4000
+        assert _cell_size(4000, qps) == 4000

@@ -178,20 +178,16 @@ def _qps_label(qps: float) -> str:
     return f"{qps:g}".replace(".", "p")
 
 
-def _requested_count(min_prompts: int, qps: float, duration_s: float) -> int:
-    return max(min_prompts, math.ceil(qps * duration_s))
-
-
 def _smoke_request_count_violations(
-    workloads: dict[str, list[Any]], min_prompts: int, duration_s: float
+    workloads: dict[str, list[Any]], workload_dir: Path
 ) -> list[tuple[str, float, int]]:
+    """A smoke cell may not be large. Its size is its SUITE's size -- nothing else sets it."""
     violations = []
-    for workload, qps_values in workloads.items():
-        for value in qps_values:
-            qps = float(value)
-            requested_count = _requested_count(min_prompts, qps, duration_s)
-            if requested_count > MAX_SMOKE_REQUESTS_PER_CELL:
-                violations.append((workload, qps, requested_count))
+    for workload in workloads:
+        path = workload_dir / f"{workload}.requests.jsonl"
+        rows = _count_rows(path) if path.is_file() else 0
+        if rows > MAX_SMOKE_REQUESTS_PER_CELL:
+            violations.append((workload, 0.0, rows))
     return violations
 
 
@@ -855,57 +851,30 @@ def _run_cell(
         workload_record = _workload_record(requests_path, metadata_path)
     available = _count_rows(requests_path)
     _refuse_undeclared_cell_size(workload, available, args.partial_suite_diagnostic)
-    # DERIVE INTO LOCALS. Writing the derived values back onto `args` made this function
-    # single-use: cell 1 set args.duration_s, and cell 2 then saw it non-None and took the
-    # `elif` below, raising "--duration-s / --min-prompts are DIAGNOSTIC overrides" against a
-    # caller that had passed neither. The ladder and the bank harvest never noticed because
-    # each invokes the runner ONCE per rung; the paired driver passes three suites in one
-    # qps-config, so it died on the second cell of every arm -- 2 of every 3 headline cells,
-    # silently, with a message accusing the caller of the exact thing it had been fixed not
-    # to do. Per-cell state must not live on the parser's namespace.
-    duration_s, min_prompts = args.duration_s, args.min_prompts
-    if duration_s is None or min_prompts is None:
-        # Derive, exactly as the bank harvest has always done it.
-        min_prompts = available
-        duration_s = math.floor(available / qps)
-        while math.ceil(qps * duration_s) > available:
-            duration_s -= 1
-        duration_s = float(duration_s)
-    elif not args.partial_suite_diagnostic:
-        raise ValueError(
-            "--duration-s / --min-prompts are DIAGNOSTIC overrides and require "
-            "--partial-suite-diagnostic. A measurement cell derives them from its suite and "
-            "rate (duration = rows/qps); a caller-chosen duration makes each rate submit a "
-            "different number of requests, so its cells cannot be compared (owner rule 2)."
-        )
-    requested_count = _requested_count(min_prompts, qps, duration_s)
-    if requested_count > available:
-        raise ValueError(
-            f"{workload} QPS {qps:g} needs {requested_count} requests for "
-            f"{duration_s:g}s but only {available} are available"
-        )
-
-    # NO FIXED CELL DURATION. A wall-clock deadline makes each rate submit a DIFFERENT number
-    # of requests (rate x duration) and truncates whatever is still in flight, so two cells at
-    # two rates did different work and cannot be compared -- fatal for a Q* curve, whose whole
-    # content is a comparison ACROSS rates, and for a paired table, whose unit is a delta
-    # between two cells. The duration must be DERIVED from the suite and the rate
-    # (duration = rows / qps), exactly as the bank harvest has always done it.
+    # THE CELL SIZE IS THE SUITE. THERE IS NO DURATION (owner, 2026-09-11).
     #
-    # Enforced HERE, not in the callers, because eleven driver scripts on the box carry a
-    # hardcoded --duration-s and fixing them one at a time is precisely how this survived: a
-    # rule that lives in scripts comes back. A cell that does not submit its whole suite is
-    # refused unless DECLARED a diagnostic, which by contract is never performance evidence.
-    if not args.partial_suite_diagnostic and requested_count != available:
-        raise ValueError(
-            f"REFUSING {workload} @ {qps:g} qps: this cell would submit {requested_count} of "
-            f"{available} requests. A fixed --duration-s makes every rate do different work, "
-            f"so its cells are not comparable to each other.\n"
-            f"  Derive it instead: --min-prompts {available} "
-            f"--duration-s {int(available / qps)}  (= rows / qps).\n"
-            f"  If this is a smoke that will never be reported as performance, pass "
-            f"--partial-suite-diagnostic."
-        )
+    # Every request in the frozen suite is sent, at the offered rate. That is the whole
+    # specification of a cell: the suite and the rate are the only two inputs.
+    #
+    # What stood here was a derived `duration_s` feeding
+    #     requested_count = max(min_prompts, ceil(qps * duration_s))
+    # which, traced end to end, could not change anything: min_prompts was set to the suite's
+    # row count and duration was shrunk until ceil(qps*duration) <= rows, so the max() always
+    # returned the row count. It reached no client either -- the benchmark is invoked with
+    # `--num-prompts <count> --request-rate <qps>` and NO deadline; arrivals come from trace
+    # timestamps.
+    #
+    # So it was a dead control sitting in the one place that decides how many requests a cell
+    # sends: a leftover from when the runner was deadline-driven and num_prompts was
+    # rate x duration. Owner, on being shown the derived 436/344/261: "we do not need such
+    # duration which is confusing to control the numbers of requests or cells, it should only
+    # be designed by config and send with different rates."
+    #
+    # Deleting it removes the confusion AND the reintroduction surface. The flags are gone, so
+    # there is no longer a caller-supplied duration to refuse -- which is strictly stronger
+    # than refusing one, and retires three separate guards that existed only to police it.
+    requested_count = available
+
     label = f"{workload}_qps{_qps_label(qps)}_rep{rep}"
     output_file = args.output_dir / f"{label}.jsonl"
     score_file = args.output_dir / f"{label}.score.json"
@@ -1069,7 +1038,6 @@ def _run_cell(
         "fixed_output_tokens": workload_record.get("fixed_output_tokens", []),
         "workload": workload,
         "qps": qps,
-        "duration_target_s": duration_s,
         "expected_injection_s": arrival_schedule["injection_span_s"],
         "arrival_schedule": arrival_schedule,
         "num_prompts": requested_count,
@@ -1274,12 +1242,6 @@ def main() -> None:
     # 180.0, i.e. the rule was enforced by a post-hoc refusal while a fixed duration remained
     # the DEFAULT: omit the flag and you got exactly the value the rule exists to forbid.
     # They are now overrides usable ONLY with --partial-suite-diagnostic, for smokes.
-    parser.add_argument("--duration-s", type=float, default=None,
-                        help="DIAGNOSTIC ONLY, requires --partial-suite-diagnostic. A "
-                             "measurement cell derives duration as rows/qps.")
-    parser.add_argument("--min-prompts", type=int, default=None,
-                        help="DIAGNOSTIC ONLY, requires --partial-suite-diagnostic. A "
-                             "measurement cell submits its whole suite.")
     parser.add_argument("--warmup-requests", type=int, default=8)
     parser.add_argument("--load-sample-interval-ms", type=int, default=1000)
     parser.add_argument(
@@ -1404,18 +1366,18 @@ def main() -> None:
     elif args.runner_source_archive is not None:
         runner_source_artifact = _artifact_record(args.runner_source_archive)
     config = json.loads(args.qps_config.read_text(encoding="utf-8"))
-    duration_from_config = config.get("duration_s")
-    if duration_from_config is not None:
-        args.duration_s = float(duration_from_config)
+    if config.get("duration_s") is not None:
+        raise ValueError(
+            f"{args.qps_config} carries a 'duration_s'. A cell's size is its SUITE's row "
+            "count and its rate; there is no duration. Remove the field."
+        )
     if args.evidence_class == "smoke" and (
         args.reps != 1
         or args.rep_start != 1
         or args.campaign_total_reps not in (0, 1)
-        or args.duration_s > 60
-        or args.min_prompts > 32
     ):
         parser.error(
-            "smoke evidence requires reps=1, duration<=60s, and "
+            "smoke evidence requires reps=1, and "
             "min-prompts<=32; it cannot support performance decisions"
         )
     workloads = config.get("workloads") or {}
@@ -1430,9 +1392,7 @@ def main() -> None:
         if len(set(normalized)) != len(normalized):
             raise ValueError(f"{workload} contains duplicate QPS values")
     if args.evidence_class == "smoke":
-        violations = _smoke_request_count_violations(
-            workloads, args.min_prompts, args.duration_s
-        )
+        violations = _smoke_request_count_violations(workloads, args.workload_dir)
         if violations:
             details = ", ".join(
                 f"{workload}@{qps:g}={count}"
@@ -1457,10 +1417,15 @@ def main() -> None:
         contract_lane = args.contract_lane or args.performance_phase
         _validate_contract_phase_qps(evaluation_contract, contract_lane, workloads)
         traffic = evaluation_contract.get("traffic") or {}
-        if args.duration_s != float(traffic.get("duration_seconds") or 0):
-            parser.error("duration does not match the evaluation manifest")
-        if args.min_prompts < int(traffic.get("minimum_requests") or 0):
-            parser.error("minimum prompts is below the evaluation manifest")
+        # `duration_seconds` / `minimum_requests` are no longer runner inputs: a cell
+        # submits its suite at its rate, so the suite IS the request count. A contract that
+        # still names them is describing a runner that no longer exists.
+        for stale in ("duration_seconds", "minimum_requests"):
+            if traffic.get(stale) is not None:
+                parser.error(
+                    f"evaluation manifest sets traffic.{stale}, which the runner no longer "
+                    "honours: a cell's size is its suite's row count and its rate"
+                )
         if args.warmup_requests != int(traffic.get("warmup_requests") or 0):
             parser.error("warmup requests does not match the evaluation manifest")
         expected_system = _validate_contract_system_artifact_shape(
@@ -1632,8 +1597,6 @@ def main() -> None:
         "backend": args.backend,
         "arrival_schedule_version": ARRIVAL_SCHEDULE_VERSION,
         "workloads": workload_records,
-        "duration_s": args.duration_s,
-        "min_prompts": args.min_prompts,
         "reps": args.reps,
         "rep_start": args.rep_start,
         "campaign_total_reps": args.campaign_total_reps or args.reps,
@@ -1660,8 +1623,6 @@ def main() -> None:
             "qps_config_sha256",
             "backend",
             "arrival_schedule_version",
-            "duration_s",
-            "min_prompts",
             "reps",
             "rep_start",
             "campaign_total_reps",
