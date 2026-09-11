@@ -45,6 +45,10 @@ COLUMNS = [
 ]
 MULTIPLIERS = (0.75, 0.95, 1.25)
 DISPLAY = {"gsm8k": "GSM8K", "bbh_cot": "BBH", "coqa": "CoQA"}
+# A LaTeX control sequence is letters ONLY -- \vpTPSGSM8KLow and \vpE2E... are syntax
+# errors, not ugly names. So macro names get their own digit-free map; the TABLE keeps the
+# real display names. Found by the test, not by reading.
+MACRO_DISPLAY = {"gsm8k": "Gsm", "bbh_cot": "Bbh", "coqa": "Coqa"}
 
 
 def rate_of(suite: str) -> float:
@@ -115,10 +119,8 @@ def macro_name(dataset: str, multiplier: float, column: str) -> str:
     rung = {0.75: "Low", 0.95: "Mid", 1.25: "High"}[multiplier]
     metric = column.replace(" ", "").replace("output", "").replace("p50", "Pfifty")
     metric = metric.replace("p99", "Pninetynine").replace("mean", "Mean")
-    # A LaTeX control sequence cannot contain a digit: \vpE"2"E... is a syntax error, not
-    # an ugly name. Caught by the test, not by reading.
     metric = metric.replace("E2E", "EtoE")
-    name = "vp" + metric + DISPLAY.get(dataset, dataset).replace("_", "") + rung
+    name = "vp" + metric + MACRO_DISPLAY.get(dataset, dataset.replace("_", "").title()) + rung
     if not name.isalpha():
         raise ValueError(f"macro name {name!r} is not LaTeX-legal (letters only)")
     return name
