@@ -184,6 +184,48 @@ ARMS: Final[dict[str, dict[str, Any]]] = {
     },
 }
 
+# THE SKIP-RATE x DEPTH SWEEP (plan item 3; owner scope 2026-09-10: gsm8k only, ALL 12 points,
+# one rate, 3 reps, with the upstream anchor interleaved in the same session).
+#
+# Twelve named arms, because that is the only parameterisation the repo supports. There is no
+# sweep loop, no CLI, and no value-taking arm field, and D-609 forbids expressing any of this
+# as an environment variable -- the design lives in the tree. `resolve_arm` is a dict lookup
+# and no consumer hard-codes the arm list, so naming them is sufficient.
+#
+# Built by comprehension rather than twelve hand-written dicts: the entries differ only in two
+# floats, and twelve near-identical literals are exactly where a transposed digit silently
+# mislabels a sweep point. It is still a module-level constant evaluated at import, which is
+# what D-609 asks for. Each point also publishes its own rate/depth/seed through the
+# attestation (`skipper.py:284-286`), so a mislabelled cell is detectable in `server_info`
+# rather than taken on trust.
+#
+# The SEED is identical across all twelve: the curve must vary in rate and depth only.
+#
+# DEPTH is a ratio WITHIN the fixed routed set `SERVED_ROUTED_LAYERS` (range(16, 32)), taken
+# from the tail -- 0.25/0.50/0.75 select layers 28-31 / 24-31 / 20-31. Do NOT express depth by
+# changing SERVED_ROUTED_LAYERS: that is a design constant shared by every arm, and
+# `verify_served_design` will correctly refuse the diff.
+#
+# `integrated_randomskip` above is LEFT ALONE. Its values are the deleted
+# arm_env_vdec_randomskip.sh's, verbatim, which keeps it comparable to prior RandomSkip
+# evidence. Note that `..._r50_d50` is configuration-identical to it, same seed included --
+# so the two are a free internal consistency check, not a duplicate.
+_SWEEP_SKIP_RATES = (0.10, 0.25, 0.50, 0.75)
+_SWEEP_DEPTH_RATIOS = (0.25, 0.50, 0.75)
+
+ARMS.update({
+    f"integrated_randomskip_r{int(rate * 100)}_d{int(depth * 100)}": {
+        "skipper": "deterministic_mock",
+        "phases": "both",
+        "regime_switch": True,
+        "mock_token_skip_rate": rate,
+        "mock_skipped_depth_ratio": depth,
+        "mock_seed": 1234,
+    }
+    for rate in _SWEEP_SKIP_RATES
+    for depth in _SWEEP_DEPTH_RATIOS
+})
+
 
 def resolve_arm(name: str) -> dict[str, Any]:
     """Return the frozen definition for ``name``, or fail closed."""
