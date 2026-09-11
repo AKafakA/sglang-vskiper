@@ -111,3 +111,32 @@ def test_arms_may_live_under_DIFFERENT_roots(tmp_path: Path):
                "--arm-dir", "C=upstream", "--arm-dir", "D=integrated_alwaysskip")
     assert out.returncode == 0, out.stdout + out.stderr
     assert "0.7700" in out.stdout and "0.7000" in out.stdout
+
+
+def test_latex_emit_writes_a_row_and_macros(tmp_path: Path):
+    """The paper must never carry a difference-of-differences computed anywhere but here."""
+    args = _campaign(tmp_path)
+    out = _run(tmp_path, "--dataset", "gsm8k", *args,
+               "--latex", tmp_path / "quality_rows.tex")
+    assert out.returncode == 0, out.stdout + out.stderr
+    row = (tmp_path / "quality_rows.tex").read_text()
+    assert row.startswith("GSM8K &") and row.rstrip().endswith("\\\\")
+    assert "0.7700" in row and "0.7000" in row          # arm A and arm D, verbatim
+    macros = (tmp_path / "quality_macros.tex").read_text()
+    for name in ("vpQGsmBminusA", "vpQGsmDminusC", "vpQGsmDod", "vpQGsmArmD"):
+        assert f"\\newcommand{{\\{name}}}" in macros, name
+
+
+def test_latex_emit_uses_the_lmeval_KEY_not_a_prettier_name(tmp_path: Path):
+    """D-641: the filter IS the measurement -- gsm8k strict-match flips the sign of (B-A)."""
+    args = _campaign(tmp_path)
+    _run(tmp_path, "--dataset", "gsm8k", *args, "--latex", tmp_path / "quality_rows.tex")
+    assert "exact\\_match,flexible-extract" in (tmp_path / "quality_rows.tex").read_text()
+
+
+def test_latex_emit_is_REFUSED_when_arm_C_is_not_upstream(tmp_path: Path):
+    """A table row is the most quotable artifact there is; it must not outrun the gate."""
+    args = _campaign(tmp_path, c_upstream=False)
+    out = _run(tmp_path, "--dataset", "gsm8k", *args, "--latex", tmp_path / "q.tex")
+    assert out.returncode != 0
+    assert not (tmp_path / "q.tex").exists(), "it wrote a row despite refusing"
