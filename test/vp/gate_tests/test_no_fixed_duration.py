@@ -1,26 +1,30 @@
 #!/usr/bin/env python3
-"""A measurement cell must submit its WHOLE suite; a fixed --duration-s is refused.
+"""A cell's size is its SUITE's row count and its rate. There is no duration, anywhere.
 
-Owner, 2026-09-10: *"there exist no fixed duration allowed"*.
+History, because the shape of the fix changed twice:
 
-A wall-clock deadline makes each rate submit a different number of requests (rate x duration)
-and truncates whatever is still in flight. Two cells at two rates then did different work,
-which is fatal for a Q* curve -- whose entire content is a comparison ACROSS rates -- and for
-a paired table, whose unit is a delta between two cells.
+  * A fixed `--duration-s 180` made each rate submit `rate x duration` requests, so two cells
+    at two rates did different work -- fatal to a Q* curve (a comparison ACROSS rates) and to
+    a paired table (a delta BETWEEN two cells). D-651 made the runner DERIVE it as rows/qps
+    and refuse a caller-supplied one.
+  * Tracing that derivation end to end (2026-09-11) showed it could not affect anything:
+    `requested_count = max(min_prompts, ceil(qps*duration))` with min_prompts set to the row
+    count and duration shrunk until `ceil(qps*duration) <= rows` always returns the row count,
+    and no duration ever reached the client -- the benchmark takes `--num-prompts` and
+    `--request-rate`, with arrivals from trace timestamps.
 
-The defect survived because it lived in DRIVER SCRIPTS: eleven on the box carry a hardcoded
---duration-s, and each one that got cleaned left the other ten. So the rule now lives in the
-runner, and this test asserts the REFUSAL rather than the pass -- a gate never observed
-failing is not evidence (D-256, D-614, D-627 all passed their gates).
+    Owner: *"we do not need such duration which is confusing to control the numbers of
+    requests or cells, it should only be designed by config and send with different rates."*
+
+So the mechanism is GONE rather than guarded. These tests assert the absence, which is
+strictly stronger than asserting a refusal: there is no longer an input to refuse.
 """
 from __future__ import annotations
 
-import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
-
-import pytest
 
 VP = Path(__file__).resolve().parents[1]
 if str(VP) not in sys.path:
@@ -28,82 +32,64 @@ if str(VP) not in sys.path:
 
 import run_qps_evaluation as runner  # noqa: E402
 
-ROWS = 3600
+SRC = (VP / "run_qps_evaluation.py").read_text()
+CODE = "\n".join(l for l in SRC.splitlines() if not l.strip().startswith("#"))
 
 
-def suite(tmp_path: Path) -> tuple[Path, Path]:
-    requests = tmp_path / "gsm8k.d179.requests.jsonl"
-    metadata = tmp_path / "gsm8k.d179.metadata.jsonl"
-    with requests.open("w") as rq, metadata.open("w") as md:
-        for i in range(ROWS):
-            rq.write(json.dumps({"request_id": f"r{i}", "prompt_token_ids": [1, 2, 3]}) + "\n")
-            md.write(json.dumps({"request_id": f"r{i}", "prompt_kind": "chat_messages"}) + "\n")
-    return requests, metadata
+def test_the_cli_accepts_NO_duration_or_min_prompts():
+    """The strongest form: a caller cannot pass one even to be refused."""
+    helptext = subprocess.run(
+        [sys.executable, str(VP / "run_qps_evaluation.py"), "--help"],
+        capture_output=True, text=True,
+    ).stdout
+    assert "--duration-s" not in helptext
+    assert "--min-prompts" not in helptext
 
 
-def cell_args(tmp_path: Path, *, min_prompts: int, duration_s: float,
-              diagnostic: bool = False) -> argparse.Namespace:
-    return argparse.Namespace(
-        experiment="upstream", min_prompts=min_prompts, duration_s=duration_s,
-        partial_suite_diagnostic=diagnostic, output_dir=tmp_path / "cells",
-        workload_records={},
+def test_a_caller_passing_one_is_rejected_by_argparse(tmp_path):
+    """With the required arguments supplied, argparse gets far enough to reject the flag
+    itself -- which is the failure a stale driver script would actually hit."""
+    required = ["--experiment", "upstream",
+                "--deployment-manifest", str(tmp_path / "m.json"),
+                "--workload-dir", str(tmp_path),
+                "--qps-config", str(tmp_path / "q.json"),
+                "--output-dir", str(tmp_path / "out"),
+                "--evidence-class", "development"]
+    done = subprocess.run(
+        [sys.executable, str(VP / "run_qps_evaluation.py"), *required, "--duration-s", "180"],
+        capture_output=True, text=True,
     )
+    assert done.returncode != 0
+    assert "unrecognized arguments: --duration-s" in done.stderr, done.stderr[-300:]
 
 
-def run(tmp_path, **kw):
-    requests, metadata = suite(tmp_path)
-    return runner._run_cell(cell_args(tmp_path, **kw), "gsm8k.d179", 8.0, 1, requests, metadata)
+def test_the_arithmetic_is_gone_entirely():
+    """`max(min_prompts, ceil(qps*duration))` was the fixed-duration semantics in derived
+    clothing. Its absence is what makes the suite the only thing that sizes a cell."""
+    assert "_requested_count" not in CODE
+    assert "ceil(qps * duration_s)" not in CODE
+    assert "args.duration_s" not in CODE
+    assert "args.min_prompts" not in CODE
 
 
-def test_a_caller_supplied_duration_is_REFUSED_at_the_parameter(tmp_path):
-    """180 s at 8 qps would submit 1440 of 3600, and at 18 qps 3240 -- two rates, two amounts
-    of work, one curve. The refusal now fires on the PARAMETER rather than on the resulting
-    shortfall, so the wrong thing is not expressible at all for a measurement cell."""
-    with pytest.raises(ValueError) as caught:
-        run(tmp_path, min_prompts=400, duration_s=180)
-    message = str(caught.value)
-    assert "DIAGNOSTIC overrides" in message, message
-    assert "rows/qps" in message
+def test_requested_count_IS_the_available_rows():
+    assert "requested_count = available" in CODE
 
 
-def test_derivation_happens_when_nothing_is_supplied(tmp_path):
-    """The default path: give the runner neither, and it computes both from the suite and the
-    rate. It must get PAST this check and fail later on the missing endpoint."""
-    with pytest.raises(Exception) as caught:
-        run(tmp_path, min_prompts=None, duration_s=None)
-    assert "DIAGNOSTIC overrides" not in str(caught.value)
-    assert "REFUSING" not in str(caught.value)
+def test_a_qps_config_cannot_smuggle_a_duration_back_in(tmp_path):
+    """The config was the other door: `config.get("duration_s")` used to set it silently."""
+    assert 'config.get("duration_s") is not None' in CODE
+    assert "there is no duration" in SRC
 
 
-def test_there_is_no_fixed_duration_DEFAULT_any_more():
-    """The rule was previously enforced by a post-hoc refusal while --duration-s still
-    DEFAULTED to 180.0 -- so a caller that simply omitted the flag got exactly the value the
-    rule forbids. Assert the default is gone, from the parser itself."""
-    import argparse
-    parser = argparse.ArgumentParser()
-    src = Path(runner.__file__).read_text()
-    assert 'parser.add_argument("--duration-s", type=float, default=180.0)' not in src
-    assert '--duration-s", type=float, default=None' in src
-    assert '--min-prompts", type=int, default=None' in src
+def test_an_evaluation_contract_naming_duration_is_rejected():
+    """A contract describing traffic.duration_seconds is describing a runner that no longer
+    exists; honouring it silently would reintroduce the semantics through the back door."""
+    assert 'traffic.get(stale)' in CODE
+    assert '"duration_seconds", "minimum_requests"' in CODE
 
 
-def test_the_diagnostic_escape_still_works(tmp_path):
-    """Smokes may submit a partial suite, but only by SAYING SO -- and by contract such a cell
-    is never performance evidence."""
-    with pytest.raises(Exception) as caught:
-        run(tmp_path, min_prompts=32, duration_s=2, diagnostic=True)
-    assert "DIAGNOSTIC overrides" not in str(caught.value)
-    assert "REFUSING" not in str(caught.value)
-
-
-def test_the_derived_duration_never_over_subscribes_the_suite(tmp_path):
-    """duration = floor(rows/qps) can still round up past the suite at fractional rates, which
-    is why the harvest's own derivation decrements. Check the real campaign rates."""
-    import math
-    for rows, qps in [(3600, 8.25), (3600, 10.45), (3600, 13.75),
-                      (4000, 22.5), (4000, 28.5), (4000, 37.5), (3600, 11), (4000, 27)]:
-        d = math.floor(rows / qps)
-        while math.ceil(qps * d) > rows:
-            d -= 1
-        assert math.ceil(qps * d) <= rows, (rows, qps, d)
-        assert rows - math.ceil(qps * d) < qps, f"{rows}@{qps}: leaves a whole extra second"
+def test_the_declared_cell_size_gate_still_governs_the_suite():
+    """With duration gone, DECLARED_SUITE_ROWS is the only thing standing between a
+    wrong-sized suite and a cell built on it."""
+    assert runner.DECLARED_SUITE_ROWS == {"gsm8k": 3600, "coqa": 4000, "bbh_cot": 4000}
