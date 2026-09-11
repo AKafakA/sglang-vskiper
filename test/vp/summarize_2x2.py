@@ -57,7 +57,14 @@ def _arm_dir(root: Path, arm: str, mapping: dict[str, str]) -> str:
     assumes the letter is a directory name dies on every new campaign -- which is the same
     dead-tool defect as a checker that globs a layout the writer no longer produces.
     """
-    return f"{root}/{mapping.get(arm, arm)}"
+    mapped = mapping.get(arm, arm)
+    # An ABSOLUTE mapping is the common case for the corrected campaign: arms A and B are
+    # native PyTorch and carry over from the earlier run, while C and D are re-measured into
+    # a new root. Forcing one root would mean copying artifacts around to satisfy a tool,
+    # which is how a cell ends up somewhere its provenance no longer says.
+    if Path(mapped).is_absolute():
+        return mapped
+    return f"{root}/{mapped}"
 
 
 def _assert_arm_c_is_upstream(root: Path, mapping: dict[str, str]) -> None:

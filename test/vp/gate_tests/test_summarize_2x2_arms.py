@@ -97,3 +97,17 @@ def test_arm_C_is_described_as_UPSTREAM_in_the_legend():
     text = TOOL.read_text()
     assert "UPSTREAM SGLang" in text
     assert '"C": "stock base model, OUR serving stack"' not in text
+
+
+def test_arms_may_live_under_DIFFERENT_roots(tmp_path: Path):
+    """A and B carry over from the earlier campaign; C and D are re-measured elsewhere."""
+    old, new = tmp_path / "old", tmp_path / "new"
+    _cell(old, "A", "gsm8k", 0.77)
+    _cell(old, "B", "gsm8k", 0.71)
+    _cell(new, "upstream", "gsm8k", 0.76, upstream=True)
+    _cell(new, "integrated_alwaysskip", "gsm8k", 0.70, upstream=False)
+    out = _run(new, "--dataset", "gsm8k",
+               "--arm-dir", f"A={old}/A", "--arm-dir", f"B={old}/B",
+               "--arm-dir", "C=upstream", "--arm-dir", "D=integrated_alwaysskip")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "0.7700" in out.stdout and "0.7000" in out.stdout
