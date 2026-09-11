@@ -264,21 +264,34 @@ def run_arm_cells(spec: dict[str, Any], dataset: str, rates: dict[str, float],
             {"workloads": {suite_name(dataset, label): [rate] for label, rate in rates.items()}}
         ) + "\n")
 
-        # min_prompts is the whole pinned suite: the equal-work lane's work identity is the
-        # suite, so a partial pass is a different experiment, not a shorter one.
-        rows = sum(1 for _ in (Path(spec["suites_dir"]) /
-                               f"{suite_name(dataset, next(iter(rates)))}.requests.jsonl").open())
-        slowest = min(rates.values())
-        duration = int(rows // slowest)
+        # DURATION AND MIN-PROMPTS ARE THE RUNNER'S, NOT OURS (owner rule 2 / D-651).
+        #
+        # This block used to compute `rows // slowest` and pass --min-prompts/--duration-s.
+        # Two things were wrong with it. The runner now REFUSES those flags outright unless
+        # --partial-suite-diagnostic is given, so every cell died one minute in with
+        #   "--duration-s / --min-prompts are DIAGNOSTIC overrides"
+        # -- the same defect that killed the ladder driver (D-661), in a second caller.
+        # And the arithmetic was itself the banned pattern: one duration derived from the
+        # SLOWEST rate, applied to every rate in the cell, makes the faster rates submit
+        # fewer than their whole suite. The runner derives duration = rows/qps per cell,
+        # which is the only form that keeps work identical across rates.
         completed = subprocess.run(
             [spec["python"], str(tree / "test/vp/run_qps_evaluation.py"),
-             "--experiment", f"paired-{dataset}-{arm}-rep{rep}",
+             # THE EXPERIMENT NAME MUST BE THE ARM. run_qps_evaluation asserts
+             # `deployment["system_id"] == args.experiment` (:1545), and this driver sets
+             # --system-id to the arm (:252). Passing a composite label here raised
+             #   ValueError: deployment system 'upstream' does not match experiment
+             #               'paired-gsm8k-upstream-rep1'
+             # on BOTH arms of the smoke -- 100 % of cells, one minute in, before any request
+             # was served. Nothing is lost by matching: the dataset, rate and rep are already
+             # carried by the output path (rep<N>/<dataset>/<arm>/) and by the cell filename
+             # (<suite>_qps<rate>_rep<N>.jsonl).
+             "--experiment", arm,
              "--deployment-manifest", str(manifest),
              "--model", SERVED_MODEL_NAME, "--workload-dir", spec["suites_dir"],
              "--qps-config", str(qps_config), "--output-dir", str(cell_root / "cells"),
              "--evidence-class", spec.get("evidence_class", "development"),
              "--host", "127.0.0.1", "--port", str(port), "--reps", "1",
-             "--min-prompts", str(rows), "--duration-s", str(duration),
              "--runner-source-revision", spec["source_revision"]]
             + (["--upstream-baseline"] if arm_is_upstream(spec, arm) else []),
             check=False, stdout=(cell_root / "runner.log").open("wb"),
