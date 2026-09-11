@@ -24,13 +24,15 @@ from dataclasses import (
 )
 from functools import lru_cache
 from math import ceil
-from typing import Any, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 import torch
 from sglang.srt.vpipe.types import (
     FULL_GRAPH_ACTION_CONTRACT,
+    PROJECTOR_CONTRACT,
     FullGraphActionBatch,
     FullGraphSkipperAdapter,
     LogicalAction,
+    ProjectorAdapter,
 )
 from sglang.srt.vpipe.types import (
     _LOGICAL_ACTION_CODES,
@@ -56,11 +58,74 @@ def route_digest_uses_logical_request_ids(
         adapter.requires_stable_request_ids
         or adapter.route_digest_requires_stable_request_ids
     )
+FLEXIDEPTH_PROJECTOR = "flexidepth"
+
+
+class FlexiDepthProjector(ProjectorAdapter):
+    """The released FlexiDepth ``router_proj``: a low-rank gate/up/down MLP.
+
+    This is the ONLY projector, and it is the worked example. A PROJECT_ONLY row
+    must still leave this layer's output and this layer's own K/V behind
+    (K/V-completeness), so a projector is what makes "skip" cheap rather than
+    absent. Adding another means: subclass ``ProjectorAdapter``, name the
+    per-layer checkpoint tensors it loads, register it here, and point an arm's
+    policy at it by name.
+    """
+
+    name = FLEXIDEPTH_PROJECTOR
+    checkpoint_tensor_suffixes = (
+        "router_proj.gate_proj.weight",
+        "router_proj.down_proj.weight",
+        "router_proj.up_proj.weight",
+    )
+
+    def attestation(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "contract": PROJECTOR_CONTRACT,
+            "payload": "low_rank_gate_up_down_mlp",
+            "reduction_config_key": "proj_reduction_factor",
+            "checkpoint_tensor_suffixes": list(self.checkpoint_tensor_suffixes),
+            "state_semantics": "own_layer_kv_materialized_for_every_action",
+        }
+
+
+_PROJECTORS: dict[str, ProjectorAdapter] = {
+    FLEXIDEPTH_PROJECTOR: FlexiDepthProjector(),
+}
+
+
+def register_projector(projector: ProjectorAdapter) -> None:
+    """Add a projector implementation under its own ``name``."""
+
+    existing = _PROJECTORS.get(projector.name)
+    if existing is not None and type(existing) is not type(projector):
+        raise ValueError(f"projector {projector.name!r} is already registered")
+    _PROJECTORS[projector.name] = projector
+
+
+def resolve_projector(name: str) -> ProjectorAdapter:
+    """Return the named projector, or refuse with the names that do exist."""
+
+    try:
+        return _PROJECTORS[name]
+    except KeyError:
+        raise ValueError(
+            f"unknown projector {name!r}; registered: "
+            + ", ".join(sorted(_PROJECTORS))
+        ) from None
+
+
 class FlexiDepthFullGraphAdapter(FullGraphSkipperAdapter):
     """Exact released FlexiDepth router and continuous branch-weight equation."""
 
     name = FLEXIDEPTH_FULL_GRAPH_SKIPPER
     route_digest_requires_stable_request_ids = True
+    # Reads the trained per-layer gate, and projects with the checkpoint's own
+    # router_proj. Both halves come from the same weights file, which is why they
+    # were one boolean until D-701.
+    requires_router_weights = True
+    projector_kind = FLEXIDEPTH_PROJECTOR
     supported_actions = frozenset(
         (LogicalAction.RUN, LogicalAction.PROJECT_ONLY)
     )
@@ -142,6 +207,13 @@ class DeterministicMockFullGraphAdapter(FullGraphSkipperAdapter):
         (LogicalAction.RUN, LogicalAction.PROJECT_ONLY)
     )
     requires_stable_request_ids = True
+    # The policy is a hash of (request_id, token_epoch, seed): NO trained gate is
+    # read. It still needs a projector, because a skipped row must leave this
+    # layer's output and K/V behind. That asymmetry is the whole point of the
+    # D-701 split -- before it, this adapter was described as *requiring
+    # FlexiDepth weights*, which was true of the projector and false of the router.
+    requires_router_weights = False
+    projector_kind = FLEXIDEPTH_PROJECTOR
     payload_semantics = (
         "run=mlp(hidden)*1;project_only=proj(hidden)*(1-0)"
     )
@@ -316,6 +388,75 @@ def configured_full_graph_skipper_name(
     from sglang.srt.vpipe.design import active_arm
 
     return str(active_arm().get("skipper") or FLEXIDEPTH_FULL_GRAPH_SKIPPER).strip().lower()
-_ADAPTERS: dict[str, FullGraphSkipperAdapter] = {
-    FLEXIDEPTH_FULL_GRAPH_SKIPPER: FlexiDepthFullGraphAdapter(),
+# A policy is built FROM THE ACTIVE ARM, so a parameterised policy (RandomSkip's
+# rate x depth x seed) needs no special case at the resolver -- which is what it
+# had, and what made "add a third skipper" a two-place edit in library code.
+SkipperFactory = Callable[[Mapping[str, Any]], FullGraphSkipperAdapter]
+
+_FLEXIDEPTH_ADAPTER = FlexiDepthFullGraphAdapter()
+
+
+def _build_flexidepth(arm: Mapping[str, Any]) -> FullGraphSkipperAdapter:
+    del arm
+    return _FLEXIDEPTH_ADAPTER
+
+
+def _build_deterministic_mock(arm: Mapping[str, Any]) -> FullGraphSkipperAdapter:
+    # [D-611] The mock's parameters come from the ARM definition, like its name.
+    # These are the RandomSkip study's independent variables (skip rate x depth),
+    # so they must be as durable and attestable as the design itself.
+    missing = [
+        key
+        for key in ("mock_token_skip_rate", "mock_skipped_depth_ratio", "mock_seed")
+        if arm.get(key) is None
+    ]
+    if missing:
+        raise ValueError(
+            f"arm {arm.get('name', '<unnamed>')!r} selects the deterministic mock "
+            "but omits " + ", ".join(missing)
+            + " (define them in vpipe/design.py ARMS, D-611)"
+        )
+    return _deterministic_mock_adapter(
+        float(arm["mock_token_skip_rate"]),
+        float(arm["mock_skipped_depth_ratio"]),
+        int(arm["mock_seed"]),
+    )
+
+
+_SKIPPERS: dict[str, SkipperFactory] = {
+    FLEXIDEPTH_FULL_GRAPH_SKIPPER: _build_flexidepth,
+    DETERMINISTIC_MOCK_FULL_GRAPH_SKIPPER: _build_deterministic_mock,
 }
+
+
+def register_skipper(name: str, factory: SkipperFactory) -> None:
+    """Add a policy under ``name``; an arm then selects it by that name.
+
+    Selection stays IN THE TREE (`design.py` ARMS), never in the environment
+    (D-609) -- this only decides what a name may resolve to.
+    """
+
+    if name in _SKIPPERS and _SKIPPERS[name] is not factory:
+        raise ValueError(f"skipper {name!r} is already registered")
+    _SKIPPERS[name] = factory
+
+
+def available_skippers() -> tuple[str, ...]:
+    """Registered policy names, for error messages and attestation."""
+
+    return tuple(sorted(_SKIPPERS))
+
+
+def build_skipper(name: str, arm: Mapping[str, Any]) -> FullGraphSkipperAdapter:
+    """Resolve a policy name against the registry, refusing an unknown name.
+
+    The old `_ADAPTERS[name]` raised a bare KeyError, which is fail-closed but
+    tells an operator nothing about what they could have written instead.
+    """
+
+    factory = _SKIPPERS.get(name)
+    if factory is None:
+        raise ValueError(
+            f"unknown skipper {name!r}; registered: " + ", ".join(available_skippers())
+        )
+    return factory(arm)

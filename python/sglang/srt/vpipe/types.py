@@ -173,6 +173,43 @@ class FullGraphActionBatch:
         torch.gt(self.branch_weights, self.threshold, out=out)
         return out
 
+PROJECTOR_CONTRACT = "vp-project-only-payload-v1"
+
+
+class ProjectorAdapter(ABC):
+    """Supplies the PROJECT_ONLY payload for a routed layer.
+
+    Split out of the policy 2026-09-11 (D-701). The two are different plugins
+    answering different questions:
+
+      * a ``FullGraphSkipperAdapter`` decides WHICH tokens take PROJECT_ONLY;
+      * a ``ProjectorAdapter`` decides WHAT a PROJECT_ONLY row computes.
+
+    Before the split both lived behind one boolean, ``requires_flexidepth_weights``,
+    so a policy that brings its own gate -- the deterministic mock hashes, it reads
+    no trained router -- was still described as *requiring FlexiDepth weights*,
+    and the regime-switch capability check refused any adapter that said otherwise
+    even though what the regime switch actually needs is a PROJECTOR (something
+    must produce the layer output and its K/V for a skipped row; K/V-completeness
+    is not optional).
+
+    Exactly ONE implementation exists (``flexidepth``), and this refactor is
+    deliberately behaviour-preserving: the seam still builds and loads the same
+    ``FDProj`` module, and the executor bodies still receive and call that module
+    directly, so nothing is added inside the CUDA-graph capture region. What
+    changes is that the requirement is now DECLARED by name instead of inferred
+    from a FlexiDepth-shaped boolean.
+    """
+
+    name: str
+    #: Weight tensors, per routed layer, this projector loads from the checkpoint.
+    checkpoint_tensor_suffixes: tuple[str, ...] = ()
+
+    @abstractmethod
+    def attestation(self) -> dict[str, Any]:
+        """Describe the payload this projector computes for a skipped row."""
+
+
 class FullGraphSkipperAdapter(ABC):
     """Policy decision interface consumed by the production graph executor."""
 
@@ -181,37 +218,64 @@ class FullGraphSkipperAdapter(ABC):
     requires_stable_request_ids: bool = False
     route_digest_requires_stable_request_ids: bool = False
     requires_request_slots: bool = False
-    requires_flexidepth_weights: bool = True
     execution_kind: str = RUN_PROJECT_EXECUTION
+
+    #: Does the POLICY read trained gate weights from the checkpoint? FlexiDepth
+    #: does; the deterministic mock hashes (request_id, token_epoch) and does not.
+    #: Declarative only -- see `requires_flexidepth_weights` below for why the
+    #: mock arm still LOADS the router today.
+    requires_router_weights: bool = True
+    #: Which `ProjectorAdapter` supplies the PROJECT_ONLY payload. Every binary
+    #: RUN/PROJECT policy needs one: a skipped row must still produce this layer's
+    #: output and its own K/V.
+    projector_kind: str = "flexidepth"
+
+    @property
+    def requires_flexidepth_weights(self) -> bool:
+        """Does serving this adapter need FlexiDepth checkpoint weights loaded?
+
+        Derived, not declared, so the five call sites that ask this question keep
+        asking it unchanged. TRUE for both shipped adapters: FlexiDepth needs the
+        router AND the projector; the mock needs only the projector, which is the
+        FlexiDepth one.
+
+        The mock arm therefore still loads the ROUTER it never reads. Skipping
+        that load is a behaviour change, not a cleanup: the router occupies HBM,
+        and `server.max_total_num_tokens` is a DECLARED cross-arm field measured
+        at -0.98 % on the treatment arm (D-699). Dropping the unused weights would
+        move it, so it is left alone until a campaign is ready to re-measure.
+        """
+
+        return self.requires_router_weights or self.projector_kind == "flexidepth"
 
     def routed_layer_ids(
         self,
         *,
         num_hidden_layers: int,
-        flexidepth_layer_ids: tuple[int, ...],
+        checkpoint_routed_layer_ids: tuple[int, ...],
         model_identity: Optional[Mapping[str, str]] = None,
     ) -> tuple[int, ...]:
         """Return ordered layers owned by this adapter in the model forward."""
 
         if any(
             layer_id < 0 or layer_id >= num_hidden_layers
-            for layer_id in flexidepth_layer_ids
+            for layer_id in checkpoint_routed_layer_ids
         ):
-            raise ValueError("FlexiDepth routed layers are outside the model")
-        return flexidepth_layer_ids
+            raise ValueError("checkpoint routed layers are outside the model")
+        return checkpoint_routed_layer_ids
 
     def attention_routed_layer_ids(
         self,
         *,
         num_hidden_layers: int,
-        flexidepth_layer_ids: tuple[int, ...],
+        checkpoint_routed_layer_ids: tuple[int, ...],
         model_identity: Optional[Mapping[str, str]] = None,
     ) -> tuple[int, ...]:
         """Return layers whose attention backend consumes component masks."""
 
         return self.routed_layer_ids(
             num_hidden_layers=num_hidden_layers,
-            flexidepth_layer_ids=flexidepth_layer_ids,
+            checkpoint_routed_layer_ids=checkpoint_routed_layer_ids,
         )
 
     def prepare_batch(

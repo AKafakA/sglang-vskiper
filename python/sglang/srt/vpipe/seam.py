@@ -309,13 +309,13 @@ def attach_vp_model(model, config):
     }
     routed_layer_ids = full_graph_skipper.routed_layer_ids(
         num_hidden_layers=config.num_hidden_layers,
-        flexidepth_layer_ids=loaded_fd_layer_ids,
+        checkpoint_routed_layer_ids=loaded_fd_layer_ids,
         model_identity=served_identity,
     )
     attention_routed_layer_ids = (
         full_graph_skipper.attention_routed_layer_ids(
             num_hidden_layers=config.num_hidden_layers,
-            flexidepth_layer_ids=loaded_fd_layer_ids,
+            checkpoint_routed_layer_ids=loaded_fd_layer_ids,
             model_identity=served_identity,
         )
     )
