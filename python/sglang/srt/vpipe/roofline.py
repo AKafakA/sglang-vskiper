@@ -121,3 +121,38 @@ def derived_decode_band(
             f"derived exit_rows {exit_rows} is not positive (centre {centre}, half {half})"
         )
     return exit_rows, enter_rows
+
+
+def assert_band_follows_rule(
+    *,
+    served_exit_rows: int,
+    served_enter_rows: int,
+    device_key: str,
+    capture_rungs: tuple[int, ...],
+    jitter_p90_rows: int = DEFAULT_JITTER_P90_ROWS,
+) -> None:
+    """Refuse to serve a band that is not what the rule produces for this device.
+
+    **Asserted, not computed — and that is deliberate.** D-609 puts the served design in the
+    TREE as constants, so an arm must still DECLARE its band; a band computed at boot would
+    silently differ per host, which is the declared-vs-served split D-609 exists to prevent.
+    This keeps both properties: the design is declared, and the runtime refuses to boot if the
+    declaration has drifted from the rule.
+
+    It also makes porting explicit. On a device whose ridge differs, this refuses until the arm
+    declares that device's band — which is what turns the H100 row into a PREDICTION (the rule
+    says (232, 264) for an H100 NVL) rather than a re-tune.
+
+    Passing changes nothing: this can only refuse.
+    """
+    expected_exit, expected_enter = derived_decode_band(
+        device_key, capture_rungs, jitter_p90_rows
+    )
+    if (served_exit_rows, served_enter_rows) != (expected_exit, expected_enter):
+        raise RuntimeError(
+            "served decode band does not follow the derived rule: declared "
+            f"(exit={served_exit_rows}, enter={served_enter_rows}), rule gives "
+            f"(exit={expected_exit}, enter={expected_enter}) for device {device_key!r} "
+            f"(ridge {ridge_rows(device_key):.1f} rows, jitter p90 {jitter_p90_rows}). "
+            "Either declare the derived band for this device, or record why it deviates."
+        )
