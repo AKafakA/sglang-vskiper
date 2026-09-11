@@ -526,6 +526,32 @@ def main() -> int:
                 json.dumps({"spec": str(args.spec), "cells": index}, indent=2) + "\n")
 
     log(f"--- campaign done: {len(index)} arm-runs, {failures} with a non-zero rc ---")
+
+    # PAIRED ANALYSIS IS PART OF THE RUN, NOT A TOOL SOMEONE REMEMBERS (D-624 #5).
+    #
+    # The plan asks for this explicitly, and it was not true: this driver wrote 54 cells and
+    # computed no delta -- "the paired unit is a within-rep delta" existed only in a docstring.
+    # The one tool with the right method was written for the v1.3 layout and could not read
+    # these artifacts at all, and hardcoded two knees that are now void. So the analysis runs
+    # HERE, on the cells just written, and its report lands beside them.
+    #
+    # It is deliberately NOT allowed to change the campaign's exit status: a paired table that
+    # reports parity is a valid result, not a failure, and a campaign must not appear to have
+    # failed because its answer was "no difference".
+    log("--- paired analysis (within-rep deltas, t-based 95 % CI, straddle rule) ---")
+    analysis = subprocess.run(
+        [sys.executable, str(Path(spec["tree"]) / "test/vp/paired_analysis.py"),
+         str(args.out_dir),
+         "--baseline", spec["arms"]["baseline"], "--treatment", spec["arms"]["treatment"],
+         "--json", str(args.out_dir / "paired_report.json")],
+        capture_output=True, text=True,
+    )
+    (args.out_dir / "paired_table.txt").write_text(analysis.stdout + analysis.stderr)
+    for line in analysis.stdout.splitlines():
+        log(f"  {line}")
+    if analysis.returncode != 0:
+        log("  paired analysis produced no gated pair -- the cells are on disk, the table is not")
+
     return 1 if failures else 0
 
 
