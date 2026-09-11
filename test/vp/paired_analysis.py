@@ -110,9 +110,19 @@ def main() -> int:
         rep_root = args.out_dir / f"rep{rep}"
         for dataset_root in sorted(p for p in rep_root.glob("*") if p.is_dir()):
             dataset = dataset_root.name
-            for arm_dir in (dataset_root / args.baseline, dataset_root / args.treatment):
-                if not arm_dir.is_dir():
-                    break
+            # A MISSING ARM IS REPORTED, NOT SKIPPED. This tool runs at the END of a
+            # campaign, where an absent arm directory means that dataset never completed --
+            # and a silent skip would make "it never ran" indistinguishable from "it was not
+            # in the spec", which is D-593's rule (a missing rep and a failed rep must not
+            # look alike) broken one level up. Found by running this against the live
+            # headline's partial output instead of only against fixtures.
+            absent = [a for a in (args.baseline, args.treatment)
+                      if not (dataset_root / a).is_dir()]
+            if absent:
+                refused.append(
+                    f"rep{rep} {dataset}: no directory for {', '.join(absent)} "
+                    "-- that arm never ran for this dataset"
+                )
             else:
                 suites = sorted({p.name.split("_qps")[0] for p in
                                  (dataset_root / args.baseline / "cells").rglob("*_qps*_rep*.jsonl")
