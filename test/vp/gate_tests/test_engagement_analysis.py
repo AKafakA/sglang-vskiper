@@ -90,3 +90,19 @@ def test_a_cell_with_only_idle_samples_is_refused(tmp_path: Path):
     _cell(tmp_path, "t", "c", [0, 0, 0])
     out = _run(tmp_path, *BASE)
     assert out.returncode == 2 and "NO NON-IDLE SAMPLES" in out.stdout
+
+
+def test_the_rep_comes_from_the_PATH_because_every_file_is_named_rep1(tmp_path: Path):
+    """Verified live on the box 2026-09-11: rep1/, rep2/ and rep3/ all contain
+    `gsm8k_eqw_r8p25_qps8p25_rep1.jsonl`. The suffix is the runner's per-arm-run index,
+    always 1; the campaign rep is only in the directory. Keying on the name would give six
+    identically-labelled rows."""
+    for rep in ("rep1", "rep2"):
+        d = tmp_path / rep / "ds" / "t" / "cells"
+        d.mkdir(parents=True)
+        (d / "c_qps1_rep1.load.jsonl").write_text(
+            '{"running_requests": 200}\n{"running_requests": 210}\n')
+    out = _run(tmp_path, *BASE, "--json", tmp_path / "r.json")
+    assert out.returncode == 0, out.stderr
+    labels = [r["cell"] for r in json.loads((tmp_path / "r.json").read_text())["cells"]]
+    assert sorted(labels) == ["rep1/c", "rep2/c"], labels

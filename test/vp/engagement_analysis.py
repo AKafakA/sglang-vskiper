@@ -80,7 +80,7 @@ def main() -> int:
     print(f"  ridge = {args.peak_tflops:g} TFLOP/s / {args.peak_bw_gbs:g} GB/s "
           f"= {ridge:.0f} rows      band [exit {args.exit_rows}, enter {args.enter_rows}], "
           f"midpoint {(args.enter_rows + args.exit_rows) / 2:.0f}\n")
-    print(f"  {'cell':<32} {'arm':<16} {'p50':>5} {'p90':>5} {'max':>6} "
+    print(f"  {'rep/cell':<38} {'arm':<16} {'p50':>5} {'p90':>5} {'max':>6} "
           f"{'>=enter':>8} {'<exit':>7}  engages")
     report: list[dict[str, Any]] = []
     for path in paths:
@@ -88,15 +88,24 @@ def main() -> int:
         if not values:
             print(f"  {path.name:<32} {'':<16} {'NO NON-IDLE SAMPLES — refused'}")
             return 2
-        arm = path.parts[-3] if len(path.parts) >= 3 else "?"
+        # EVERY rep's cell file is named `..._rep1.jsonl` -- the suffix is the runner's
+        # per-arm-run repetition index, which is always 1. The CAMPAIGN rep lives only in the
+        # directory (`rep3/<dataset>/<arm>/cells/`). Pooling across reps on the filename would
+        # give six rows all labelled the same, and either collide or silently keep one. Take
+        # the rep from the path, and refuse to pretend it is in the name.
+        parts = path.parts
+        arm = parts[-3] if len(parts) >= 3 else "?"
+        rep = next((x for x in reversed(parts) if x.startswith("rep") and x[3:].isdigit()), "")
         cell = path.name.split("_qps")[0]
+        if rep:
+            cell = f"{rep}/{cell}"
         above = sum(1 for v in values if v >= args.enter_rows) / len(values) * 100
         below = sum(1 for v in values if v < args.exit_rows) / len(values) * 100
         engages = max(values) >= args.enter_rows
-        print(f"  {cell:<32} {arm:<16} {quantile(values, 0.5):>5} "
+        print(f"  {cell:<38} {arm:<16} {quantile(values, 0.5):>5} "
               f"{quantile(values, 0.9):>5} {max(values):>6} {above:>7.1f}% {below:>6.1f}%"
               f"  {'yes' if engages else 'NEVER'}")
-        report.append({"cell": cell, "arm": arm, "samples": len(values),
+        report.append({"cell": cell, "arm": arm, "rep": rep, "samples": len(values),
                        "p50": quantile(values, 0.5), "p90": quantile(values, 0.9),
                        "max": max(values), "pct_at_or_above_enter": above,
                        "pct_below_exit": below, "can_engage_decode": engages,
