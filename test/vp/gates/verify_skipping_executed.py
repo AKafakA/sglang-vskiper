@@ -59,11 +59,36 @@ def skip_and_total(path: Path) -> tuple[int, int, str]:
     vp = _vp_runtime(path)
     regime = vp.get("regime_switch") or {}
     if regime.get("enabled"):
+        # [D-697] BOTH PHASES, NOT DECODE ALONE.
+        #
+        # This read `counters.decode` only, and refused the 0.75 x Q* cell as "never skipped"
+        # while the treatment arm routed 4,925 prefill passes over 6,977,016 prefill tokens.
+        # The cell it discarded reproduces v1.3's published row within its confidence interval
+        # on five of eight metrics.
+        #
+        # `counters.prefill` is NOT the prefill equivalent: it reads {dense: 0, fd: 0} on that
+        # same cell because it counts switch TRANSITIONS, not routed work. The routed prefill
+        # work is in `batch_composition`, which is where this now looks.
+        #
+        # D-627 was a gate blind to a mechanism that was OFF. This was the same gate blind to a
+        # mechanism that was ON -- and the second is worse, because it throws away real results
+        # while looking like diligence.
         decode = (regime.get("counters") or {}).get("decode") or {}
+        d_skip = int(decode.get("skip", 0))
+        d_total = d_skip + int(decode.get("prod_allrun", 0))
+        comp = vp.get("batch_composition") or {}
+        p_passes = int(comp.get("prefill_passes", 0))
+        p_tokens = int(comp.get("prefill_tokens", 0))
+        active = set(((vp.get("served_design") or {}).get("active_phases")) or [])
+        p_routed = p_passes if "prefill" in active else 0
         return (
-            int(decode.get("skip", 0)),
-            int(decode.get("skip", 0)) + int(decode.get("prod_allrun", 0)),
-            "regime_switch.counters.decode (passes)",
+            d_skip + p_routed,
+            d_total + p_routed,
+            # The label identifies the SOURCE, never the values: it is compared between the
+            # before and after snapshots to catch a server restart, so embedding the counts
+            # makes every run look like a reconfiguration.
+            "regime_switch.counters.decode (passes) + batch_composition.prefill_passes"
+            + ("" if p_routed else " [prefill not routed by this arm]"),
         )
     c3 = vp.get("fd_c3") or {}
     if c3.get("enabled"):
@@ -109,16 +134,22 @@ def main() -> int:
     share = skip / total
     print(f"  skip share                 : {share:.1%}  (floor {a.min_skip_share:.0%})")
 
+    # THE FLOOR IS "SOMETHING ROUTED", NOT A SHARE (owner, 2026-09-11: "we need just record but
+    # not as the hard gates"). A share floor cannot express the real question. A cell where
+    # prefill routes 7 M tokens while decode correctly sits in prod_allrun is a VALID treatment
+    # measurement -- the load-aware design behaving as designed below its decode threshold --
+    # and refusing it discards a row that reproduces the published table. What must still be
+    # refused is the D-627 case: NOTHING routed anywhere, so the measurement describes the
+    # production body while claiming to describe the skipper.
     if skip == 0:
-        print("\nREFUSING: the skipper NEVER SKIPPED. This measurement describes the production "
-              "all-RUN body, not the skipper. Use the always-skip quality arm "
-              "(integrated_alwaysskip), or drive load above the admission threshold (D-627).")
+        print("\nREFUSING: NOTHING ROUTED in either phase. This measurement describes the "
+              "production all-RUN body, not the skipper (D-627).")
         return 1
     if share < a.min_skip_share:
-        print(f"\nREFUSING: only {share:.1%} of routed work went through the skip body. A "
-              "quality number that is mostly the no-skip body attributes the skipper's "
-              "quality to a system that largely was not it.")
-        return 1
+        print(f"  NOTE: {share:.1%} of routed work went through the skip body, below the "
+              f"{a.min_skip_share:.0%} reference floor. RECORDED, not refused: below the decode "
+              "threshold the load-aware design runs prod_allrun by construction, and the phase "
+              "that routed is named above. Report the share with the cell.")
 
     print("\nOK: the skipper executed. This measurement describes the routed system.")
     return 0
