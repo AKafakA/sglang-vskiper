@@ -95,3 +95,32 @@ def test_a_device_whose_ridge_is_below_the_band_width_is_refused():
     rl._roofline_table()["TINY"] = {"peak_tflops_bf16": 10.0, "peak_bw_gbs": 4000.0}
     with pytest.raises(ValueError, match="not positive"):
         rl.derived_decode_band("TINY", LADDER, 200)
+
+
+def test_the_shipped_a100_band_PASSES_the_boot_assertion():
+    _roofline().assert_band_follows_rule(
+        served_exit_rows=144, served_enter_rows=176,
+        device_key="NVIDIA_A100", capture_rungs=LADDER)
+
+
+def test_a_drifted_band_is_REFUSED_and_the_message_names_both(tmp_path):
+    rl = _roofline()
+    with pytest.raises(RuntimeError) as excinfo:
+        rl.assert_band_follows_rule(
+            served_exit_rows=128, served_enter_rows=192,
+            device_key="NVIDIA_A100", capture_rungs=LADDER)
+    message = str(excinfo.value)
+    assert "declared (exit=128, enter=192)" in message
+    assert "rule gives (exit=144, enter=176)" in message
+    assert "ridge 161.2" in message
+
+
+def test_the_assertion_is_a_GATE_not_a_computation():
+    """It must never return a value the caller could use to overwrite the served design."""
+    import inspect
+    rl = _roofline()
+    # `from __future__ import annotations` makes annotations strings, so accept both forms.
+    annotation = inspect.signature(rl.assert_band_follows_rule).return_annotation
+    assert annotation in (None, "None"), annotation
+    src = inspect.getsource(rl.assert_band_follows_rule)
+    assert "return " not in src, "a gate that returns a band invites silent per-host design"
