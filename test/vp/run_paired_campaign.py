@@ -296,6 +296,33 @@ def cell_artifact(cell_root: Path, suite: str) -> Path | None:
     return matches[0] if len(matches) == 1 else None
 
 
+# THE FROZEN CROSS-ARM ALLOWLIST (plan F1: run --report ONCE, classify, then freeze).
+#
+# Each entry is a CLAIM: "this field differs between the arms, and here is why it cannot
+# flatter the treatment." Anything not listed is refused, and the gate exits 1.
+#
+# Measured 2026-09-11 01:3xZ by running --report on two REAL manifests -- an upstream ladder
+# boot and an integrated_it4 bank harvest, both on this box. Of 33 compared fields, exactly
+# TWO differ:
+#
+#   vp_runtime                    THE TREATMENT. Present on the fork, `[]` on upstream. This
+#                                 difference IS the experiment.
+#
+#   server.max_total_num_tokens   upstream 393319 vs integrated_it4 389479 = -0.976 %.
+#                                 A DERIVED consequence: the router and projector weights
+#                                 occupy HBM, leaving the fork a smaller KV pool. It takes
+#                                 capacity AWAY FROM THE TREATMENT, so it can only make our
+#                                 result look worse, never better -- which is the condition
+#                                 for declaring rather than fixing it. The plan predicted
+#                                 this field and this direction before it was measured.
+#
+# Frozen in CODE, not in each spec, because every spec that hard-coded ["vp_runtime"] would
+# otherwise have had G1c refuse 100 % of its cells -- the headline and all twelve sweep
+# points -- on a field we had already classified. A spec may still ADD to this set; it cannot
+# silently replace it.
+CROSS_ARM_DECLARED = frozenset({"vp_runtime", "server.max_total_num_tokens"})
+
+
 def cross_arm_config_gate(spec: dict[str, Any], dataset: str, rep: int,
                           out_dir: Path) -> bool:
     """Are the two arms the same engine apart from the treatment? Returns True on PASS.
@@ -323,7 +350,7 @@ def cross_arm_config_gate(spec: dict[str, Any], dataset: str, rep: int,
                str(Path(spec["tree"]) / "test/vp/gates/verify_cross_arm_config.py")]
     for arm, m in manifests.items():
         command += ["--arm", f"{arm}={m}"]
-    for field in spec.get("cross_arm_allow", ["vp_runtime"]):
+    for field in sorted(CROSS_ARM_DECLARED | set(spec.get("cross_arm_allow", []))):
         command += ["--allow", field]
     done = subprocess.run(command, capture_output=True, text=True)
     (out_dir / f"rep{rep}" / dataset / "cross_arm_config.txt").write_text(
