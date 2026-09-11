@@ -240,6 +240,12 @@ def main() -> int:
         "lmeval_task": task,
         "prompt_kind": kind,
         "arm": args.arm,
+        # Whether this cell was served by GENUINE upstream SGLang. Arm C of the 2x2 is
+        # gated on "no quality collapse vs UPSTREAM sglang" (D-587), and for months arm C
+        # was ARMS["stock"] -- this fork with the skipper off. The manifest recorded the
+        # arm LABEL, which is what made that invisible to every downstream reader. Record
+        # the fact, so the summariser can refuse a (D - C) computed against the wrong C.
+        "upstream_baseline": bool(args.upstream_baseline),
         "routes_decode": routes_decode,
         "batch_size": (args.batch_size if not args.base_url else None),
         "lmeval_command": command,

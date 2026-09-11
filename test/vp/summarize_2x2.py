@@ -44,15 +44,57 @@ METRICS = {
 ARMS = {
     "A": "raw base model, PyTorch",
     "B": "released checkpoint, its OWN code",
-    "C": "stock base model, OUR serving stack",
+    "C": "base model on UPSTREAM SGLang (D-587; was our fork with the skipper off)",
     "D": "vSkipper serving the checkpoint",
 }
 
 
-def _load(root: Path, arm: str, dataset: str) -> tuple[float, float]:
-    hits = sorted(glob.glob(f"{root}/{arm}/**/results_*.json", recursive=True))
+def _arm_dir(root: Path, arm: str, mapping: dict[str, str]) -> str:
+    """Where this arm's cells live. DECLARED, because the layout changed under us.
+
+    The hand-run 2x2 wrote `<root>/A|B|C|D/`; the committed driver
+    (`run_quality_2x2.py`) writes `<root>/<arm-name>/<workload>/`, so a summariser that
+    assumes the letter is a directory name dies on every new campaign -- which is the same
+    dead-tool defect as a checker that globs a layout the writer no longer produces.
+    """
+    return f"{root}/{mapping.get(arm, arm)}"
+
+
+def _assert_arm_c_is_upstream(root: Path, mapping: dict[str, str]) -> None:
+    """Arm C must be GENUINE upstream, because that is what the gate condition names.
+
+    The gate reads "no quality collapse vs UPSTREAM sglang" (D-587). For months arm C was
+    ARMS["stock"] -- this fork with the skipper off -- and every downstream reader saw only
+    the arm LABEL, so the violation was invisible. Refuse rather than compute (D - C)
+    against a C that was never upstream.
+    """
+    manifests = sorted(glob.glob(f"{_arm_dir(root, 'C', mapping)}/**/quality_manifest.json",
+                                 recursive=True))
+    if not manifests:
+        sys.exit(f"FATAL: arm C has no quality_manifest.json under "
+                 f"{_arm_dir(root, 'C', mapping)} -- cannot verify it was upstream")
+    for path in manifests:
+        record = json.loads(Path(path).read_text())
+        if "upstream_baseline" not in record:
+            sys.exit(
+                f"FATAL: {path} predates the upstream_baseline field, so whether arm C was "
+                "genuine upstream is UNKNOWABLE from the artifact. Re-run arm C rather than "
+                "assuming it (D-587)."
+            )
+        if not record["upstream_baseline"]:
+            sys.exit(
+                f"FATAL: arm C cell {path} was NOT served by upstream SGLang "
+                f"(arm={record.get('arm')!r}). The gate condition is 'no quality collapse "
+                "vs UPSTREAM sglang' -- refusing to compute (D - C) against this."
+            )
+
+
+def _load(root: Path, arm: str, dataset: str, mapping: dict[str, str]) -> tuple[float, float]:
+    hits = sorted(glob.glob(f"{_arm_dir(root, arm, mapping)}/**/results_*.json",
+                            recursive=True))
     if not hits:
-        sys.exit(f"FATAL: no results_*.json for arm {arm} under {root}")
+        sys.exit(f"FATAL: no results_*.json for arm {arm} under "
+                 f"{_arm_dir(root, arm, mapping)}")
     results = json.load(open(hits[-1]))["results"]
     keys = [k for k in results if dataset.split("_")[0] in k]
     # A grouped task (bbh_cot_fewshot has 27 subtasks) must be read from its aggregate,
@@ -81,10 +123,25 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("root", type=Path)
     ap.add_argument("--dataset", choices=sorted(METRICS), required=True)
+    ap.add_argument("--arm-dir", action="append", default=[],
+                    help="ARM=DIRNAME, repeatable, e.g. --arm-dir C=upstream "
+                         "--arm-dir D=integrated_alwaysskip. Defaults to the letter itself.")
+    ap.add_argument("--skip-upstream-check", action="store_true",
+                    help="Read a HISTORICAL arm-C directory that predates the "
+                         "upstream_baseline field. Never for a new campaign: it disables the "
+                         "only check that arm C is what the gate condition names.")
     args = ap.parse_args()
 
     metric, _ = METRICS[args.dataset]
-    vals = {arm: _load(args.root, arm, args.dataset) for arm in ARMS}
+    mapping: dict[str, str] = {}
+    for entry in args.arm_dir:
+        arm, _, dirname = entry.partition("=")
+        if arm not in ARMS or not dirname:
+            ap.error(f"--arm-dir wants one of {sorted(ARMS)}=DIRNAME, got {entry!r}")
+        mapping[arm] = dirname
+    if not args.skip_upstream_check:
+        _assert_arm_c_is_upstream(args.root, mapping)
+    vals = {arm: _load(args.root, arm, args.dataset, mapping) for arm in ARMS}
 
     print(f"=== 2x2 quality gate -- {args.dataset} -- metric {metric} ===")
     for arm, (v, se) in vals.items():
