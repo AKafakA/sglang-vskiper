@@ -113,3 +113,40 @@ def test_macros_are_latex_legal_names(tmp_path: Path):
     names = re.findall(r"\\newcommand\{\\([A-Za-z]+)\}", text)
     assert len(names) == 60, len(names)
     assert all(n.isalpha() for n in names)
+
+
+def test_the_rows_file_swallows_its_own_final_newline(tmp_path: Path):
+    r"""`\input` inside a tabular leaves a space after the last `\\`, opening a new row, and the
+    `\bottomrule` that follows is a `\noalign` -> "Misplaced \noalign". Found by building."""
+    report = _report(tmp_path / "r.json")
+    out = _run(report, "--knee", "gsm8k=11", "--knee", "bbh_cot=25", "--emit")
+    assert out.stdout.rstrip("\n").endswith("%"), repr(out.stdout[-40:])
+
+
+def test_verify_sees_rows_behind_an_input(tmp_path: Path):
+    """Rows live in their own generated file; a verifier reading only main.tex would report
+    every row missing -- a false alarm that trains the reader to ignore it."""
+    report = _report(tmp_path / "r.json")
+    rows = _run(report, "--knee", "gsm8k=11", "--knee", "bbh_cot=25", "--emit").stdout
+    (tmp_path / "generated").mkdir()
+    (tmp_path / "generated/headline_rows.tex").write_text(rows)
+    (tmp_path / "main.tex").write_text(
+        "\\begin{tabular}{l}\n\\input{generated/headline_rows}\n\\end{tabular}\n")
+    check = _run(report, "--knee", "gsm8k=11", "--knee", "bbh_cot=25",
+                 "--verify", tmp_path / "main.tex")
+    assert check.returncode == 0, check.stderr
+
+
+def test_verify_follows_the_TeX_PRIMITIVE_wrapper_too(tmp_path: Path):
+    r"""The paper uses \inputrows (a \@@input wrapper) because \input inside a tabular breaks
+    \bottomrule. A verifier that tracks only \input goes blind the moment the paper changes
+    mechanism -- and reports every row missing, which reads like a real failure."""
+    report = _report(tmp_path / "r.json")
+    rows = _run(report, "--knee", "gsm8k=11", "--knee", "bbh_cot=25", "--emit").stdout
+    (tmp_path / "generated").mkdir()
+    (tmp_path / "generated/headline_rows.tex").write_text(rows)
+    (tmp_path / "main.tex").write_text(
+        "\\begin{tabular}{l}\n\\inputrows{generated/headline_rows.tex}\n\\end{tabular}\n")
+    check = _run(report, "--knee", "gsm8k=11", "--knee", "bbh_cot=25",
+                 "--verify", tmp_path / "main.tex")
+    assert check.returncode == 0, check.stderr
