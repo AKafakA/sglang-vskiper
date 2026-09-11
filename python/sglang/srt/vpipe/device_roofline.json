@@ -1,0 +1,6 @@
+{
+  "_source": "Published vendor specifications: dense (non-sparse) bf16 tensor-core peak and peak HBM bandwidth. These are SPEC-SHEET CONSTANTS, not fitted parameters, and not measured on our hardware. Keyed by canonical_device_key(), the same key the tuned tile artifacts use, so an unknown device fails CLOSED rather than falling back to a heuristic.",
+  "_cross_check": "A100: 108 SM x 1.41 GHz x 2048 bf16 FLOP/SM/cycle = 312 TFLOP/s; 1512 MHz x 2 x 5120 bit / 8 = 1935 GB/s.",
+  "_omitted_on_purpose": "Quadro RTX 8000 (Turing) is ABSENT twice over: it has no bf16 tensor cores at all, so a bf16 peak for it would be a fiction; and the owner's standing rule is that box is feasibility-only and never performance evidence. Failing closed there is correct -- an entry would invite someone to derive a band and report a number from it.",
+  "NVIDIA_A100": {"peak_tflops_bf16": 312.0, "peak_bw_gbs": 1935.0}
+}
