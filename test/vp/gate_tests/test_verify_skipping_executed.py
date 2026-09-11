@@ -54,7 +54,9 @@ def test_d627_case_is_still_refused(tmp_path):
     a = _snapshot(tmp_path / "a.json", regime={"skip": 0, "prod_allrun": 16720})
     r = _run(b, a)
     assert r.returncode == 1
-    assert "NEVER SKIPPED" in r.stdout
+    # message updated by D-697: the check now spans both phases, so "never skipped" became
+    # "nothing routed in either phase"
+    assert "NOTHING ROUTED" in r.stdout
 
 
 def test_gated_arm_that_did_skip_passes(tmp_path):
@@ -65,13 +67,24 @@ def test_gated_arm_that_did_skip_passes(tmp_path):
     assert "regime_switch" in r.stdout
 
 
-def test_share_below_the_floor_is_refused(tmp_path):
-    """Mostly-no-skip attributes the skipper's quality to a system that largely wasn't it."""
+def test_share_below_the_floor_is_RECORDED_not_refused(tmp_path):
+    """CHANGED BY D-697 (owner: "we need just record but not as the hard gates").
+
+    This used to refuse, on the reasoning that a mostly-no-skip cell attributes the skipper's
+    quality to a system that largely was not it. That reasoning holds for the QUALITY lane and
+    fails for the PERF lane: below `enter_rows` the load-aware design runs prod_allrun by
+    construction, so a low decode share is the design behaving correctly, not a broken
+    measurement. Refusing it discarded the gsm8k 0.75 x Q* cell, which reproduces v1.3's
+    published row within its CI on five of eight metrics.
+
+    The share is still computed and printed, so a reader can judge the cell; it no longer
+    decides the exit code on its own. What still refuses is NOTHING routed anywhere."""
     b = _snapshot(tmp_path / "b.json", regime={"skip": 0, "prod_allrun": 0})
     a = _snapshot(tmp_path / "a.json", regime={"skip": 100, "prod_allrun": 900})
     r = _run(b, a)
-    assert r.returncode == 1
+    assert r.returncode == 0, r.stdout
     assert "10.0%" in r.stdout
+    assert "RECORDED, not refused" in r.stdout
 
 
 # --- always-route arm: the case that exposed the bug ---
@@ -96,7 +109,9 @@ def test_always_route_arm_that_did_not_skip_is_refused(tmp_path):
                   c3={"fd_tokens_skip_body": 0, "fd_tokens_prod_allrun_band": 5000})
     r = _run(b, a)
     assert r.returncode == 1
-    assert "NEVER SKIPPED" in r.stdout
+    # message updated by D-697: the check now spans both phases, so "never skipped" became
+    # "nothing routed in either phase"
+    assert "NOTHING ROUTED" in r.stdout
 
 
 # --- neither block: refuse, never assume ---
