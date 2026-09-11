@@ -855,13 +855,22 @@ def _run_cell(
         workload_record = _workload_record(requests_path, metadata_path)
     available = _count_rows(requests_path)
     _refuse_undeclared_cell_size(workload, available, args.partial_suite_diagnostic)
-    if args.duration_s is None or args.min_prompts is None:
+    # DERIVE INTO LOCALS. Writing the derived values back onto `args` made this function
+    # single-use: cell 1 set args.duration_s, and cell 2 then saw it non-None and took the
+    # `elif` below, raising "--duration-s / --min-prompts are DIAGNOSTIC overrides" against a
+    # caller that had passed neither. The ladder and the bank harvest never noticed because
+    # each invokes the runner ONCE per rung; the paired driver passes three suites in one
+    # qps-config, so it died on the second cell of every arm -- 2 of every 3 headline cells,
+    # silently, with a message accusing the caller of the exact thing it had been fixed not
+    # to do. Per-cell state must not live on the parser's namespace.
+    duration_s, min_prompts = args.duration_s, args.min_prompts
+    if duration_s is None or min_prompts is None:
         # Derive, exactly as the bank harvest has always done it.
         min_prompts = available
         duration_s = math.floor(available / qps)
         while math.ceil(qps * duration_s) > available:
             duration_s -= 1
-        args.min_prompts, args.duration_s = min_prompts, float(duration_s)
+        duration_s = float(duration_s)
     elif not args.partial_suite_diagnostic:
         raise ValueError(
             "--duration-s / --min-prompts are DIAGNOSTIC overrides and require "
@@ -869,11 +878,11 @@ def _run_cell(
             "rate (duration = rows/qps); a caller-chosen duration makes each rate submit a "
             "different number of requests, so its cells cannot be compared (owner rule 2)."
         )
-    requested_count = _requested_count(args.min_prompts, qps, args.duration_s)
+    requested_count = _requested_count(min_prompts, qps, duration_s)
     if requested_count > available:
         raise ValueError(
             f"{workload} QPS {qps:g} needs {requested_count} requests for "
-            f"{args.duration_s:g}s but only {available} are available"
+            f"{duration_s:g}s but only {available} are available"
         )
 
     # NO FIXED CELL DURATION. A wall-clock deadline makes each rate submit a DIFFERENT number
@@ -1060,7 +1069,7 @@ def _run_cell(
         "fixed_output_tokens": workload_record.get("fixed_output_tokens", []),
         "workload": workload,
         "qps": qps,
-        "duration_target_s": args.duration_s,
+        "duration_target_s": duration_s,
         "expected_injection_s": arrival_schedule["injection_span_s"],
         "arrival_schedule": arrival_schedule,
         "num_prompts": requested_count,
