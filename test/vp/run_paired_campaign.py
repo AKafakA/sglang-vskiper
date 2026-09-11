@@ -124,6 +124,40 @@ def arm_is_upstream(spec: dict[str, Any], arm: str) -> bool:
     return arm == spec.get("upstream_arm_name", "upstream")
 
 
+def serving_pythonpath(spec: dict[str, Any], arm: str) -> Path:
+    """The `python/` directory this arm will actually serve from."""
+    tree = Path(spec["upstream_tree"]) if arm_is_upstream(spec, arm) else Path(spec["tree"])
+    return tree / "python"
+
+
+def campaign_preflight_gate(spec: dict[str, Any],
+                            arm: str) -> subprocess.CompletedProcess[str]:
+    """G1a — campaign_preflight, bound to the PYTHONPATH this arm is about to export.
+
+    Extracted from main() so the QUALITY lane runs the same gate as the perf lane. It had
+    never run against a genuine upstream tree at all: its manifest claimed 2319 files when
+    the commit yields 2079, so no correct tree could pass it (D-646). Hashing a directory
+    does not bind it to the process that serves, which is why --serving-pythonpath exists
+    (audit D-624 #6).
+    """
+    serving = serving_pythonpath(spec, arm)
+    command = [sys.executable,
+               str(Path(spec["tree"]) / "test/vp/gates/campaign_preflight.py"),
+               "--tree", spec["tree"], "--upstream", spec["upstream_tree"],
+               # The STAGING ROOT, which holds models/ beside suites/. Passing suites_dir
+               # made the gate look for models/ inside it and report "served model weights
+               # 0 shards" on a box with the model staged one level up (D-664).
+               "--workdir", spec["staging_root"],
+               # The campaign's own host config, NAMED. The gate used to pick the
+               # alphabetically first deploy/hosts/*.json for itself and validated CSD3
+               # paths on a Vast box (D-664).
+               "--host-config", spec["host_config"],
+               "--serving-pythonpath", str(serving)]
+    if arm_is_upstream(spec, arm):
+        command.append("--serving-is-upstream")
+    return subprocess.run(command, capture_output=True, text=True)
+
+
 class Server:
     """One booted arm. Boot, attest, tear down -- and never leave a process behind."""
 
@@ -479,24 +513,8 @@ def main() -> int:
     # hashing a directory does not bind it to the process that serves (audit D-624 #6).
     if "upstream_tree" in spec:
         for role, arm in spec["arms"].items():
-            upstream = arm_is_upstream(spec, arm)
-            serving = (Path(spec["upstream_tree"]) if upstream else Path(spec["tree"])) / "python"
-            command = [sys.executable,
-                       str(Path(spec["tree"]) / "test/vp/gates/campaign_preflight.py"),
-                       "--tree", spec["tree"], "--upstream", spec["upstream_tree"],
-                       # The STAGING ROOT, which holds models/ beside suites/. Passing
-                       # suites_dir made the gate look for models/ inside it and report
-                       # "served model weights  0 shards" on a box with the model staged
-                       # one level up (D-664).
-                       "--workdir", spec["staging_root"],
-                       # The campaign's own host config, NAMED. The gate used to pick the
-                       # alphabetically first deploy/hosts/*.json for itself and validated
-                       # CSD3 paths on a Vast box (D-664).
-                       "--host-config", spec["host_config"],
-                       "--serving-pythonpath", str(serving)]
-            if upstream:
-                command.append("--serving-is-upstream")
-            done = subprocess.run(command, capture_output=True, text=True)
+            serving = serving_pythonpath(spec, arm)
+            done = campaign_preflight_gate(spec, arm)
             if done.returncode != 0:
                 print(f"G1a campaign preflight REFUSED for {role} arm {arm!r} — "
                       "nothing has booted:", file=sys.stderr)
