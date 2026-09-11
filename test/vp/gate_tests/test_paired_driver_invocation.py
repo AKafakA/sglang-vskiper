@@ -77,3 +77,22 @@ def test_upstream_baseline_is_passed_only_for_the_upstream_arm():
     line = [l for l in DRIVER_CODE if "--upstream-baseline" in l]
     assert line, "the upstream arm no longer gets --upstream-baseline"
     assert "arm_is_upstream(spec, arm)" in line[0], line
+
+
+def test_a_refused_cell_does_not_abort_its_SIBLING_RATES():
+    """An arm-run covers every rate of its dataset in ONE invocation, so without this the
+    first refused cell costs the rest. Measured: gsm8k r8p25 refused on skipping_executed
+    (peak occupancy 96 vs enter_rows=176) and took r10p45 and r13p75 with it -- both of which
+    engage cleanly at peak 389/386 -- leaving rep 1 gsm8k with zero usable pairs.
+
+    The ladder has always passed this flag for the same reason."""
+    uses = [l for l in DRIVER_CODE if "--continue-after-accounting-rejection" in l]
+    assert uses, "a refused rate will abort the whole arm-run"
+
+
+def test_that_flag_does_NOT_weaken_the_per_cell_gates():
+    """It continues past a refusal; it does not suppress one. The refused cell's artifacts are
+    still renamed INVALID.* and GR-1a still fails that rate -- which is what keeps 'the arm
+    finished' from being read as 'every rate passed'."""
+    assert 'target = path.with_name(f"INVALID.{path.name}")' in RUNNER
+    assert "an unchecked pair is a failed pair" in DRIVER

@@ -292,7 +292,23 @@ def run_arm_cells(spec: dict[str, Any], dataset: str, rates: dict[str, float],
              "--qps-config", str(qps_config), "--output-dir", str(cell_root / "cells"),
              "--evidence-class", spec.get("evidence_class", "development"),
              "--host", "127.0.0.1", "--port", str(port), "--reps", "1",
-             "--runner-source-revision", spec["source_revision"]]
+             "--runner-source-revision", spec["source_revision"],
+             # ONE REFUSED RATE MUST NOT COST THE OTHER TWO.
+             #
+             # An arm-run covers every rate of its dataset in one invocation. Without this,
+             # the FIRST refused cell aborts the whole invocation and the remaining rates are
+             # never attempted. Measured 2026-09-11: gsm8k r8p25 was refused on
+             # `skipping_executed` (peak occupancy 96 against the design's enter_rows=176, so
+             # the load-aware switch correctly never left prod_allrun) -- and that refusal
+             # took r10p45 and r13p75 with it, despite both engaging cleanly at peak 389/386.
+             # The arm produced nothing, so GR-1a failed all three rates and rep 1 gsm8k
+             # yielded ZERO usable pairs.
+             #
+             # The ladder has always passed this for the same reason: a rung that fails its
+             # gates must not abandon the band. A refused cell is still refused -- its
+             # artifacts are renamed INVALID.* and GR-1a fails that rate -- it simply no
+             # longer takes its siblings down.
+             "--continue-after-accounting-rejection"]
             + (["--upstream-baseline"] if arm_is_upstream(spec, arm) else []),
             check=False, stdout=(cell_root / "runner.log").open("wb"),
             stderr=subprocess.STDOUT,
