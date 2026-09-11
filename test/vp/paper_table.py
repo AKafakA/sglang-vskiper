@@ -111,7 +111,11 @@ def latex_rows(rows: list[dict[str, Any]]) -> str:
             f"${row['multiplier']:g}\\times Q^*$ & {row['n']} & "
             + " & ".join(cells) + r" \\"
         )
-    return "\n".join(lines)
+    # Trailing `%` so the file swallows its own final newline. Without it, \input inside a
+    # tabular leaves a space token after the last row's `\\`, which opens a new row -- and the
+    # `\bottomrule` that follows is a `\noalign`, giving "Misplaced \noalign". Found by
+    # building the paper, not by reading it.
+    return "\n".join(lines) + "%"
 
 
 def macro_name(dataset: str, multiplier: float, column: str) -> str:
@@ -140,14 +144,39 @@ def macros(rows: list[dict[str, Any]]) -> str:
 
 ROW_RE = re.compile(
     r"^(?P<ds>[A-Za-z0-9]+)\s*&\s*\$(?P<mult>[0-9.]+)\\times Q\^\*\$\s*&\s*(?P<n>\d+)\s*&"
-    r"(?P<cells>.+?)\\\\\s*$",
+    # `%?` because the generated file ends its last row with a comment character to swallow
+    # the newline that would otherwise open a phantom row inside the tabular.
+    r"(?P<cells>.+?)\\\\%?\s*$",
     re.M,
 )
 CELL_RE = re.compile(r"([+-]?\d+\.\d+)(?:\s*\$\\pm\$\s*(\d+\.\d+))?")
 
 
+# Both LaTeX's \input and any wrapper around the TeX primitive (the paper defines
+# \inputrows, because \input inside a tabular breaks \bottomrule). A verifier that
+# tracks only one of them goes blind the moment the paper changes mechanism -- which is
+# exactly what happened when this file was first written.
+INPUT_RE = re.compile(r"\\input(?:rows)?\{([^}]+)\}")
+
+
+def expand_inputs(tex: str, base: Path) -> str:
+    """Splice in one level of `\\input{...}`.
+
+    The generated rows live in their own file so the paper never carries a hand-typed number,
+    which means a verifier that reads only main.tex sees an empty table and reports every row
+    as missing -- a false alarm that would train the reader to ignore it.
+    """
+    def _splice(match: re.Match[str]) -> str:
+        name = match.group(1)
+        for candidate in (base / name, base / f"{name}.tex"):
+            if candidate.is_file():
+                return candidate.read_text()
+        return match.group(0)
+    return INPUT_RE.sub(_splice, tex)
+
+
 def verify(rows: list[dict[str, Any]], tex: str, tol: float) -> list[str]:
-    """Diff main.tex's paired-form rows against the artifacts. Both directions."""
+    """Diff the paper's paired-form rows against the artifacts. Both directions."""
     problems: list[str] = []
     seen: set[tuple[str, float]] = set()
     expected = {(DISPLAY.get(r["dataset"], r["dataset"]), r["multiplier"]): r for r in rows}
@@ -217,7 +246,9 @@ def main() -> int:
             print(f"\n% wrote {len(rows) * len(COLUMNS)} macros to {args.macros}",
                   file=sys.stderr)
     if args.verify:
-        problems = verify(rows, args.verify.read_text(), args.tol)
+        problems = verify(
+            rows, expand_inputs(args.verify.read_text(), args.verify.parent), args.tol
+        )
         if problems:
             print(f"\nMISMATCH — {len(problems)} problem(s) between {args.verify} "
                   "and the artifacts:", file=sys.stderr)
