@@ -46,7 +46,7 @@ def skip_and_total(path: Path) -> tuple[int, int, str]:
 
     There are two, and which one carries the evidence depends on the arm:
 
-      regime_switch.counters   admission-gated arms (integrated_it4). Counts DECODE PASSES
+      regime_switch.counters   admission-gated arms (vskipper, formerly integrated_it4). Counts DECODE PASSES
                                as skip vs prod_allrun. This is what D-627 was caught with.
       fd_c3.counters           always-route arms (integrated_alwaysskip), whose defining
                                property is `regime_switch: False` -- so its counters are

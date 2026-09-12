@@ -14,7 +14,7 @@ entirely: a new arm in ARMS gets its expectation for free, and an expectation ca
 disagree with the design it is supposed to check.
 
   make_expected_runtime.py --out-dir /opt/vpipe/campaign            # every arm
-  make_expected_runtime.py --out-dir DIR --arm integrated_it4       # one
+  make_expected_runtime.py --out-dir DIR --arm vskipper       # one
   make_expected_runtime.py --out-dir DIR --check                    # diff, write nothing
 """
 from __future__ import annotations

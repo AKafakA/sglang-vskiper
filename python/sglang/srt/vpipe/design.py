@@ -152,8 +152,11 @@ ARMS: Final[dict[str, dict[str, Any]]] = {
     "vdec_fd": {"skipper": "flexidepth", "phases": "decode", "regime_switch": True},
     # FlexiDepth, prefill phase only.
     "vpre_binarycohort": {"skipper": "flexidepth", "phases": "prefill", "regime_switch": True},
-    # FlexiDepth, both phases -- THE SERVED SYSTEM the paper reports.
-    "integrated_it4": {"skipper": "flexidepth", "phases": "both", "regime_switch": True},
+    # FlexiDepth, both phases -- THE SERVED SYSTEM the paper reports (owner 2026-09-12: "use the
+    # vskipper instead" of the historical lane-2 name integrated_it4). The old name stays an
+    # ALIAS of the same dict below, so campaigns, specs, expectation files and manifests that
+    # carry it (the A100 headline on tree 735d451c89) keep resolving to the identical design.
+    "vskipper": {"skipper": "flexidepth", "phases": "both", "regime_switch": True},
     # [D-627] THE QUALITY POSTURE. Identical to integrated_it4 except that admission is OFF,
     # so every routed pass routes regardless of load.
     #
@@ -199,6 +202,8 @@ ARMS: Final[dict[str, dict[str, Any]]] = {
         "mock_seed": 1234,
     },
 }
+# [owner 2026-09-12] Deprecated name of the served system; identical design object.
+ARMS["integrated_it4"] = ARMS["vskipper"]
 
 # THE SKIP-RATE x DEPTH SWEEP (plan item 3; owner scope 2026-09-10: gsm8k only, ALL 12 points,
 # one rate, 3 reps, with the upstream anchor interleaved in the same session).

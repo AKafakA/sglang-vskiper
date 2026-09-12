@@ -91,7 +91,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("out_dir", type=Path)
     ap.add_argument("--baseline", default="upstream")
-    ap.add_argument("--treatment", default="integrated_it4")
+    ap.add_argument("--treatment", default="vskipper")
     ap.add_argument("--reps", default="", help="comma list; default = every rep<N> present")
     ap.add_argument("--json", type=Path, default=None)
     args = ap.parse_args()

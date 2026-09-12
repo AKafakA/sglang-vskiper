@@ -17,7 +17,7 @@ two trees, no requests sent, so ANY difference is a code difference.
   verify_tree_equivalence.py --spec quality_spec.json \\
       --tree-a /opt/vpipe/trees/tree-318bc23929 \\
       --tree-b /opt/vpipe/trees/tree-57434b28d5 \\
-      --arm integrated_it4 --arm integrated_randomskip --port 32097
+      --arm vskipper --arm integrated_randomskip --port 32097
 
 Exits non-zero and PRINTS THE DIFFERING PATHS on any difference. A pass here does
 not license re-using a measurement across the change; it licenses saying the two

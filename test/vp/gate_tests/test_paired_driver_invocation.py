@@ -135,3 +135,12 @@ def test_every_treatment_is_gated_against_the_anchor():
     assert any("rep: int, out_dir: Path, treatment: str) -> list[str]" in l for l in code)
     assert any("for treatment in treatments:" in l for l in code)
     assert not any('spec["arms"]["treatment"]' in l for l in code), "a hard-coded single treatment survives"
+
+
+def test_vskipper_is_the_served_arm_and_integrated_it4_is_its_alias():
+    from sglang.srt.vpipe.design import ARMS
+    assert ARMS["vskipper"] == {"skipper": "flexidepth", "phases": "both", "regime_switch": True}
+    assert ARMS["integrated_it4"] is ARMS["vskipper"]
+    import pathlib
+    active = pathlib.Path(__file__).resolve().parents[3] / "deploy/active_arm"
+    assert active.read_text().strip() == "vskipper"

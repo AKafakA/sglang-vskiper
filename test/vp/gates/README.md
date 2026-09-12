@@ -15,7 +15,7 @@ the box defaults preserved.
 |---|---|
 | `gates_box.sh` | THE chain, gating the tree it lives in: frozen-tree fix → helper build → pytest import gates → ladder default modes → **four-arm gate** → **route-digest output-equality A/B vs frozen** → summary. This is what "box gates GREEN" means. |
 | `box_vpcov_arm.sh <arm> [tree] [out]` | ONE arm serves, routes, and attests (32-request greedy probe; server_info re-fetched post-probe — the attested counters are post-probe). NEVER a performance number. |
-| `arms/arm_env_*.sh` | THE sealed arm postures (verbatim; CSD3-absolute paths are remapped by the driver — do not edit). Four canonical: `vdec_fd`, `vpre_binarycohort`, `integrated_it4`, `vdec_randomskip`; plus `vdec_adaskip` (inert until the AdaSkip lane restores its `SGLANG_VP_ADASKIP_*` knobs — validation refuses them on this tree by design). |
+| `arms/arm_env_*.sh` | THE sealed arm postures (verbatim; CSD3-absolute paths are remapped by the driver — do not edit). Four canonical: `vdec_fd`, `vpre_binarycohort`, `vskipper`, `vdec_randomskip`; plus `vdec_adaskip` (inert until the AdaSkip lane restores its `SGLANG_VP_ADASKIP_*` knobs — validation refuses them on this tree by design). |
 | `route_digest_compare.py` | the equality comparator (reads `$VP_GATE_AB_OUT`). Known instrument artifact: `tape.digest_sum_u64` differs across boots on an identical tree; the other fields are the signal. |
 | `../refactor_ab/csd3_preflight.sh` / `csd3_ab_arm.sh` / `csd3_ab_chain.sh` | the CSD3 INTR A/B chain (fail-closed preflight → per-arm serve+probe → chain driver); `csd3_ab_run.sh` + `csd3_ab_compare.py` were already in `refactor_ab/`. |
 

@@ -29,7 +29,7 @@ from pathlib import Path
 
 TREE = Path(__file__).resolve().parents[3]
 GATE = TREE / "test/vp/gates/verify_served_design.py"
-ARM = "integrated_it4"
+ARM = "vskipper"
 
 
 def serve(payload):
