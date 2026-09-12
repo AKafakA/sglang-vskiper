@@ -679,11 +679,11 @@ def test_gate_mode_is_attested_from_the_arm() -> None:
 
     base = {"skipper": "flexidepth", "phases": "both", "regime_switch": True}
     with _serving_arm("_t_default", dict(base)):
-        block = low_row_policy_attestation("native_dense", 1 << 30)
+        block = low_row_policy_attestation("native_dense")
         assert block["gate_mode"] == "released"
         assert block["gate_branch_scaling"] == "run_times_w_project_times_one_minus_w"
     with _serving_arm("_t_hard", {**base, "gate_mode": "hard_mask"}):
-        block = low_row_policy_attestation("native_dense", 1 << 30)
+        block = low_row_policy_attestation("native_dense")
         assert block["gate_mode"] == "hard_mask"
         assert block["gate_branch_scaling"] == "hard_selection_no_w_scaling"
 
