@@ -18,7 +18,7 @@ Fails closed: any mismatch, any missing field, any unreachable server is a non-z
 campaign script must treat a non-zero exit as "do not run", not as a warning.
 
 Usage:
-    verify_served_design.py --url http://127.0.0.1:30000 --arm integrated_it4 --tree <path>
+    verify_served_design.py --url http://127.0.0.1:30000 --arm vskipper --tree <path>
 """
 from __future__ import annotations
 

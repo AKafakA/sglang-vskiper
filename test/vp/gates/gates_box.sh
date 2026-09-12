@@ -49,7 +49,7 @@ LOG "--- 3. ladder default modes"
 echo "LADDER-TEST-RC=$?"
 
 LOG "--- 4. FOUR-ARM GATE on $TREE"
-for ARM in vdec_fd vpre_binarycohort integrated_it4 integrated_randomskip; do
+for ARM in vdec_fd vpre_binarycohort vskipper integrated_randomskip; do
   bash "$GATES_DIR/box_vpcov_arm.sh" $ARM "$TREE"
   echo "ARM $ARM rc=$?"
 done
@@ -68,7 +68,7 @@ done
 VP_GATE_AB_OUT="$RES" python3 "$GATES_DIR/route_digest_compare.py" 2>&1 | tee "$RES/verdict.txt"
 
 LOG "--- 6. summary"
-for ARM in vdec_fd vpre_binarycohort integrated_it4 integrated_randomskip; do
+for ARM in vdec_fd vpre_binarycohort vskipper integrated_randomskip; do
   SI=$W/vpcov-out/$ARM/server_info.json
   python3 - "$ARM" "$SI" <<'PY'
 import json, sys

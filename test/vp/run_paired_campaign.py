@@ -38,7 +38,7 @@ The spec is data, not code (QPS grids are contract data):
      "staging_root": "/dev/shm/vpipe",
      "host_config": "deploy/hosts/vast-a100.json",
      "expect_dir": "/opt/vpipe/campaign",
-     "arms": {"baseline": "upstream", "treatment": "integrated_it4"},
+     "arms": {"baseline": "upstream", "treatment": "vskipper"},
      "datasets": {"gsm8k": {"r11p25": 11.25, "r14p25": 14.25, "r18p75": 18.75}}}
 """
 from __future__ import annotations

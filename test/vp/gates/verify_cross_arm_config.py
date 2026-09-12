@@ -26,7 +26,7 @@ actually differs, and classify each field as
 
 Usage:
     verify_cross_arm_config.py --arm upstream=<manifest.json> \\
-                               --arm integrated_it4=<manifest.json> \\
+                               --arm vskipper=<manifest.json> \\
                                [--allow vp_runtime --allow server.max_total_num_tokens] \\
                                [--report]
 
