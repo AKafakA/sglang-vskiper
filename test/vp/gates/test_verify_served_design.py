@@ -82,6 +82,9 @@ def main() -> int:
          wrap(perturb(lambda s: s.__setitem__("skipper", "deterministic_mock"))), 1),
         ("compact phases narrowed",
          wrap(perturb(lambda s: s.__setitem__("compact_phases", ["decode"]))), 1),
+        # [v1.5] the mechanism switch itself is gated, not only the phases it may use
+        ("compact switched off while the arm declares it on",
+         wrap(perturb(lambda s: s.__setitem__("compact_enabled", False))), 1),
         ("served_design absent (old server)", {"internal_states": [{"vp_runtime": {}}]}, 1),
         ("no vp_runtime at all", {"internal_states": [{}]}, 1),
     ]

@@ -38,6 +38,7 @@ from sglang.srt.vpipe.design import (  # [D-609] the design is code
     SERVED_REGIME_SWITCH,
     active_arm,
     active_arm_name,
+    arm_compact_enabled,
     arm_gate_mode,
     arm_phases,
     mechanism,
@@ -1276,6 +1277,11 @@ def resolved_design_attestation() -> dict[str, Any]:
         "low_row_policy": full_graph_low_row_policy(),
         "execution_mode": flexidepth_execution_mode(),
         "active_phases": sorted(flexidepth_active_phases()),
+        # [v1.5] `compact_phases` is the set of phases compaction MAY use (a design constant);
+        # `compact_enabled` is the mechanism switch the arm controls (off for the no-compaction
+        # ablation arm and for Qwen3). Without it here, an arm served with compaction on while
+        # declaring it off would pass the served-design gate on phases alone.
+        "compact_enabled": mechanism(arm_compact_enabled()),
         "compact_phases": sorted(full_graph_compact_phases()),
         "gate_mode": full_graph_gate_mode(),
         "fused_router_norm": full_graph_fused_router_norm_enabled(),
