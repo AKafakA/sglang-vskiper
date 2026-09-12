@@ -122,13 +122,22 @@ def main() -> int:
         sys.exit("FATAL: zero responses examined -- an empty cell is not a passing cell")
 
     share = 100.0 * len(empties) / total
+    # [D-728] Known (checkpoint-inherited) empties are named, counted, and not refused.
+    # lm-eval ids have the form samples_<task>...jsonl:<doc_id> and are never listed, so the
+    # quality lane is unaffected unless an entry is added for it with its own witness.
+    known = load_known_empties() if args.artifact else {}
+    inherited = [e for e in empties if e in known]
+    unknown = [e for e in empties if e not in known]
     print(f"responses examined : {total}")
-    print(f"empty generations  : {len(empties)} ({share:.2f}%)  [limit {args.max_empty}]")
+    print(f"empty generations  : {len(empties)} ({share:.2f}%)  [limit {args.max_empty} on UNKNOWN]")
+    for e in inherited:
+        print(f"  KNOWN empty {e}: {known[e]['first_token']} @ {known[e]['first_token_logprob']} "
+              f"-- inherited from the checkpoint (witness: arm B, {known[e]['evidence']})")
 
-    if len(empties) > args.max_empty:
-        print(f"\nREFUSING: {len(empties)} empty generations. A request that returns no text is "
-              "lost output, not a low score -- it silently deflates quality and inflates "
-              "throughput-per-token. First offending ids: " + ", ".join(empties[:10]))
+    if len(unknown) > args.max_empty:
+        print(f"\nREFUSING: {len(unknown)} empty generations not on the known list. A request that "
+              "returns no text is lost output, not a low score -- it silently deflates quality and "
+              "inflates throughput-per-token. First offending ids: " + ", ".join(unknown[:10]))
         print("Check the prompt protocol first: raw few-shot rendering reproduces this at "
               "42-52% while the chat protocol measures 0.0% on the same tree (D-628).")
         return 1
