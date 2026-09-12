@@ -103,7 +103,15 @@ def _lmeval_command(args: argparse.Namespace, task: str, kind: str) -> list[str]
             f"base_url={args.base_url.rstrip('/')}/v1/{endpoint},"
             f"model=served,tokenizer_backend=huggingface,"
             f"tokenizer={args.tokenizer},num_concurrent={args.num_concurrent},"
-            f"max_retries=2,tokenized_requests=False"
+            # [D-724/D-725] lm-eval tokenizes CLIENT-SIDE and sends ids: its API backend
+            # encodes with add_special_tokens=False exactly like its HF backend, so arms
+            # C/D see the token sequence arms A/B see -- and the perf lane's frozen suites
+            # (raw_completion = encode(add_special_tokens=False)). With
+            # tokenized_requests=False the server tokenized the TEXT and prepended BOS on
+            # raw prompts; on coqa that alone flipped doc 80 (' Island' -> EOS) and made the
+            # 2x2 compare lanes on different tokens. lm-eval's own default is True; the
+            # False here was an unrecorded override.
+            f"max_retries=2,tokenized_requests=True"
         )
     else:
         model = "hf"

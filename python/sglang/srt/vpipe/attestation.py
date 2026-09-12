@@ -290,6 +290,17 @@ def scheduler_runtime_attestation(scheduler: Any) -> dict[str, Any]:
         if prefill_counts is not None:
             for body, count in prefill_counts.items():
                 regime_counters["prefill"][body] += count
+    # [D-726] The prefill per-body counters are DEAD under captured prefill: the
+    # model-side stamp runs only on eager passes and the runner overlay above
+    # returned nothing, so every campaign cell reported {dense: 0, fd: 0} while
+    # full_graph_routes.by_phase.prefill showed 77 %..100 % of prompt tokens
+    # routed. A counter that reads zero when the mechanism ran is worse than no
+    # counter (it was read as "prefill never engaged"), so the block is not
+    # reported until it counts under capture. The route rows remain the prefill
+    # evidence; verify_skipping_executed never read this block (it reads
+    # counters.decode + batch_composition.prefill_passes).
+    if regime_counters is not None:
+        regime_counters.pop("prefill", None)
     # [R2] Realized engagement evidence of the prefill escape gate (EMA,
     # folded samples, forced synchronisations) — runtime evidence inside the
     # identity-stripped counters block, so gates can compare it across trees.
