@@ -53,6 +53,10 @@ SERVED_REGIME_SWITCH: Final[dict[str, Any]] = {
         "exit_rows": 144,
         "low_body": "prod_allrun",
         "high_body": "skip",
+        # [D-738] The live criterion. Declared here; asserted at boot against
+        # roofline.derived_kv_band (V* = tau*BW/(s*L_r*b) = 158k on the A100-80GB PCIe ->
+        # exit 160k, enter 1.25 V* = 200k). Set from the lane-2 cut1 crossover ladder
+        # (131k parity / 262k win) before the rule was written; the rule reproduces it.
         "enter_kv_tokens": 200000,
         "exit_kv_tokens": 160000,
     },

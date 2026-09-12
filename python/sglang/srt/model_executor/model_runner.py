@@ -2653,6 +2653,20 @@ class ModelRunner(ModelRunnerKVCacheMixin):
             # "prefill", so its decode rows would be routed under prefill
             # semantics (or silently run dense when prefill is inactive).
             # Either way the route contract breaks — refuse to boot.
+            # [D-738] The decode band the arm DECLARES must be the band the roofline rule
+            # gives for THIS device; otherwise refuse to boot (a re-tuned band would
+            # otherwise serve silently on a second card).
+            from sglang.srt.vpipe.common import regime_switch_config as _regime_cfg_fn
+            from sglang.srt.vpipe.kernel import canonical_device_key as _canon
+            from sglang.srt.vpipe.roofline import assert_kv_band_follows_rule
+
+            _rs = _regime_cfg_fn()
+            if _rs is not None and _rs.decode.enabled and _rs.decode.kv_criterion:
+                assert_kv_band_follows_rule(
+                    served_exit_kv_tokens=_rs.decode.exit_kv_tokens,
+                    served_enter_kv_tokens=_rs.decode.enter_kv_tokens,
+                    device_key=_canon(torch.cuda.get_device_name(self.device)),
+                )
             if self.server_args.enable_mixed_chunk:
                 raise ValueError(
                     "FlexiDepth is active (a skipper with weights is deployed) but "
