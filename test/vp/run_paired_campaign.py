@@ -83,7 +83,7 @@ def preflight(spec: dict[str, Any]) -> list[str]:
             problems.append(f"{key} does not exist: {spec[key]}")
     if not (tree / spec["host_config"]).is_file():
         problems.append(f"host config missing: {tree / spec['host_config']}")
-    for role, arm in spec["arms"].items():
+    for role, arm in campaign_arms(spec):
         expect = Path(spec["expect_dir"]) / f"expect_{arm}.json"
         if not expect.is_file():
             problems.append(f"{role} arm {arm}: no expected-runtime file {expect}")
@@ -386,8 +386,24 @@ def cell_artifact(cell_root: Path, suite: str) -> Path | None:
 CROSS_ARM_DECLARED = frozenset({"vp_runtime", "server.max_total_num_tokens"})
 
 
+def campaign_arms(spec: dict[str, Any]) -> list[tuple[str, str]]:
+    """(role, arm) for every arm the campaign boots: the baseline anchor and each treatment."""
+    return [("baseline", spec["arms"]["baseline"])] + [
+        ("treatment", arm) for arm in treatments_of(spec)]
+
+
+def treatments_of(spec: dict[str, Any]) -> list[str]:
+    """`arms.treatment` (one, the headline) or `arms.treatments` (a list: a sweep whose points
+    share ONE baseline anchor inside the same session -- the plan's 12-arms-plus-anchor design,
+    D-690/N1). Exactly one of the two keys is accepted."""
+    arms = spec["arms"]
+    if ("treatment" in arms) == ("treatments" in arms):
+        raise SystemExit("spec.arms must carry exactly one of 'treatment' or 'treatments'")
+    return [arms["treatment"]] if "treatment" in arms else list(arms["treatments"])
+
+
 def cross_arm_config_gate(spec: dict[str, Any], dataset: str, rep: int,
-                          out_dir: Path) -> bool:
+                          out_dir: Path, treatment: str) -> bool:
     """Are the two arms the same engine apart from the treatment? Returns True on PASS.
 
     Every other config gate checks ONE arm against its own intent. None of them can see
@@ -400,7 +416,7 @@ def cross_arm_config_gate(spec: dict[str, Any], dataset: str, rep: int,
     says "this field differs and cannot flatter the treatment". It is built once from
     `--report` on the smoke, then frozen.
     """
-    baseline, treatment = spec["arms"]["baseline"], spec["arms"]["treatment"]
+    baseline = spec["arms"]["baseline"]
     manifests = {
         arm: out_dir / f"rep{rep}" / dataset / arm / "deployment_manifest.json"
         for arm in (baseline, treatment)
@@ -427,7 +443,7 @@ def cross_arm_config_gate(spec: dict[str, Any], dataset: str, rep: int,
 
 
 def cross_arm_work_gate(spec: dict[str, Any], dataset: str, rates: dict[str, float],
-                        rep: int, out_dir: Path) -> list[str]:
+                        rep: int, out_dir: Path, treatment: str) -> list[str]:
     """GR-1a — did the two arms do the SAME WORK? Returns the rate labels that FAILED.
 
     This gate cannot live in run_qps_evaluation's per-cell gates: it compares two arms, and
@@ -439,7 +455,7 @@ def cross_arm_work_gate(spec: dict[str, Any], dataset: str, rates: dict[str, flo
     An UNCHECKED pair is a FAILED pair, never a passing one: a missing artifact fails the
     rate rather than skipping it.
     """
-    baseline, treatment = spec["arms"]["baseline"], spec["arms"]["treatment"]
+    baseline = spec["arms"]["baseline"]
     failed: list[str] = []
     for label in rates:
         suite = suite_name(dataset, label)
@@ -512,7 +528,7 @@ def main() -> int:
     # binding the PYTHONPATH about to be exported to the tree just content-verified --
     # hashing a directory does not bind it to the process that serves (audit D-624 #6).
     if "upstream_tree" in spec:
-        for role, arm in spec["arms"].items():
+        for role, arm in campaign_arms(spec):
             serving = serving_pythonpath(spec, arm)
             done = campaign_preflight_gate(spec, arm)
             if done.returncode != 0:
@@ -528,13 +544,15 @@ def main() -> int:
         return 0
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    baseline, treatment = spec["arms"]["baseline"], spec["arms"]["treatment"]
+    baseline, treatments = spec["arms"]["baseline"], treatments_of(spec)
     index: list[dict[str, Any]] = []
     failures = 0
 
     for rep in range(args.start_rep, args.start_rep + args.reps):
-        # Alternate, so arm order cannot masquerade as the effect.
-        order = [baseline, treatment] if rep % 2 == 1 else [treatment, baseline]
+        # Alternate, so arm order cannot masquerade as the effect. A sweep (several treatments,
+        # one anchor) keeps the anchor at one end of the session; with a single rep the order
+        # effect is not alternated away and the caption must say so.
+        order = [baseline] + treatments if rep % 2 == 1 else treatments + [baseline]
         for dataset, rates in spec["datasets"].items():
             log(f"=== rep {rep} · {dataset} · order {' -> '.join(order)} ===")
             for arm in order:
@@ -559,16 +577,19 @@ def main() -> int:
             # Both arms of this (rep, dataset) are now on disk, which is the earliest moment
             # GR-1a can be asked. A failure here does NOT stop the campaign -- it marks these
             # rates unquotable, which is what the contract says a failed equal-work gate means.
-            config_ok = cross_arm_config_gate(spec, dataset, rep, args.out_dir)
-            if not config_ok:
-                failures += 1
-            work_failures = cross_arm_work_gate(spec, dataset, rates, rep, args.out_dir)
-            if work_failures:
-                failures += len(work_failures)
-            index.append({"rep": rep, "dataset": dataset, "gate": "GR-1a",
-                          "failed_rates": work_failures,
-                          "cross_arm_config_ok": config_ok,
-                          "quotable": bool(config_ok) and not work_failures})
+            for treatment in treatments:
+                config_ok = cross_arm_config_gate(spec, dataset, rep, args.out_dir, treatment)
+                if not config_ok:
+                    failures += 1
+                work_failures = cross_arm_work_gate(spec, dataset, rates, rep, args.out_dir,
+                                                    treatment)
+                if work_failures:
+                    failures += len(work_failures)
+                index.append({"rep": rep, "dataset": dataset, "gate": "GR-1a",
+                              "treatment": treatment,
+                              "failed_rates": work_failures,
+                              "cross_arm_config_ok": config_ok,
+                              "quotable": bool(config_ok) and not work_failures})
             (args.out_dir / "campaign_index.json").write_text(
                 json.dumps({"spec": str(args.spec), "cells": index}, indent=2) + "\n")
 
@@ -586,18 +607,21 @@ def main() -> int:
     # reports parity is a valid result, not a failure, and a campaign must not appear to have
     # failed because its answer was "no difference".
     log("--- paired analysis (within-rep deltas, t-based 95 % CI, straddle rule) ---")
-    analysis = subprocess.run(
-        [sys.executable, str(Path(spec["tree"]) / "test/vp/paired_analysis.py"),
-         str(args.out_dir),
-         "--baseline", spec["arms"]["baseline"], "--treatment", spec["arms"]["treatment"],
-         "--json", str(args.out_dir / "paired_report.json")],
-        capture_output=True, text=True,
-    )
-    (args.out_dir / "paired_table.txt").write_text(analysis.stdout + analysis.stderr)
-    for line in analysis.stdout.splitlines():
-        log(f"  {line}")
-    if analysis.returncode != 0:
-        log("  paired analysis produced no gated pair -- the cells are on disk, the table is not")
+    for treatment in treatments:
+        suffix = "" if len(treatments) == 1 else f".{treatment}"
+        analysis = subprocess.run(
+            [sys.executable, str(Path(spec["tree"]) / "test/vp/paired_analysis.py"),
+             str(args.out_dir),
+             "--baseline", baseline, "--treatment", treatment,
+             "--json", str(args.out_dir / f"paired_report{suffix}.json")],
+            capture_output=True, text=True,
+        )
+        (args.out_dir / f"paired_table{suffix}.txt").write_text(analysis.stdout + analysis.stderr)
+        for line in analysis.stdout.splitlines():
+            log(f"  {line}")
+        if analysis.returncode != 0:
+            log(f"  paired analysis for {treatment} produced no gated pair -- the cells are on "
+                "disk, the table is not")
 
     return 1 if failures else 0
 
