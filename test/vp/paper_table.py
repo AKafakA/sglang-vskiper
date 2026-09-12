@@ -209,7 +209,9 @@ def verify(rows: list[dict[str, Any]], tex: str, tol: float) -> list[str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("report", type=Path, help="paired_analysis.py --json output")
+    ap.add_argument("report", type=Path, nargs="+",
+                    help="paired_analysis.py --json output(s); several campaigns (one per "
+                         "dataset family) are merged row-wise, each row tagged with its source")
     ap.add_argument("--knee", action="append", default=[], required=True,
                     help="dataset=Q*, repeatable. Explicit so a suite that does not land "
                          "on a declared rung is REFUSED rather than labelled by guess.")
@@ -229,7 +231,15 @@ def main() -> int:
             ap.error(f"--knee wants dataset=Q*, got {entry!r}")
         knees[name] = float(value)
 
-    report = json.loads(args.report.read_text())
+    # One campaign per dataset family is the normal case (gsm8k+bbh_cot ran as one 6-rep
+    # campaign, coqa as another after its banks landed); rows are merged, never re-derived.
+    report = {"rows": [], "sources": []}
+    for path in args.report:
+        part = json.loads(path.read_text())
+        for row in part["rows"]:
+            row["source"] = path.name
+        report["rows"].extend(part["rows"])
+        report["sources"].append(path.name)
     try:
         rows = table_rows(report, knees)
     except ValueError as exc:
