@@ -1192,6 +1192,16 @@ def regime_switch_config(
     for leg in ("prefill", "decode"):
         if leg not in phases:
             design[leg] = {**design[leg], "enabled": False}
+    # [D-738] The K/V band is declared per device (design.SERVED_DECODE_KV_BAND_BY_DEVICE) and
+    # asserted against the roofline rule at boot (model_runner). On the A100 the entry equals
+    # the base declaration, so the served config is byte-identical to before this line.
+    if design["decode"].get("enter_kv_tokens", 0) > 0 and torch.cuda.is_available():
+        from sglang.srt.vpipe.design import SERVED_DECODE_KV_BAND_BY_DEVICE
+        from sglang.srt.vpipe.kernel import canonical_device_key
+
+        band = SERVED_DECODE_KV_BAND_BY_DEVICE.get(canonical_device_key(torch.cuda.get_device_name(0)))
+        if band is not None:
+            design["decode"] = {**design["decode"], "exit_kv_tokens": band[0], "enter_kv_tokens": band[1]}
     raw = _json.dumps(design)
     # Memoized on the raw string: the gate (flexidepth_phase_enabled)
     # consults this ~32-48x per pass, and the config is boot-constant —

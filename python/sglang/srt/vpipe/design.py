@@ -65,6 +65,18 @@ SERVED_REGIME_SWITCH: Final[dict[str, Any]] = {
 # Routed-MLP posture. ``off`` is the design (D-589) -- the low-row body swap was a third
 # occupancy threshold outside the two admission legs, and its removal measured as parity
 # on gsm8k. This is the exact setting whose env override silently did nothing.
+# [D-738] The decode K/V band PER DEVICE. Each entry equals roofline.derived_kv_band(key)
+# (V* = tau*BW/(s*L_r*b); exit = V*, enter = 1.25 V*, 10k grid) and is asserted against the
+# rule at boot; the A100 entry is the served headline design, the H100 entries are the
+# rule's PREDICTIONS for the transfer row. regime_switch_config() selects the entry for the
+# device it boots on; an unknown device keeps the A100 declaration and the boot assertion
+# refuses it (device_roofline.json has no entry), so nothing serves silently on a new card.
+SERVED_DECODE_KV_BAND_BY_DEVICE: Final[dict[str, tuple[int, int]]] = {
+    "NVIDIA_A100": (160000, 200000),
+    "NVIDIA_H100_HBM3": (270000, 340000),
+    "NVIDIA_H100_NVL": (320000, 400000),
+}
+
 SERVED_LOW_ROW_POLICY: Final[str] = "off"
 
 # Every routed layer runs the count-adaptive binary-cohort body (D-574). Llama-3-8B

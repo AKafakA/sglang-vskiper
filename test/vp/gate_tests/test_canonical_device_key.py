@@ -140,3 +140,12 @@ def test_kv_band_rule_refuses_a_retuned_band():
         pass
     else:
         raise AssertionError("the A100 band must not serve on an H100")
+
+
+def test_every_declared_device_band_follows_the_rule():
+    from sglang.srt.vpipe.design import SERVED_DECODE_KV_BAND_BY_DEVICE, SERVED_REGIME_SWITCH
+    from sglang.srt.vpipe.roofline import derived_kv_band
+    for key, band in SERVED_DECODE_KV_BAND_BY_DEVICE.items():
+        assert derived_kv_band(key) == band, (key, band, derived_kv_band(key))
+    d = SERVED_REGIME_SWITCH["decode"]
+    assert SERVED_DECODE_KV_BAND_BY_DEVICE["NVIDIA_A100"] == (d["exit_kv_tokens"], d["enter_kv_tokens"])
