@@ -10,6 +10,17 @@ from pathlib import Path
 from typing import Any
 
 
+def _load_known_empties() -> dict[str, dict[str, Any]]:
+    """request_id -> entry from test/vp/gates/known_empties.json; fails closed without a witness."""
+    path = Path(__file__).resolve().parent / "gates" / "known_empties.json"
+    known: dict[str, dict[str, Any]] = {}
+    for entry in json.loads(path.read_text())["entries"]:
+        if not entry.get("witness") or not entry.get("evidence"):
+            raise SystemExit(f"FATAL: known_empties.json entry {entry.get('request_id')!r} has no witness/evidence")
+        known[str(entry["request_id"])] = entry
+    return known
+
+
 REQUIRED_METRIC_ACCOUNTING_VERSION = 5
 PER_REQUEST_FIELDS = (
     "request_ids",
@@ -387,6 +398,18 @@ def validate_record(
             or expected_output_policies[index] != "production_max_equal_work"
         )
     ]
+    # [D-728, owner 2026-09-12] The same known list the zero-empty gate uses (one source of
+    # truth, test/vp/gates/known_empties.json): an empty the CHECKPOINT ITSELF produces under
+    # its own code on the served tokens is inherited, not lost output. It is recorded by id in
+    # the audit and does not fail accounting; any other empty still does.
+    known_empties = _load_known_empties()
+    row_ids = arrays.get("request_ids") or []
+    known_empty_rows = [
+        index for index in empty_rows
+        if index < len(row_ids) and str(row_ids[index]) in known_empties
+    ]
+    known_empty_request_ids = [str(row_ids[index]) for index in known_empty_rows]
+    empty_rows = [index for index in empty_rows if index not in known_empty_rows]
     if empty_rows:
         errors.append(
             f"{len(empty_rows)} natural-lane requests returned EMPTY text "
@@ -542,6 +565,8 @@ def validate_record(
 
     return {
         "status": "passed" if not errors else "failed",
+        "known_empty_request_ids": known_empty_request_ids,
+        "known_empty_rows": known_empty_rows,
         "metric_accounting_version": version,
         "expected_requests": expected_requests,
         "submitted": submitted,

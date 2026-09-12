@@ -65,3 +65,11 @@ def test_an_entry_without_a_witness_fails_closed(tmp_path):
         assert "no witness" in str(e)
     else:
         raise AssertionError("an entry without a witness was accepted")
+
+
+def test_the_accounting_validator_consults_the_same_known_list():
+    """[D-728] Found by running the harvest: validate_qps_artifact has its OWN empty-text
+    check, which refused the cell the gate had just passed. Both must read one file."""
+    src = (ROOT / "test/vp/validate_qps_artifact.py").read_text()
+    assert 'gates" / "known_empties.json"' in src and "known_empty_request_ids" in src
+    assert "empty_rows = [index for index in empty_rows if index not in known_empty_rows]" in src
