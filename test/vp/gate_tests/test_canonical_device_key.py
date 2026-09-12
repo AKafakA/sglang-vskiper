@@ -87,3 +87,25 @@ def test_a_card_with_no_artifact_fails_closed_and_says_what_exists():
         kernel.load_tuned_configs("NVIDIA GeForce RTX 4090")
     assert "tuned-config artifact missing" in str(exc.value)
     assert "NVIDIA_A100" in str(exc.value)  # the refusal lists what IS available
+
+
+# --- H100 (plan step 4 prerequisite, 2026-09-12) ---------------------------------------------
+
+def test_h100_form_factors_do_not_merge_and_have_roofline_entries():
+    """SXM (80 GB HBM3, 3.35 TB/s) and NVL (94 GB, 3.9 TB/s) must derive DIFFERENT bands, so their
+    CUDA names must not collapse to one key; PCIe (2 TB/s class) is deliberately absent until read."""
+    import json
+    from sglang.srt.vpipe.kernel import canonical_device_key
+    from sglang.srt.vpipe.roofline import derived_decode_band, ridge_rows
+    keys = {name: canonical_device_key(name) for name in
+            ("NVIDIA H100 80GB HBM3", "NVIDIA H100 NVL", "NVIDIA H100 PCIe")}
+    assert len(set(keys.values())) == 3, keys
+    table = json.loads((ROOT / "python/sglang/srt/vpipe/device_roofline.json").read_text())
+    for name in ("NVIDIA H100 80GB HBM3", "NVIDIA H100 NVL"):
+        key = keys[name]
+        assert key in table, (name, key)
+        ridge = ridge_rows(key)
+        ladder = tuple(range(8, 257, 8)) + tuple(range(272, 513, 16))  # the A100 capture ladder shape
+        band = derived_decode_band(key, ladder)
+        assert 200 <= ridge <= 320 and band[0] < ridge < band[1] + 32, (name, ridge, band)
+    assert keys["NVIDIA H100 PCIe"] not in table, "PCIe must fail closed until its datasheet is read"
