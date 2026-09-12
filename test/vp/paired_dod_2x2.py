@@ -1,0 +1,123 @@
+"""Paired, per-document difference-of-differences for the 2x2 faithfulness gate.
+
+summarize_2x2.py reads lm-eval's aggregate `results_*.json` and reports the d-o-d with an
+interval that is the quadrature of the four single-run standard errors -- an UNPAIRED
+construction. Every arm scores the same documents, so the honest statistic is paired: for
+document i, x_i = (D_i - C_i) - (B_i - A_i); the gate reads mean(x) with a t interval from
+sd(x)/sqrt(n). This reads lm-eval's `samples_<task>_*.jsonl` (--log_samples) for the four
+arms, matches documents by (task, doc_id), and refuses if any arm is missing a document.
+
+usage: paired_dod_2x2.py --dataset gsm8k --arm A=<dir> --arm B=<dir> --arm C=<dir> --arm D=<dir> [--json out]
+"""
+from __future__ import annotations
+
+import argparse
+import glob
+import json
+import math
+import os
+import sys
+from collections import defaultdict
+
+#: (samples-file task prefix, filter, metric key) per dataset -- declared, as in summarize_2x2.
+SPEC = {
+    "gsm8k": ("samples_gsm8k_", "flexible-extract", "exact_match"),
+    "bbh_cot": ("samples_bbh_cot_fewshot_", "get-answer", "exact_match"),
+    "coqa": ("samples_coqa_", "none", "f1"),
+}
+T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 10: 2.228, 20: 2.086, 30: 2.042, 60: 2.000, 120: 1.980}
+
+
+def t_crit(df: int) -> float:
+    for k in sorted(T95):
+        if df <= k:
+            return T95[k]
+    return 1.960
+
+
+def load_arm(root: str, dataset: str) -> dict[tuple[str, int], float]:
+    prefix, flt, metric = SPEC[dataset]
+    files = sorted(glob.glob(os.path.join(root, "**", f"{prefix}*.jsonl"), recursive=True))
+    if not files:
+        sys.exit(f"FATAL: no {prefix}*.jsonl under {root}")
+    # one file per task; if a task was run twice keep the newest (timestamped name)
+    newest: dict[str, str] = {}
+    for f in files:
+        task = os.path.basename(f)[len("samples_"):].rsplit("_20", 1)[0]
+        newest[task] = f
+    out: dict[tuple[str, int], float] = {}
+    for task, f in newest.items():
+        with open(f) as fh:
+            for line in fh:
+                r = json.loads(line)
+                if r.get("filter", "none") != flt:
+                    continue
+                out[(task, int(r["doc_id"]))] = float(r[metric])
+    return out
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dataset", choices=sorted(SPEC), required=True)
+    ap.add_argument("--arm", action="append", default=[], help="A=<dir> ... (all four required)")
+    ap.add_argument("--json", default=None)
+    ap.add_argument("--latex", default=None, help="APPEND this dataset's table row and macros (same names as summarize_2x2, plus \\vpQ<Ds>DodCi)")
+    args = ap.parse_args()
+    arms = dict(a.split("=", 1) for a in args.arm)
+    if set(arms) != {"A", "B", "C", "D"}:
+        sys.exit("FATAL: need --arm A=.. B=.. C=.. D=..")
+    per = {k: load_arm(v, args.dataset) for k, v in arms.items()}
+    keys = set.intersection(*(set(v) for v in per.values()))
+    missing = {k: len(set(per["A"]) ^ set(v)) for k, v in per.items() if k != "A"}
+    if any(missing.values()):
+        sys.exit(f"FATAL: arms do not score the same documents (symmetric differences vs A: {missing})")
+    n = len(keys)
+    def stats(xs: list[float]) -> dict:
+        m = sum(xs) / n
+        sd = math.sqrt(sum((x - m) ** 2 for x in xs) / (n - 1))
+        se = sd / math.sqrt(n)
+        return {"mean_pp": 100 * m, "ci95_half_pp": 100 * t_crit(n - 1) * se, "sd_pp": 100 * sd}
+    ba = [per["B"][k] - per["A"][k] for k in keys]
+    dc = [per["D"][k] - per["C"][k] for k in keys]
+    dod = [d - b for d, b in zip(dc, ba)]
+    rep = {"dataset": args.dataset, "n_docs": n, "filter": SPEC[args.dataset][1], "metric": SPEC[args.dataset][2],
+           "means": {k: 100 * sum(v[q] for q in keys) / n for k, v in per.items()},
+           "B_minus_A": stats(ba), "D_minus_C": stats(dc), "dod": stats(dod)}
+    z = rep["dod"]
+    rep["verdict"] = "parity (interval contains zero)" if abs(z["mean_pp"]) <= z["ci95_half_pp"] else "differs"
+    print(f"{args.dataset}: n={n} docs | A {rep['means']['A']:.2f} B {rep['means']['B']:.2f} C {rep['means']['C']:.2f} D {rep['means']['D']:.2f} | "
+          f"(B-A) {rep['B_minus_A']['mean_pp']:+.2f} ± {rep['B_minus_A']['ci95_half_pp']:.2f} pp | "
+          f"(D-C) {rep['D_minus_C']['mean_pp']:+.2f} ± {rep['D_minus_C']['ci95_half_pp']:.2f} pp | "
+          f"paired d-o-d {z['mean_pp']:+.2f} ± {z['ci95_half_pp']:.2f} pp -> {rep['verdict']}")
+    if args.json:
+        json.dump(rep, open(args.json, "w"), indent=1)
+    if args.latex:
+        disp = {"gsm8k": "GSM8K", "coqa": "CoQA", "bbh_cot": "BBH"}[args.dataset]
+        macro = {"gsm8k": "Gsm", "coqa": "Coqa", "bbh_cot": "Bbh"}[args.dataset]
+        metric_label = {"gsm8k": "\\texttt{exact\\_match,flexible-extract}", "coqa": "\\texttt{f1,none}",
+                        "bbh_cot": "\\texttt{exact\\_match,get-answer}"}[args.dataset]
+        m = rep["means"]
+        gate = "parity" if rep["verdict"].startswith("parity") else ("served above ref." if z["mean_pp"] > 0 else "served below ref.")
+        row = (f"{disp} & {metric_label} & {m['A']/100:.4f} & {m['B']/100:.4f} & {m['C']/100:.4f} & {m['D']/100:.4f} & "
+               f"{rep['B_minus_A']['mean_pp']:+.2f} & {rep['D_minus_C']['mean_pp']:+.2f} & "
+               f"{z['mean_pp']:+.2f} $\\pm$ {z['ci95_half_pp']:.2f} & {gate} \\\\\n")
+        macros = "\n".join([
+            f"\\newcommand{{\\vpQ{macro}BminusA}}{{{rep['B_minus_A']['mean_pp']:+.2f}}}",
+            f"\\newcommand{{\\vpQ{macro}DminusC}}{{{rep['D_minus_C']['mean_pp']:+.2f}}}",
+            f"\\newcommand{{\\vpQ{macro}Dod}}{{{z['mean_pp']:+.2f}}}",
+            f"\\newcommand{{\\vpQ{macro}DodCi}}{{{z['ci95_half_pp']:.2f}}}",
+            f"\\newcommand{{\\vpQ{macro}Ndocs}}{{{n:,}}}",
+            f"\\newcommand{{\\vpQ{macro}ArmD}}{{{m['D']/100:.4f}}}",
+            f"\\newcommand{{\\vpQ{macro}ArmC}}{{{m['C']/100:.4f}}}",
+        ]) + "\n"
+        with open(args.latex, "a") as fh:
+            fh.write(row)
+        mpath = os.path.join(os.path.dirname(args.latex), "quality_macros.tex")
+        with open(mpath, "a") as fh:
+            fh.write(macros)
+        print(f"  appended row to {args.latex} and macros to {mpath}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
