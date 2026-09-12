@@ -62,6 +62,7 @@ from sglang.srt.model_executor.runner.base_cuda_graph_runner import (
     freeze_gc,
 )
 from sglang.srt.model_executor.runner.shape_key import ShapeKey
+from sglang.srt.vpipe.design import flexidepth_weights_path, skipper_deployed
 from sglang.srt.vpipe.common import (
     flexidepth_active_phases,
     flexidepth_execution_mode,
@@ -198,6 +199,13 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
         # capture BOTH body variants per bucket (dense/base-Llama and routed)
         # and select per pass at replay from the RAW shape — the model-side
         # stamp cannot act on replayed passes (it executes only at capture).
+        # [D-734] The last predicate used to be `os.environ.get("SGLANG_FD_WEIGHTS")`.
+        # D-609 (2026-09-09) deleted the scripts that exported it, so from then on this
+        # condition was FALSE in every served cell: no dual-variant capture, no per-pass
+        # dispatch, no prefill counters, no engagement escape -- the captured body was
+        # whatever the seam chose for each capture bucket, and CoQA's 0.18-engagement
+        # passes ran routed at every rate above the smallest bucket. The design's own
+        # predicate is the arm + host config, which is what every other seam reads.
         _regime_cfg = regime_switch_config()
         self._vp_prefill_variant_cfg = (
             _regime_cfg
@@ -205,7 +213,8 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
             and _regime_cfg.prefill.enabled
             and flexidepth_execution_mode() == FD_EXECUTION_FULL_GRAPH
             and "prefill" in flexidepth_active_phases()
-            and os.environ.get("SGLANG_FD_WEIGHTS", "")
+            and skipper_deployed()
+            and bool(flexidepth_weights_path())
             else None
         )
         # Replay-level per-body pass counts; surfaced into the attestation's
