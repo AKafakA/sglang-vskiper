@@ -2657,8 +2657,9 @@ class ModelRunner(ModelRunnerKVCacheMixin):
             # gives for THIS device; otherwise refuse to boot (a re-tuned band would
             # otherwise serve silently on a second card).
             from sglang.srt.vpipe.common import regime_switch_config as _regime_cfg_fn
+            from sglang.srt.vpipe.design import active_arm as _active_arm
             from sglang.srt.vpipe.kernel import canonical_device_key as _canon
-            from sglang.srt.vpipe.roofline import assert_kv_band_follows_rule
+            from sglang.srt.vpipe.roofline import arm_kv_rule_inputs, assert_kv_band_follows_rule
 
             _rs = _regime_cfg_fn()
             if _rs is not None and _rs.decode.enabled and _rs.decode.kv_criterion:
@@ -2666,6 +2667,7 @@ class ModelRunner(ModelRunnerKVCacheMixin):
                     served_exit_kv_tokens=_rs.decode.exit_kv_tokens,
                     served_enter_kv_tokens=_rs.decode.enter_kv_tokens,
                     device_key=_canon(torch.cuda.get_device_name(self.device)),
+                    **arm_kv_rule_inputs(_active_arm()),
                 )
             if self.server_args.enable_mixed_chunk:
                 raise ValueError(
