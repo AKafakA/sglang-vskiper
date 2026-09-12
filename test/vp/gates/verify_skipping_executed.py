@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from typing import Optional
 from pathlib import Path
 
 
@@ -73,22 +74,36 @@ def skip_and_total(path: Path) -> tuple[int, int, str]:
         # D-627 was a gate blind to a mechanism that was OFF. This was the same gate blind to a
         # mechanism that was ON -- and the second is worse, because it throws away real results
         # while looking like diligence.
-        decode = (regime.get("counters") or {}).get("decode") or {}
+        # [D-734/D-736] THE D-697 ASSUMPTION ABOVE WAS THE BUG'S HIDING PLACE. `counters.prefill`
+        # read {dense: 0, fd: 0} not because it "counts transitions" but because the runner's
+        # dispatch machinery was gated on an env var D-609 had deleted -- OFF in every cell.
+        # Taking `batch_composition.prefill_passes` as "all routed" then certified a mechanism
+        # that was not running. From now on the per-body counters ARE the prefill evidence,
+        # and they must account for every prefill pass the scheduler ran (checked as a delta
+        # in main()); an arm that routes prefill with fd == 0 is refused like D-627.
+        counters = regime.get("counters") or {}
+        decode = counters.get("decode") or {}
         d_skip = int(decode.get("skip", 0))
         d_total = d_skip + int(decode.get("prod_allrun", 0))
-        comp = vp.get("batch_composition") or {}
-        p_passes = int(comp.get("prefill_passes", 0))
-        p_tokens = int(comp.get("prefill_tokens", 0))
         active = set(((vp.get("served_design") or {}).get("active_phases")) or [])
-        p_routed = p_passes if "prefill" in active else 0
+        p_fd = 0
+        if "prefill" in active:
+            prefill = counters.get("prefill")
+            if not isinstance(prefill, dict) or "fd" not in prefill or "dense" not in prefill:
+                sys.exit(
+                    f"FATAL: {path}: this arm routes prefill but regime_switch.counters.prefill "
+                    "carries no per-body counts -- the prefill dispatch machinery is not running "
+                    "(D-734). Refusing rather than assuming every pass routed."
+                )
+            p_fd = int(prefill["fd"])
         return (
-            d_skip + p_routed,
-            d_total + p_routed,
+            d_skip + p_fd,
+            d_total + p_fd,
             # The label identifies the SOURCE, never the values: it is compared between the
             # before and after snapshots to catch a server restart, so embedding the counts
             # makes every run look like a reconfiguration.
-            "regime_switch.counters.decode (passes) + batch_composition.prefill_passes"
-            + ("" if p_routed else " [prefill not routed by this arm]"),
+            "regime_switch.counters.decode (passes) + regime_switch.counters.prefill.fd (passes)"
+            + ("" if "prefill" in active else " [prefill not routed by this arm]"),
         )
     c3 = vp.get("fd_c3") or {}
     if c3.get("enabled"):
@@ -100,6 +115,29 @@ def skip_and_total(path: Path) -> tuple[int, int, str]:
         f"FATAL: {path} has neither an enabled regime_switch nor fd_c3, so no counter "
         "block attests whether the skipper executed. Refusing rather than assuming."
     )
+
+
+def prefill_evidence(path: Path) -> Optional[dict]:
+    """[D-736] The prefill leg's own metrics, for the delta checks in main(): per-body pass
+    counts, the scheduler's prefill pass count they must add up to, and the engagement
+    escape's observation count. None when the arm does not route prefill."""
+    vp = _vp_runtime(path)
+    regime = vp.get("regime_switch") or {}
+    active = set(((vp.get("served_design") or {}).get("active_phases")) or [])
+    if not regime.get("enabled") or "prefill" not in active:
+        return None
+    counters = regime.get("counters") or {}
+    prefill = counters.get("prefill") or {}
+    engagement = counters.get("prefill_engagement") or {}
+    comp = vp.get("batch_composition") or {}
+    return {
+        "fd": int(prefill.get("fd", 0)),
+        "dense": int(prefill.get("dense", 0)),
+        "passes": int(comp.get("prefill_passes", 0)),
+        "engagement_min": (regime.get("prefill") or {}).get("engagement_min"),
+        "engagement_samples": int(engagement.get("samples", 0) or 0),
+        "engagement_ema": engagement.get("ema"),
+    }
 
 
 def main() -> int:
@@ -120,6 +158,30 @@ def main() -> int:
     skip = after_skip - before_skip
     total = after_total - before_total
     allrun = total - skip
+
+    # [D-736] Prefill metrics, checked as deltas over the run window.
+    pb, pa = prefill_evidence(a.before), prefill_evidence(a.after)
+    if pa is not None and pb is not None:
+        d_fd, d_dense = pa["fd"] - pb["fd"], pa["dense"] - pb["dense"]
+        d_passes = pa["passes"] - pb["passes"]
+        print(f"prefill passes (scheduler)   : {d_passes}")
+        print(f"  routed body (fd)           : {d_fd}")
+        print(f"  dense body                 : {d_dense}")
+        if d_fd + d_dense != d_passes:
+            print(f"\nREFUSING: the prefill body counters account for {d_fd + d_dense} passes but the "
+                  f"scheduler ran {d_passes}. Counters that do not add up are not evidence (D-734).")
+            return 1
+        if d_passes > 0 and d_fd == 0:
+            print("\nREFUSING: this arm routes prefill but the routed body ran ZERO prefill passes in "
+                  "the window (D-627 in the prefill phase).")
+            return 1
+        if pa["engagement_min"] is not None:
+            d_samples = pa["engagement_samples"] - pb["engagement_samples"]
+            print(f"  engagement escape          : ema={pa['engagement_ema']} samples(+{d_samples})")
+            if d_samples <= 0 and d_fd > 0:
+                print("\nREFUSING: engagement_min is configured but the escape observed nothing while "
+                      "routed passes ran -- the escape is not executing (D-734).")
+                return 1
 
     print(f"counter source               : {source}")
     print(f"routed work during the run   : {total}")
