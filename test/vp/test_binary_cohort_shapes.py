@@ -59,7 +59,12 @@ def _reference(hidden_states, run_mask, weights, valid, w, gate_mode):
 
 
 def _prime_scratch(device, hidden, inter, dtype, ceiling):
+    """Pre-allocate the body's scratch at a known ceiling (a bare process has no global server args;
+    the scratch key uses the tensor's own device, i.e. cuda:0, not the bare 'cuda' alias)."""
+    import types as _t
+    from sglang.srt import server_args as _sa
     from sglang.srt.vpipe import mlp as m
+    _sa.get_global_server_args = lambda: _t.SimpleNamespace(chunked_prefill_size=ceiling, max_prefill_tokens=ceiling)
     key = (device, hidden, inter, dtype)
     if key not in m._BINARY_COHORT_SCRATCH:
         z = lambda *s: torch.zeros(s, device=device, dtype=dtype)
@@ -74,7 +79,7 @@ def test_binary_cohort_body_at_model_shapes(model, rows, gate_mode):
     from sglang.srt.vpipe.mlp import _binary_cohort_mlp
 
     hidden, inter, bottleneck = SHAPES[model]
-    device, dtype = torch.device("cuda"), torch.float16
+    device, dtype = torch.device("cuda:0"), torch.float16
     gen = torch.Generator(device=device); gen.manual_seed(rows * 31 + len(model))
     layer, proj, w = _fake_modules(hidden, inter, bottleneck, device, dtype, gen)
     _prime_scratch(device, hidden, inter, dtype, 1024)
