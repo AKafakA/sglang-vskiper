@@ -633,67 +633,67 @@ def test_production_consults_zero_new_state(monkeypatch) -> None:
 
 
 
-def test_gate_mode_defaults_to_released_and_fails_closed() -> None:
-    """The routed-MLP gate arithmetic is a property of the CHECKPOINT.
+import contextlib
 
-    `released` is the published FlexiDepth gate (`w * MLP`, `(1 - w) * PROJECT`);
-    `hard_mask` is the straight-through gate, whose forward selects by the hard
-    mask with NO `w` scaling. Serving an `ste_hard` checkpoint under `released`
-    silently applies scaling it was never trained with — the defect that voided
-    the 2026-09-03 quality gates on the training side. Default must stay
-    `released` so existing deployments are unchanged, and an unknown value must
-    raise rather than fall back.
-    """
+
+@contextlib.contextmanager
+def _serving_arm(name: str, fields: dict):
+    """Serve a temporary arm for the duration of a test (the gate mode is an ARM field, v1.5)."""
+    from sglang.srt.vpipe import design
+
+    saved = design._ARM_CACHE.get("name")
+    design.ARMS[name] = fields
+    design._ARM_CACHE["name"] = name
+    try:
+        yield
+    finally:
+        design.ARMS.pop(name, None)
+        if saved is None:
+            design._ARM_CACHE.pop("name", None)
+        else:
+            design._ARM_CACHE["name"] = saved
+
+
+def test_gate_mode_is_an_arm_field_and_fails_closed() -> None:
+    """The routed-MLP gate arithmetic is a property of the CHECKPOINT, carried as an arm
+    field (`gate_mode`, v1.5). `released` is the published FlexiDepth gate; `hard_mask` is the
+    straight-through gate's forward (hard selection, no `w` scaling). Every arm that declares
+    nothing gets the served design's `released`; an unknown value raises."""
     import pytest
 
     from sglang.srt.vpipe.common import full_graph_gate_mode
 
-    assert full_graph_gate_mode({}) == "released"
-    assert full_graph_gate_mode({"SGLANG_FD_GATE_MODE": "hard_mask"}) == "hard_mask"
-    assert full_graph_gate_mode({"SGLANG_FD_GATE_MODE": " Released "}) == "released"
-    with pytest.raises(ValueError):
-        full_graph_gate_mode({"SGLANG_FD_GATE_MODE": "ste_hard"})
-    with pytest.raises(ValueError):
-        full_graph_gate_mode({"SGLANG_FD_GATE_MODE": ""})
+    base = {"skipper": "flexidepth", "phases": "both", "regime_switch": True}
+    with _serving_arm("_t_default", dict(base)):
+        assert full_graph_gate_mode() == "released"
+    with _serving_arm("_t_hard", {**base, "gate_mode": "hard_mask"}):
+        assert full_graph_gate_mode() == "hard_mask"
+    with _serving_arm("_t_bad", {**base, "gate_mode": "ste_hard"}):
+        with pytest.raises(ValueError):
+            full_graph_gate_mode()
 
 
-def test_gate_mode_is_attested_not_inferred() -> None:
-    """`/server_info` must name the gate arithmetic that actually ran, so a
-    reader can tell whether a checkpoint was served under the gate it was
-    trained with instead of inferring it from the environment."""
-    import os
-
+def test_gate_mode_is_attested_from_the_arm() -> None:
+    """`/server_info` must name the gate arithmetic that actually ran, read from the ARM."""
     from sglang.srt.vpipe.attestation import low_row_policy_attestation
 
-    previous = os.environ.get("SGLANG_FD_GATE_MODE")
-    try:
-        os.environ.pop("SGLANG_FD_GATE_MODE", None)
+    base = {"skipper": "flexidepth", "phases": "both", "regime_switch": True}
+    with _serving_arm("_t_default", dict(base)):
         block = low_row_policy_attestation("native_dense", 1 << 30)
         assert block["gate_mode"] == "released"
-        assert block["gate_branch_scaling"] == (
-            "run_times_w_project_times_one_minus_w"
-        )
-
-        os.environ["SGLANG_FD_GATE_MODE"] = "hard_mask"
+        assert block["gate_branch_scaling"] == "run_times_w_project_times_one_minus_w"
+    with _serving_arm("_t_hard", {**base, "gate_mode": "hard_mask"}):
         block = low_row_policy_attestation("native_dense", 1 << 30)
         assert block["gate_mode"] == "hard_mask"
         assert block["gate_branch_scaling"] == "hard_selection_no_w_scaling"
-    finally:
-        if previous is None:
-            os.environ.pop("SGLANG_FD_GATE_MODE", None)
-        else:
-            os.environ["SGLANG_FD_GATE_MODE"] = previous
 
 
-def test_full_dual_mlp_applies_the_declared_gate_arithmetic() -> None:
-    """The two bodies that execute in the shipped posture must implement both
-    gates exactly: `released` scales each branch by the router weight,
-    `hard_mask` scales neither and relies on the hard selection alone."""
-    import os
-
+def test_native_dense_mlp_applies_the_declared_gate_arithmetic() -> None:
+    """The dense body must implement both gates exactly: `released` scales each branch by the
+    router weight, `hard_mask` scales neither and relies on the hard selection alone."""
     import torch
 
-    from sglang.srt.vpipe.mlp import _full_dual_mlp
+    from sglang.srt.vpipe.mlp import _native_dense_mlp
 
     rows, hidden = 6, 8
     torch.manual_seed(0)
@@ -714,37 +714,14 @@ def test_full_dual_mlp_applies_the_declared_gate_arithmetic() -> None:
     layer = _Layer()
     run_dense = hidden_states * 2.0
     project_dense = hidden_states * 3.0
-
-    previous = os.environ.get("SGLANG_FD_GATE_MODE")
-    try:
-        os.environ["SGLANG_FD_GATE_MODE"] = "released"
-        got = _full_dual_mlp(
-            layer, projector, hidden_states, route_weights, run_mask
-        )
-        expected = torch.where(
-            run_mask,
-            run_dense * route_weights,
-            project_dense * (1.0 - route_weights),
-        )
+    base = {"skipper": "flexidepth", "phases": "both", "regime_switch": True}
+    with _serving_arm("_t_released", {**base, "gate_mode": "released"}):
+        got = _native_dense_mlp(layer, projector, hidden_states, route_weights, run_mask)
+        expected = torch.where(run_mask, run_dense * route_weights, project_dense * (1.0 - route_weights))
         assert torch.equal(got, expected)
-
-        os.environ["SGLANG_FD_GATE_MODE"] = "hard_mask"
-        got = _full_dual_mlp(
-            layer, projector, hidden_states, route_weights, run_mask
-        )
+    with _serving_arm("_t_hard", {**base, "gate_mode": "hard_mask"}):
+        got = _native_dense_mlp(layer, projector, hidden_states, route_weights, run_mask)
         expected = torch.where(run_mask, run_dense, project_dense)
         assert torch.equal(got, expected)
         # The two gates must genuinely differ, or this test proves nothing.
-        assert not torch.equal(
-            expected,
-            torch.where(
-                run_mask,
-                run_dense * route_weights,
-                project_dense * (1.0 - route_weights),
-            ),
-        )
-    finally:
-        if previous is None:
-            os.environ.pop("SGLANG_FD_GATE_MODE", None)
-        else:
-            os.environ["SGLANG_FD_GATE_MODE"] = previous
+        assert not torch.equal(expected, torch.where(run_mask, run_dense * route_weights, project_dense * (1.0 - route_weights)))

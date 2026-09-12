@@ -205,6 +205,31 @@ ARMS: Final[dict[str, dict[str, Any]]] = {
 # [owner 2026-09-12] Deprecated name of the served system; identical design object.
 ARMS["integrated_it4"] = ARMS["vskipper"]
 
+# [D-743] v1.4.5 mechanism ablation: the served design with compaction OFF (arm field; every
+# other field identical to `vskipper`). Never served in a headline cell.
+ARMS["vskipper_nocompact"] = {
+    "skipper": "flexidepth", "phases": "both", "regime_switch": True, "compact": False,
+}
+
+# [D-744/D-745] v1.5 feasibility row: FlexiDepth-Qwen3-4B, the alignment-only `ste_hard`
+# checkpoint (sealed penalty 1e-5; every other 4B/8B/14B checkpoint of the Aug 27-Sep 3 window
+# is broken and is never served). Arm fields, all of them design, none of them environment:
+#   gate_mode     hard_mask  -- the straight-through gate's forward: hard selection, NO w scaling
+#   compact       False      -- compact routed-K/V repair does not support Qwen3's per-head q/k
+#                              norms yet (graphs.py); dense repair is exact, just slower
+#   routed_layers 18..35     -- what the checkpoint trained (36 layers, routing_layers in its
+#                              config.json); the family's range, not Llama's 16..31
+# The always-route twin is the quality posture (arm D of the 2x2) and the correctness
+# configuration for cards without a K/V band entry (no regime switch, no band assertion).
+ARMS["vskipper_qwen3_4b"] = {
+    "skipper": "flexidepth", "phases": "both", "regime_switch": True,
+    "gate_mode": "hard_mask", "compact": False, "routed_layers": tuple(range(18, 36)),
+}
+ARMS["vskipper_qwen3_4b_alwaysroute"] = {
+    "skipper": "flexidepth", "phases": "both", "regime_switch": False,
+    "gate_mode": "hard_mask", "compact": False, "routed_layers": tuple(range(18, 36)),
+}
+
 # THE SKIP-RATE x DEPTH SWEEP (plan item 3; owner scope 2026-09-10: gsm8k only, ALL 12 points,
 # one rate, 3 reps, with the upstream anchor interleaved in the same session).
 #
@@ -301,16 +326,20 @@ def design_attestation() -> dict[str, Any]:
     ``observed_runtime`` and the campaign refuses to start if it does not match.
     """
 
+    # [v1.5] Three fields may be overridden PER ARM (design.py ARMS, never the environment):
+    # gate_mode (a property of the checkpoint), compact (a mechanism switch) and routed_layers
+    # (the family's trained range). The attestation reports the ARM's effective value, so the
+    # served-design gate compares what this arm declares against what this process serves.
     return {
         "source": "vpipe/design.py (constants, D-609)",
         "regime_switch": SERVED_REGIME_SWITCH,
         "low_row_policy": SERVED_LOW_ROW_POLICY,
-        "routed_layers": list(SERVED_ROUTED_LAYERS),
+        "routed_layers": list(arm_routed_layers()),
         "layer_policy": SERVED_LAYER_POLICY,
         "execution_mode": SERVED_EXECUTION_MODE,
-        "compact_enabled": SERVED_COMPACT_ENABLED,
+        "compact_enabled": arm_compact_enabled(),
         "compact_phases": sorted(SERVED_COMPACT_PHASES),
-        "gate_mode": SERVED_GATE_MODE,
+        "gate_mode": arm_gate_mode(),
         "fused_router_norm": SERVED_FUSED_ROUTER_NORM,
     }
 
@@ -409,6 +438,28 @@ def arm_phases() -> frozenset[str]:
     if phases == "both":
         return frozenset(("decode", "prefill"))
     return frozenset((str(phases),))
+
+
+def arm_gate_mode() -> str:
+    """The routed-MLP gate arithmetic the ACTIVE ARM's checkpoint was trained with.
+
+    A property of the checkpoint, carried as an arm field (``gate_mode``); the served
+    design's ``SERVED_GATE_MODE`` (released) applies to every arm that does not declare one.
+    """
+
+    return str(active_arm().get("gate_mode", SERVED_GATE_MODE))
+
+
+def arm_compact_enabled() -> bool:
+    """Route-aware compaction for the active arm (arm field ``compact``; default = the design)."""
+
+    return bool(active_arm().get("compact", SERVED_COMPACT_ENABLED))
+
+
+def arm_routed_layers() -> tuple[int, ...]:
+    """The routed-layer range the active arm's checkpoint trained (default = the design's)."""
+
+    return tuple(int(i) for i in active_arm().get("routed_layers", SERVED_ROUTED_LAYERS))
 
 
 def mechanism(value: bool, *, decode_only: bool = False) -> bool:

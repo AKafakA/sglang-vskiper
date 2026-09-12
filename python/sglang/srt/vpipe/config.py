@@ -18,7 +18,7 @@ from sglang.srt.vpipe.design import (  # [D-609] the design is code
     SERVED_MASKED_DECODE_ATTENTION, SERVED_PREFILL_GROUPED_MLP,
     SERVED_ROUTE_ACCOUNTING, SERVED_ROUTED_LAYERS, SERVED_SCHEDULER_CONVERGENCE,
     SERVED_WEIGHTED_SCATTER, SERVED_DEFER_PROJECT_KV,
-    mechanism, skipper_deployed,
+    arm_compact_enabled, arm_routed_layers, mechanism, skipper_deployed,
 )
 
 from dataclasses import asdict, dataclass, field
@@ -125,9 +125,12 @@ def full_graph_layer_policies(
     # [D-609] The design is a constant: every routed layer runs binary_cohort.
     # This used to come from a 16-entry env string; an arm that failed to export it
     # silently served ZERO routed layers -- the mechanism off, looking configured.
+    # [v1.5] The routed range is the checkpoint family's (arm field ``routed_layers``): Llama-3-8B
+    # 16..31, Qwen3-4B 18..35. A policy map that covered Llama's range on a Qwen3 model would
+    # leave layers 32-35 without a cohort policy and give 16-17 one with no router.
     return {
         layer: (SERVED_LAYER_POLICY, None, None)
-        for layer in (SERVED_ROUTED_LAYERS if skipper_deployed() else ())
+        for layer in (arm_routed_layers() if skipper_deployed() else ())
     }
 def full_graph_prefill_grouped_mlp_enabled(
     environ: Optional[Mapping[str, str]] = None,
@@ -159,8 +162,9 @@ def full_graph_compact_config(
     granularity, not a policy). Compaction itself stays a single on/off.
     """
 
-    # [D-609] design constant
-    return mechanism(SERVED_COMPACT_ENABLED)
+    # [D-609] design constant; [v1.5] an arm may switch it off (``compact`` field: the
+    # no-compaction ablation arm, and Qwen3 whose compact K/V repair is not supported yet).
+    return mechanism(arm_compact_enabled())
 def full_graph_scheduler_convergence_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:

@@ -88,3 +88,31 @@ def test_fails_closed_on_bad_indices():
     idx = torch.arange(64, dtype=torch.int32, device="cuda"); wts = torch.ones(64, dtype=torch.float16, device="cuda")
     with pytest.raises(ValueError):  # one index pointer in the kernel: gather + scatter in one launch is refused
         count_matmul_gridexit(a, w, count, out, gather_index=idx, scatter_index=idx, scatter_weights=wts, **CFG)
+
+
+@pytest.mark.parametrize("rows", [33, 200])
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+def test_scale_off_matches_unweighted_scatter(rows, dtype):
+    """hard_mask gate (v1.5): with the scale off both epilogues write the packed GEMM result
+    verbatim -- bit-identical to each other, to a scaled scatter with a weight vector of ones,
+    and to the packed rows themselves."""
+    K, N = 512, 4096
+    gen = torch.Generator(device="cuda"); gen.manual_seed(rows * 13)
+    a = (torch.randn(rows, K, generator=gen, device="cuda") * 0.5).to(dtype)
+    w = (torch.randn(N, K, generator=gen, device="cuda") * 0.02).to(dtype)
+    weights = torch.rand(rows, generator=gen, device="cuda").to(dtype)
+    run_map, _, counts = _maps(rows, gen)
+    count = counts[0:1]
+    final = torch.zeros(rows, N, dtype=dtype, device="cuda")
+    count_matmul_gridexit(a, w, count, final, **CFG)
+    ref = torch.zeros(rows, N, dtype=dtype, device="cuda")
+    weighted_scatter(final, run_map, weights, count, ref, invert_weight=False, scale_weight=False)
+    out = torch.zeros(rows, N, dtype=dtype, device="cuda")
+    count_matmul_gridexit(a, w, count, out, scatter_index=run_map, scatter_weights=weights, scatter_invert=False, scatter_scale=False, **CFG)
+    assert torch.equal(out, ref)
+    ones = torch.ones_like(weights)
+    ref_ones = torch.zeros(rows, N, dtype=dtype, device="cuda")
+    weighted_scatter(final, run_map, ones, count, ref_ones, invert_weight=False, scale_weight=True)
+    assert torch.equal(ref_ones, ref)
+    n = int(count.item())
+    assert torch.equal(ref[run_map[:n].long()], final[:n])
