@@ -45,11 +45,14 @@ _PREAMBLE = textwrap.dedent(
 
 _GUARD = _PREAMBLE + textwrap.dedent(
     """
-    import triton, triton.language as tl
-
-    @triton.jit
-    def _peek(ptr, off, out_ptr):
-        tl.store(out_ptr, tl.load(ptr + off).to(tl.float32))
+    import importlib.util, os, tempfile
+    # Triton refuses to JIT a kernel defined in `-c` code (it needs a source file), so the
+    # one-element probe kernel is written to a temporary module and imported.
+    _src = "import triton\\nimport triton.language as tl\\n@triton.jit\\ndef _peek(ptr, off, out_ptr):\\n    tl.store(out_ptr, tl.load(ptr + off).to(tl.float32))\\n"
+    _dir = tempfile.mkdtemp(); _path = os.path.join(_dir, "peek_probe.py")
+    open(_path, "w").write(_src)
+    _spec = importlib.util.spec_from_file_location("peek_probe", _path); _mod = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_mod); _peek = _mod._peek
 
     out = torch.zeros(1, dtype=torch.float32, device=dev)
     flat, w = tail_weight(1216, 2560)
