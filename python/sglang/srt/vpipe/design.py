@@ -352,6 +352,16 @@ def design_attestation() -> dict[str, Any]:
         "execution_mode": SERVED_EXECUTION_MODE,
         "compact_enabled": arm_compact_enabled(),
         "compact_phases": sorted(SERVED_COMPACT_PHASES),
+        # [v1.5] The decode K/V band this arm DECLARES per device (the served value for the
+        # device it runs on is in `served_design.regime_switch`, asserted against the roofline
+        # rule at boot). `regime_switch` above carries the Llama-3-8B/A100 constants for every
+        # arm; this field is what a Qwen or H100 boot actually resolves from.
+        "decode_kv_band_by_device": {
+            key: list(band)
+            for key, band in sorted(
+                (active_arm().get("decode_kv_band") or SERVED_DECODE_KV_BAND_BY_DEVICE).items()
+            )
+        },
         "gate_mode": arm_gate_mode(),
         "fused_router_norm": SERVED_FUSED_ROUTER_NORM,
     }
