@@ -96,3 +96,42 @@ def test_that_flag_does_NOT_weaken_the_per_cell_gates():
     finished' from being read as 'every rate passed'."""
     assert 'target = path.with_name(f"INVALID.{path.name}")' in RUNNER
     assert "an unchecked pair is a failed pair" in DRIVER
+
+
+# --- sweep support: one anchor, many treatments (plan N1, D-690) -------------------------------
+
+def _load_driver():
+    import importlib.util, sys
+    path = ROOT / "test/vp/run_paired_campaign.py"
+    spec = importlib.util.spec_from_file_location("run_paired_campaign", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault("run_paired_campaign", module)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_treatments_of_accepts_exactly_one_of_treatment_or_treatments():
+    m = _load_driver()
+    assert m.treatments_of({"arms": {"baseline": "upstream", "treatment": "integrated_it4"}}) == ["integrated_it4"]
+    sweep = {"arms": {"baseline": "upstream", "treatments": ["a", "b", "c"]}}
+    assert m.treatments_of(sweep) == ["a", "b", "c"]
+    assert [r for r, _ in m.campaign_arms(sweep)] == ["baseline", "treatment", "treatment", "treatment"]
+    for bad in ({"arms": {"baseline": "upstream"}},
+                {"arms": {"baseline": "upstream", "treatment": "x", "treatments": ["y"]}}):
+        try:
+            m.treatments_of(bad)
+        except SystemExit:
+            pass
+        else:
+            raise AssertionError(f"accepted {bad}")
+
+
+def test_every_treatment_is_gated_against_the_anchor():
+    """Both per-rep gates take the treatment explicitly and main loops over the list, so a
+    sweep point is never silently compared against the wrong arm."""
+    code = _code_lines(DRIVER)
+    assert any("def cross_arm_config_gate(" in l for l in code)
+    assert any("out_dir: Path, treatment: str) -> bool" in l for l in code)
+    assert any("rep: int, out_dir: Path, treatment: str) -> list[str]" in l for l in code)
+    assert any("for treatment in treatments:" in l for l in code)
+    assert not any('spec["arms"]["treatment"]' in l for l in code), "a hard-coded single treatment survives"
