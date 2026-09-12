@@ -2619,10 +2619,15 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         # it is backend-agnostic. Keying on SGLANG_FD_WEIGHTS alone refused a
         # supported direct_eager launch on any non-triton backend.
         from sglang.srt.vpipe.common import flexidepth_execution_mode
+        from sglang.srt.vpipe.design import flexidepth_weights_path, skipper_deployed
         from sglang.srt.vpipe.env import FD_EXECUTION_FULL_GRAPH
 
+        # [D-734] Was keyed on SGLANG_FD_WEIGHTS, which D-609 stopped exporting -- both
+        # assertions below were inert in every served cell since 2026-09-09. The design
+        # (arm + host config) is the only source of "a skipper with weights is deployed".
         if (
-            os.environ.get("SGLANG_FD_WEIGHTS", "").strip()
+            skipper_deployed()
+            and flexidepth_weights_path().strip()
             and flexidepth_execution_mode() == FD_EXECUTION_FULL_GRAPH
         ):
             resolved_backends = {
@@ -2650,7 +2655,7 @@ class ModelRunner(ModelRunnerKVCacheMixin):
             # Either way the route contract breaks — refuse to boot.
             if self.server_args.enable_mixed_chunk:
                 raise ValueError(
-                    "FlexiDepth is active (SGLANG_FD_WEIGHTS set) but "
+                    "FlexiDepth is active (a skipper with weights is deployed) but "
                     "--enable-mixed-chunk is on; MIXED batches phase their "
                     "decode rows as prefill under FlexiDepth routing. "
                     "Disable mixed chunking — refusing to boot rather than "
