@@ -7,5 +7,7 @@
   "served_model_revision": "53346005fb0ef11d3b6a83b12c895cca40156b6c",
   "gate_workdir": "/rds/user/wd312/hpc-work/llm/vpipe-csd3/lane2-bisect/work",
   "serve_python": "/rds/user/wd312/hpc-work/llm/vpipe-csd3/envs/sglang-serve-w2-r1/bin/python",
-  "model_path": "/rds/user/wd312/hpc-work/llm/vpipe-csd3/models/Meta-Llama-3-8B-Instruct-53346005"
+  "model_path": "/rds/user/wd312/hpc-work/llm/vpipe-csd3/models/Meta-Llama-3-8B-Instruct-53346005",
+  "flexidepth_weights_qwen3_4b": "/rds/user/wd312/hpc-work/llm/vpipe-csd3/serving/flexidepth_router_weights_qwen3_4b_step20000.pt",
+  "_comment_qwen3_4b": "[v1.5] FlexiDepth-Qwen3-4B alignment-only ste_hard router/projector deltas (step 20000, sha256 ae291c5000c966db3e1940af...), selected by the vskipper_qwen3_4b arms' weights_key; the base model (Qwen/Qwen3-4B @ 1cfa9a72) is passed on the launch command line."
 }
