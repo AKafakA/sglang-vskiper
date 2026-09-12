@@ -175,13 +175,18 @@ def expand_inputs(tex: str, base: Path) -> str:
     return INPUT_RE.sub(_splice, tex)
 
 
-def verify(rows: list[dict[str, Any]], tex: str, tol: float) -> list[str]:
-    """Diff the paper's paired-form rows against the artifacts. Both directions."""
+def verify(rows: list[dict[str, Any]], tex: str, tol: float,
+           placeholder: set[str] | None = None) -> list[str]:
+    """Diff the paper's paired-form rows against the artifacts. Both directions.
+    Rows of a `placeholder` dataset are skipped (interim tables only; the caller names them)."""
     problems: list[str] = []
     seen: set[tuple[str, float]] = set()
+    placeholder = placeholder or set()
     expected = {(DISPLAY.get(r["dataset"], r["dataset"]), r["multiplier"]): r for r in rows}
     for match in ROW_RE.finditer(tex):
         key = (match.group("ds"), float(match.group("mult")))
+        if key[0] in placeholder:
+            continue
         if key not in expected:
             problems.append(f"main.tex has row {key} that the artifacts do not")
             continue
@@ -218,6 +223,14 @@ def main() -> int:
     ap.add_argument("--emit", action="store_true")
     ap.add_argument("--macros", type=Path, help="with --emit: write the macro file here")
     ap.add_argument("--verify", type=Path, help="main.tex to check against the artifacts")
+    ap.add_argument("--exclude-datasets", default="",
+                    help="comma list of datasets whose report rows are NOT emitted and NOT "
+                         "expected in main.tex (their macros are still emitted). Used for an "
+                         "interim table whose rows for that dataset come from elsewhere.")
+    ap.add_argument("--placeholder-datasets", default="",
+                    help="comma list of datasets whose main.tex rows are placeholders: verify "
+                         "skips them instead of refusing. Interim use only; the flag lives in "
+                         "the regeneration script so its presence is visible.")
     ap.add_argument("--tol", type=float, default=0.05,
                     help="printed to one decimal, so 0.05 is exact-match at that precision")
     args = ap.parse_args()
@@ -249,15 +262,19 @@ def main() -> int:
         print("REFUSED: the report has no rows", file=sys.stderr)
         return 2
 
+    excluded = {d for d in args.exclude_datasets.split(",") if d}
+    placeholder = {DISPLAY.get(d, d) for d in args.placeholder_datasets.split(",") if d}
+    table_only = [r for r in rows if r["dataset"] not in excluded]
     if args.emit:
-        print(latex_rows(rows))
+        print(latex_rows(table_only))
         if args.macros:
             args.macros.write_text(macros(rows))
             print(f"\n% wrote {len(rows) * len(COLUMNS)} macros to {args.macros}",
                   file=sys.stderr)
     if args.verify:
         problems = verify(
-            rows, expand_inputs(args.verify.read_text(), args.verify.parent), args.tol
+            table_only, expand_inputs(args.verify.read_text(), args.verify.parent), args.tol,
+            placeholder,
         )
         if problems:
             print(f"\nMISMATCH — {len(problems)} problem(s) between {args.verify} "
@@ -265,8 +282,9 @@ def main() -> int:
             for problem in problems:
                 print(f"  - {problem}", file=sys.stderr)
             return 1
+        note = f"; placeholder rows skipped for {sorted(placeholder)}" if placeholder else ""
         print(f"\nOK: every headline cell in {args.verify} matches the gated artifacts "
-              f"({len(rows)} rows x {len(COLUMNS)} columns)", file=sys.stderr)
+              f"({len(table_only)} rows x {len(COLUMNS)} columns{note})", file=sys.stderr)
     return 0
 
 
