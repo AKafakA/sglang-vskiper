@@ -20,8 +20,8 @@ import sys
 import textwrap
 
 import pytest
+import torch
 
-torch = pytest.importorskip("torch")
 pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA device")
 
 _PREAMBLE = textwrap.dedent(
