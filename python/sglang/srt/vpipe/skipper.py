@@ -130,9 +130,16 @@ class FlexiDepthFullGraphAdapter(FullGraphSkipperAdapter):
         (LogicalAction.RUN, LogicalAction.PROJECT_ONLY)
     )
     threshold = 0.5
-    payload_semantics = (
-        "run=mlp(hidden)*weight;project_only=proj(hidden)*(1-weight)"
-    )
+
+    @property
+    def payload_semantics(self) -> str:
+        # [v1.5] Reported from the ARM's gate mode, so the attestation cannot describe the
+        # released arithmetic while a hard_mask checkpoint is served.
+        from sglang.srt.vpipe.common import full_graph_gate_mode
+
+        if full_graph_gate_mode() == "hard_mask":
+            return "run=mlp(hidden);project_only=proj(hidden)"
+        return "run=mlp(hidden)*weight;project_only=proj(hidden)*(1-weight)"
 
     def route(
         self,

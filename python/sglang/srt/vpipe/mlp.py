@@ -81,6 +81,19 @@ def _direct_eager_semantic_mlp(
             * (1.0 - route_weights.index_select(0, project_rows)),
         )
     return output
+def _gate_scaled(weights: torch.Tensor) -> torch.Tensor:
+    """Branch weights under the active arm's gate mode.
+
+    ``released`` (the published FlexiDepth gate) scales RUN by ``w`` and PROJECT by ``1-w`` --
+    callers pass the right one in. ``hard_mask`` (straight-through checkpoints, v1.5) scales
+    neither: the forward is the hard selection alone, so the multiplier is exactly 1.0.
+    """
+
+    if full_graph_gate_mode() == "released":
+        return weights
+    return torch.ones_like(weights)
+
+
 def _grouped_prefill_mlp(
     layer: Any,
     proj: Any,
@@ -254,6 +267,8 @@ def _binary_cohort_mlp(
             )
         valid_flat = valid_rows.reshape(rows)
     weights_flat = route_weights.reshape(rows)
+    # [v1.5] hard_mask checkpoints: the scatter epilogues skip the w / (1-w) multiply.
+    scale_w = full_graph_gate_mode() == "released"
     # Lane-2 Block 1B-1: mask algebra (run&valid, ~run&valid) and the
     # evidence accumulation (calls, run rows, project rows) happen INSIDE
     # the route-map kernel — 6 fewer launches per routed layer, bit-identical
@@ -340,7 +355,8 @@ def _binary_cohort_mlp(
             )
             final = torch.nn.functional.linear(act_fn(gate_up), mlp.down_proj.weight)
             weighted_scatter(
-                final, run_map, weights_flat, run_count, out, invert_weight=False
+                final, run_map, weights_flat, run_count, out,
+                invert_weight=False, scale_weight=scale_w,
             )
         if n_project:
             pack_rows(hidden_states, project_map, project_count, scratch["compact"])
@@ -349,7 +365,8 @@ def _binary_cohort_mlp(
             )
             final = torch.nn.functional.linear(act_fn(gate_down), proj.up_proj.weight)
             weighted_scatter(
-                final, project_map, weights_flat, project_count, out, invert_weight=True
+                final, project_map, weights_flat, project_count, out,
+                invert_weight=True, scale_weight=scale_w,
             )
         key = str(hidden_states.device)
         passes, rows_seen = _BINARY_COHORT_CUBLAS_PASSES.get(key, (0, 0))
@@ -376,6 +393,7 @@ def _binary_cohort_mlp(
         scatter_index=run_map,
         scatter_weights=weights_flat,
         scatter_invert=False,
+        scatter_scale=scale_w,
         **config_down,
     )
 
@@ -398,6 +416,7 @@ def _binary_cohort_mlp(
         scatter_index=project_map,
         scatter_weights=weights_flat,
         scatter_invert=True,
+        scatter_scale=scale_w,
         **config_proj_up,
     )
     return out
@@ -425,7 +444,7 @@ def fd_conditional_mlp_full_graph(
     if force_dense_all_run and force_filtered_all_run:
         raise ValueError("dense and filtered all-RUN bodies are mutually exclusive")
     if force_dense_all_run:
-        return layer.mlp(hidden_states) * route_weights
+        return layer.mlp(hidden_states) * _gate_scaled(route_weights)
     if force_filtered_all_run:
         active_rows = run_mask
         if valid_rows is not None:
@@ -447,13 +466,13 @@ def fd_conditional_mlp_full_graph(
         # lie: /server_info reported `routed_mlp_kernels: model_native_dense_only`
         # with the fused-MoE kernel plainly in the trace.
         if lr_policy == "native_dense":
-            run_output = layer.mlp(hidden_states) * route_weights
+            run_output = layer.mlp(hidden_states) * _gate_scaled(route_weights)
         else:
             run_output = _one_expert_mlp(
                 hidden_states,
                 layer.mlp.gate_up_proj.weight.unsqueeze(0),
                 layer.mlp.down_proj.weight.unsqueeze(0),
-                route_weights,
+                _gate_scaled(route_weights),
                 active_rows,
             )
         return torch.where(active_rows, run_output, torch.zeros_like(run_output))
@@ -598,14 +617,14 @@ def fd_conditional_mlp_full_graph(
         hidden_states,
         dense_w1,
         dense_w2,
-        route_weights,
+        _gate_scaled(route_weights),
         run_mask,
     )
     project_output = _one_expert_mlp(
         hidden_states,
         project_w1,
         project_w2,
-        1.0 - route_weights,
+        _gate_scaled(1.0 - route_weights),
         ~run_mask,
     )
     # Filtered MoE output is unspecified for inactive rows. Select the active
@@ -638,12 +657,12 @@ def _dense_filtered_project_mlp(
 ) -> torch.Tensor:
     """Run dense for every row and filter only the sparse PROJECT correction."""
 
-    run_output = layer.mlp(hidden_states) * route_weights
+    run_output = layer.mlp(hidden_states) * _gate_scaled(route_weights)
     project_output = _one_expert_mlp(
         hidden_states,
         proj._fused_gate_down_weight().unsqueeze(0),
         proj.up_proj.weight.unsqueeze(0),
-        1.0 - route_weights,
+        _gate_scaled(1.0 - route_weights),
         ~run_mask,
     )
     return torch.where(run_mask, run_output, project_output)

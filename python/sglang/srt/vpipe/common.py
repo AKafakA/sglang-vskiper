@@ -38,6 +38,7 @@ from sglang.srt.vpipe.design import (  # [D-609] the design is code
     SERVED_REGIME_SWITCH,
     active_arm,
     active_arm_name,
+    arm_gate_mode,
     arm_phases,
     mechanism,
     skipper_deployed,
@@ -276,8 +277,9 @@ def full_graph_gate_mode(environ: Optional[Mapping[str, str]] = None) -> str:
     """
 
     # [D-609] design constant -- a property of the CHECKPOINT, never a tuning knob.
-    # A Qwen3/ste_hard checkpoint would carry its own value as an ARM field.
-    mode = SERVED_GATE_MODE
+    # [v1.5] Carried as an ARM field (``gate_mode``): a Qwen3 ste_hard checkpoint declares
+    # ``hard_mask``; every arm that declares nothing gets the served design's ``released``.
+    mode = arm_gate_mode()
     if mode not in _VALID_GATE_MODES:
         choices = ", ".join(sorted(_VALID_GATE_MODES))
         raise ValueError(

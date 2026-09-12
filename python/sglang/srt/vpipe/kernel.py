@@ -86,6 +86,7 @@ def _row_kernels():
         stride_compact: tl.constexpr,
         stride_out: tl.constexpr,
         INVERT_WEIGHT: tl.constexpr,
+        SCALE_WEIGHT: tl.constexpr,
         BLOCK_H: tl.constexpr,
         NUM_PROGS: tl.constexpr,
     ):
@@ -94,9 +95,14 @@ def _row_kernels():
         row = pid
         while row < count:
             dst = tl.load(index_ptr + row)
-            weight = tl.load(weights_ptr + dst).to(tl.float32)
-            if INVERT_WEIGHT:
-                weight = 1.0 - weight
+            if SCALE_WEIGHT:
+                weight = tl.load(weights_ptr + dst).to(tl.float32)
+                if INVERT_WEIGHT:
+                    weight = 1.0 - weight
+            else:
+                # hard_mask gate (v1.5): hard selection, no w scaling -- the multiply by
+                # 1.0 keeps the rounding sequence identical to the scaled path.
+                weight = 1.0
             for h0 in range(0, H, BLOCK_H):
                 offs = h0 + tl.arange(0, BLOCK_H)
                 values = tl.load(
@@ -230,9 +236,10 @@ def weighted_scatter(
     output: torch.Tensor,
     *,
     invert_weight: bool,
+    scale_weight: bool = True,
     block_h: int = 256,
 ) -> None:
-    """out[index[i]] = compact[i] * (w or 1-w) for i < count.
+    """out[index[i]] = compact[i] * (w or 1-w) for i < count; ``scale_weight=False`` = hard mask.
 
     The route-weight epilogue (reference v2 / review P1-4): RUN uses
     the weight directly, PROJECT passes invert_weight=True for (1-w).
@@ -266,6 +273,7 @@ def weighted_scatter(
         compact.stride(0),
         output.stride(0),
         invert_weight,
+        scale_weight,
         block_h,
         num_programs,
     )
@@ -294,6 +302,7 @@ def _grid_kernel():
         GATHER_A: tl.constexpr,
         SCATTER_C: tl.constexpr,
         INVERT_W: tl.constexpr,
+        SCALE_W: tl.constexpr,
     ):
         # Capacity-sized 2-D grid with early exit (D-302/D-303). Lane-2
         # tax-removal track / F4 (2026-09-07): the optional GATHER_A reads
@@ -346,13 +355,19 @@ def _grid_kernel():
         store_mask = m_live & (offs_n[None, :] < N)
         if SCATTER_C:
             dst_rows = tl.load(idx_ptr + offs_m, mask=offs_m < count, other=0)
-            wgt = tl.load(weights_ptr + dst_rows, mask=offs_m < count, other=0.0).to(tl.float32)
-            if INVERT_W:
-                wgt = 1.0 - wgt
             narrowed = acc.to(c_ptr.dtype.element_ty).to(tl.float32)
+            if SCALE_W:
+                wgt = tl.load(weights_ptr + dst_rows, mask=offs_m < count, other=0.0).to(tl.float32)
+                if INVERT_W:
+                    wgt = 1.0 - wgt
+                scaled = narrowed * wgt[:, None]
+            else:
+                # hard_mask gate (v1.5): no w multiply; the narrow-and-widen keeps the
+                # stored value bit-identical to the unweighted scatter.
+                scaled = narrowed
             tl.store(
                 c_ptr + dst_rows[:, None] * stride_cm + offs_n[None, :],
-                (narrowed * wgt[:, None]).to(c_ptr.dtype.element_ty),
+                scaled.to(c_ptr.dtype.element_ty),
                 mask=store_mask,
             )
         else:
@@ -379,8 +394,12 @@ def count_matmul_gridexit(
     scatter_index: Optional[torch.Tensor] = None,
     scatter_weights: Optional[torch.Tensor] = None,
     scatter_invert: bool = False,
+    scatter_scale: bool = True,
 ) -> None:
     """Production launcher: capacity grid + per-tile early exit.
+
+    ``scatter_scale=False`` (hard_mask gate, v1.5) writes the unweighted result: no ``w``
+    multiply in the epilogue, hard selection by the route map alone.
 
     Promoted by D-302/D-303 over the persistent-while ``count_matmul`` (which
     lost 2.4-2.7x on A100); it is what the binary-cohort MLP path calls.
@@ -440,6 +459,7 @@ def count_matmul_gridexit(
         gather,
         scatter,
         bool(scatter_invert),
+        bool(scatter_scale),
         num_warps=num_warps,
         num_stages=num_stages,
     )

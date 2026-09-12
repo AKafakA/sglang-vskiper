@@ -236,6 +236,8 @@ def _mapped_bounded_compact_branch(
             raise TypeError(
                 "VP virtual cohorts require a Llama MLP or FlexiDepth projector"
             )
+        from sglang.srt.vpipe.common import full_graph_gate_mode
+
         mapped_swiglu(
             hidden_states,
             gate_up_weight,
@@ -244,6 +246,7 @@ def _mapped_bounded_compact_branch(
             count,
             branch_weights,
             output,
+            scale_weight=full_graph_gate_mode() == "released",
         )
         return torch.clamp(
             count.to(torch.int64).reshape(()) - capacity, min=0

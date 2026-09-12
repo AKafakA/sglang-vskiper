@@ -304,6 +304,7 @@ def _mapped_swiglu_down_kernel(
     N: tl.constexpr,
     K: tl.constexpr,
     INVERT_WEIGHT: tl.constexpr,
+    SCALE_WEIGHT: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
     BLOCK_K: tl.constexpr,
@@ -351,14 +352,16 @@ def _mapped_swiglu_down_kernel(
             )
             accumulator += tl.dot(activated, weight)
 
-        route_weight = tl.load(
-            branch_weights_ptr + destination_rows,
-            mask=active_rows,
-            other=0.0,
-        ).to(tl.float32)
-        if INVERT_WEIGHT:
-            route_weight = 1.0 - route_weight
-        accumulator *= route_weight[:, None]
+        if SCALE_WEIGHT:
+            route_weight = tl.load(
+                branch_weights_ptr + destination_rows,
+                mask=active_rows,
+                other=0.0,
+            ).to(tl.float32)
+            if INVERT_WEIGHT:
+                route_weight = 1.0 - route_weight
+            accumulator *= route_weight[:, None]
+        # else: hard_mask gate (v1.5) -- hard selection by the row map, no w scaling
         tl.store(
             output_ptr + destination_rows[:, None] * N + columns[None, :],
             accumulator,
@@ -916,8 +919,11 @@ def mapped_swiglu(
     output: torch.Tensor,
     *,
     invert_weight: bool = False,
+    scale_weight: bool = True,
 ) -> torch.Tensor:
     """Execute one exact routed SwiGLU branch through a device row map.
+
+    ``scale_weight=False`` = the hard_mask gate (v1.5): no route-weight multiply.
 
     ``row_map[:count]`` identifies source and destination rows. Inactive output
     rows are left untouched so this operation can overwrite a dominant branch
@@ -972,6 +978,7 @@ def mapped_swiglu(
         N=hidden_size,
         K=intermediate_size,
         INVERT_WEIGHT=bool(invert_weight),
+        SCALE_WEIGHT=bool(scale_weight),
     )
     return output
 def fd_parity_trace_advance(layer_id: int, forward_batch) -> None:

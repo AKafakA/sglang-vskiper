@@ -479,22 +479,13 @@ def validate_full_graph_model_configuration(
     compact_enabled = full_graph_compact_config(values)
     compact_phases = full_graph_compact_phases(values)
     low_row_policy = full_graph_low_row_policy(values)
-    gate_mode = full_graph_gate_mode(values)
-    if gate_mode != "released" and low_row_policy != "native_dense":
-        # The gate arithmetic is implemented in the two bodies that execute in
-        # the shipped posture (`_native_dense_mlp` for decode,
-        # `_grouped_prefill_mlp` for prefill). Only `native_dense` guarantees
-        # `_native_dense_mlp` at EVERY occupancy; under any other policy the
-        # count-adaptive, grouped and
-        # compaction bodies remain reachable and would silently apply the
-        # released `w` scaling to a checkpoint not trained with it. Refuse
-        # rather than measure the wrong arithmetic.
-        raise ValueError(
-            f"{FD_GATE_MODE_ENV}={gate_mode} requires "
-            f"{FD_LOW_ROW_POLICY_ENV}=native_dense so every routed-MLP pass "
-            f"uses the dense body that implements the gate mode; got "
-            f"{low_row_policy!r}"
-        )
+    gate_mode = full_graph_gate_mode(values)  # validates the value; fails closed on an unknown one
+    # [v1.5] `hard_mask` is honoured by EVERY routed-MLP body now, not only the dense ones:
+    # the count-GEMM scatter epilogues, the weighted scatter, the mapped SwiGLU down-kernel and
+    # the fused-MoE fallbacks all take the gate mode (SCALE_WEIGHT off = hard selection, no `w`
+    # multiply), and the attestation publishes `gate_branch_scaling`. The old refusal
+    # ("hard_mask requires low_row_policy=native_dense") is therefore gone; parity tests cover
+    # the epilogues under both modes (test_count_gemm_fused_io.py, test_hard_mask_bodies.py).
     route_accounting = full_graph_route_accounting_enabled(values)
     layer_counters = full_graph_layer_counters_enabled(values)
     device_route_tape = full_graph_device_route_tape_enabled(values)
