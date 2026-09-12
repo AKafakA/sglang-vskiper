@@ -299,6 +299,7 @@ def _grid_kernel():
         BK: tl.constexpr,
         GROUP_M: tl.constexpr,
         EVEN_K: tl.constexpr,
+        EVEN_N: tl.constexpr,
         GATHER_A: tl.constexpr,
         SCATTER_C: tl.constexpr,
         INVERT_W: tl.constexpr,
@@ -338,7 +339,16 @@ def _grid_kernel():
         for k0 in range(0, K, BK):
             if EVEN_K:
                 a_tile = tl.load(a_ptrs, mask=m_live, other=0.0)
-                w_tile = tl.load(w_ptrs)
+                if EVEN_N:
+                    w_tile = tl.load(w_ptrs)
+                else:
+                    # v1.5 (D-747): N is not a multiple of BN -- Qwen3-4B's fused
+                    # projector width 1216 at BN=128 -- so the last n-tile must
+                    # not read past the weight's end (every Llama-3-8B N is a
+                    # multiple of every tuned BN, which is why the unmasked load
+                    # never faulted there). The masked columns are discarded by
+                    # the store mask; EVEN_N shapes compile to the same kernel.
+                    w_tile = tl.load(w_ptrs, mask=offs_n[None, :] < N, other=0.0)
             else:
                 k_live = k0 + tl.arange(0, BK) < K
                 a_tile = tl.load(
@@ -456,6 +466,7 @@ def count_matmul_gridexit(
         block_k,
         group_m,
         k_dim % block_k == 0,
+        n_dim % block_n == 0,
         gather,
         scatter,
         bool(scatter_invert),

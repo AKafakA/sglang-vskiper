@@ -2,9 +2,17 @@
 
 Llama-3-8B (hidden 4096, intermediate 14336, projector bottleneck 896) is what every production
 launch has exercised; Qwen3-4B (2560 / 9728 / 608) is the v1.5 feasibility model and the first shape
-where K is not a multiple of every tuned BK (608 % 64 = 32) -- the first Qwen boot died with an
-illegal memory access inside `count_matmul_gridexit` (D-747). GPU only; run with
-CUDA_LAUNCH_BLOCKING=1 to attribute a fault to its launch.
+where a GEMM width is not a multiple of every tuned tile: its fused projector width N = 1216 is not
+a multiple of BN = 128 (Llama's 28672 / 4096 / 1792 are multiples of every tuned BN), and its
+projector K = 608 is not a multiple of BK = 64. The first Qwen boot died with an illegal memory
+access inside `count_matmul_gridexit` at the 8192-token prefill capture (D-747): the EVEN_K path
+loaded the weight tile with no N mask, reading up to 64 rows past the projector weight's end.
+
+This test checks the arithmetic at every capture bucket (rows) and both gate modes; an out-of-bounds
+READ that lands in mapped memory is numerically invisible here (the masked store discards those
+columns), so the memory contract is checked separately under compute-sanitizer memcheck
+(`csd3_v15_qwen_fix.sh`). GPU only; run with CUDA_LAUNCH_BLOCKING=1 to attribute a fault to its
+launch.
 """
 import contextlib
 import types
@@ -73,7 +81,7 @@ def _prime_scratch(device, hidden, inter, dtype, ceiling):
 
 
 @pytest.mark.parametrize("model", sorted(SHAPES))
-@pytest.mark.parametrize("rows", [4, 64, 205, 512])
+@pytest.mark.parametrize("rows", [4, 64, 205, 512, 1024, 2048, 4096, 8192])
 @pytest.mark.parametrize("gate_mode", ["released", "hard_mask"])
 def test_binary_cohort_body_at_model_shapes(model, rows, gate_mode):
     from sglang.srt.vpipe.mlp import _binary_cohort_mlp
@@ -82,7 +90,7 @@ def test_binary_cohort_body_at_model_shapes(model, rows, gate_mode):
     device, dtype = torch.device("cuda:0"), torch.float16
     gen = torch.Generator(device=device); gen.manual_seed(rows * 31 + len(model))
     layer, proj, w = _fake_modules(hidden, inter, bottleneck, device, dtype, gen)
-    _prime_scratch(device, hidden, inter, dtype, 1024)
+    _prime_scratch(device, hidden, inter, dtype, 8192)
     x = (torch.randn(rows, hidden, generator=gen, device=device) * 0.5).to(dtype)
     run_mask = (torch.rand(rows, generator=gen, device=device) >= 0.5).view(-1, 1)
     weights = torch.rand(rows, generator=gen, device=device).to(dtype).view(-1, 1)
