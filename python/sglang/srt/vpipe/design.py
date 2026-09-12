@@ -221,13 +221,24 @@ ARMS["vskipper_nocompact"] = {
 #                              config.json); the family's range, not Llama's 16..31
 # The always-route twin is the quality posture (arm D of the 2x2) and the correctness
 # configuration for cards without a K/V band entry (no regime switch, no band assertion).
+#   weights_key   the host-file key naming this checkpoint's router/projector file (the Llama
+#                 file stays under `flexidepth_weights`; one host file, one key per checkpoint)
+#   design_skip_ratio 0.25 -- the alignment-only checkpoint's measured skip on the routed layers
+#                 (training gate, D-3xx); the K/V-band rule's `s`
+#   decode_kv_band  per device, from the same rule as the Llama band with this arm's inputs
+#                 (L_r = 18, b = 4 KB, s = 0.25, tau scaled by routed-layer count since the tax is
+#                 per routed layer, D-370): A100 V* = 315k -> exit 320k, enter 390k. Asserted at
+#                 boot against the rule; a device without an entry refuses.
 ARMS["vskipper_qwen3_4b"] = {
     "skipper": "flexidepth", "phases": "both", "regime_switch": True,
     "gate_mode": "hard_mask", "compact": False, "routed_layers": tuple(range(18, 36)),
+    "weights_key": "flexidepth_weights_qwen3_4b", "design_skip_ratio": 0.25,
+    "decode_kv_band": {"NVIDIA_A100": (320000, 390000)},
 }
 ARMS["vskipper_qwen3_4b_alwaysroute"] = {
     "skipper": "flexidepth", "phases": "both", "regime_switch": False,
     "gate_mode": "hard_mask", "compact": False, "routed_layers": tuple(range(18, 36)),
+    "weights_key": "flexidepth_weights_qwen3_4b", "design_skip_ratio": 0.25,
 }
 
 # THE SKIP-RATE x DEPTH SWEEP (plan item 3; owner scope 2026-09-10: gsm8k only, ALL 12 points,
@@ -312,7 +323,9 @@ def host_config(path: str | None = None) -> dict[str, str]:
     missing = [k for k in _REQUIRED_HOST_KEYS if not str(cfg.get(k, "")).strip()]
     if missing:
         raise ValueError(f"host config {raw} is missing required keys: {missing}")
-    for key in ("flexidepth_weights", "conditional_graph_helper", "moe_config_dir"):
+    for key in list(cfg):
+        if key not in ("conditional_graph_helper", "moe_config_dir") and not key.startswith("flexidepth_weights"):
+            continue
         value = str(cfg.get(key, "") or "").strip()
         if value and not Path(value).exists():
             raise ValueError(f"host config {raw}: {key} = {value!r} does not exist")
@@ -363,9 +376,21 @@ def _host() -> dict[str, str]:
 
 
 def flexidepth_weights_path() -> str:
-    """Absolute path to the skipper's router/projector weights."""
+    """Absolute path to the ACTIVE ARM's router/projector weights.
 
-    return _host()["flexidepth_weights"]
+    The host file names one file per checkpoint: `flexidepth_weights` (Llama-3-8B, required) and
+    any `flexidepth_weights_<model>` an arm selects through its `weights_key` field (v1.5). An arm
+    whose key is absent from the host file fails closed here.
+    """
+
+    key = str(active_arm().get("weights_key", "flexidepth_weights"))
+    host = _host()
+    if not str(host.get(key, "")).strip():
+        raise ValueError(
+            f"host config has no {key!r} (the active arm {active_arm_name()!r} selects it); "
+            "add the checkpoint's weights file to deploy/hosts/<host>.json"
+        )
+    return host[key]
 
 
 def conditional_graph_helper_path() -> str:

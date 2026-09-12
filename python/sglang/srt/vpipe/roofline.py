@@ -212,6 +212,20 @@ def derived_kv_band(device_key: str, **rule) -> tuple[int, int]:
     return int(round(v / r) * r), int(round(KV_BAND_ENTER_FACTOR * v / r) * r)
 
 
+def arm_kv_rule_inputs(arm: dict) -> dict:
+    """The rule inputs an ARM implies: routed-layer count, its design skip ratio, and the per-step
+    tax scaled by routed-layer count (the tax is per routed layer, D-370)."""
+
+    from sglang.srt.vpipe.design import SERVED_ROUTED_LAYERS
+
+    routed = len(tuple(arm.get("routed_layers", SERVED_ROUTED_LAYERS)))
+    return {
+        "routed_layers": routed,
+        "skip_ratio": float(arm.get("design_skip_ratio", DESIGN_DECODE_SKIP_RATIO)),
+        "tau_ms": DECODE_BODY_TAX_MS * routed / 16.0,
+    }
+
+
 def assert_kv_band_follows_rule(
     *, served_exit_kv_tokens: int, served_enter_kv_tokens: int, device_key: str, **rule
 ) -> None:

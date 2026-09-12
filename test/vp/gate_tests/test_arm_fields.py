@@ -58,3 +58,54 @@ def test_hard_mask_payload_semantics_are_attested():
         assert "*weight" in FlexiDepthFullGraphAdapter.__dict__["payload_semantics"].fget(object.__new__(FlexiDepthFullGraphAdapter))
     with _serving("vskipper_qwen3_4b"):
         assert FlexiDepthFullGraphAdapter.__dict__["payload_semantics"].fget(object.__new__(FlexiDepthFullGraphAdapter)) == "run=mlp(hidden);project_only=proj(hidden)"
+
+
+def test_qwen_arm_band_follows_the_rule_with_its_own_inputs():
+    from sglang.srt.vpipe import design
+    from sglang.srt.vpipe.roofline import arm_kv_rule_inputs, assert_kv_band_follows_rule, derived_kv_band
+
+    arm = design.ARMS["vskipper_qwen3_4b"]
+    inputs = arm_kv_rule_inputs(arm)
+    assert inputs["routed_layers"] == 18 and abs(inputs["skip_ratio"] - 0.25) < 1e-9
+    assert derived_kv_band("NVIDIA_A100", **inputs) == tuple(arm["decode_kv_band"]["NVIDIA_A100"]) == (320_000, 390_000)
+    assert_kv_band_follows_rule(served_exit_kv_tokens=320_000, served_enter_kv_tokens=390_000, device_key="NVIDIA_A100", **inputs)
+    # the Llama band must refuse under the Qwen arm's inputs, and vice versa
+    for band, kw in (((160_000, 200_000), inputs), ((320_000, 390_000), arm_kv_rule_inputs(design.ARMS["vskipper"]))):
+        try:
+            assert_kv_band_follows_rule(served_exit_kv_tokens=band[0], served_enter_kv_tokens=band[1], device_key="NVIDIA_A100", **kw)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError(f"{band} must not pass with inputs {kw}")
+    # the Llama arm's inputs reproduce the served Llama band
+    assert derived_kv_band("NVIDIA_A100", **arm_kv_rule_inputs(design.ARMS["vskipper"])) == (160_000, 200_000)
+
+
+def test_weights_key_selects_the_checkpoint_file(tmp_path):
+    import json, os
+    from sglang.srt.vpipe import design
+
+    llama = tmp_path / "llama.pt"; llama.write_bytes(b"x")
+    qwen = tmp_path / "qwen.pt"; qwen.write_bytes(b"y")
+    host = tmp_path / "host.json"
+    host.write_text(json.dumps({"host": "t", "flexidepth_weights": str(llama), "flexidepth_weights_qwen3_4b": str(qwen), "served_model_revision": "r", "gate_workdir": str(tmp_path), "serve_python": "python", "model_path": str(tmp_path)}))
+    saved_env = os.environ.get(design._HOST_CONFIG_ENV); os.environ[design._HOST_CONFIG_ENV] = str(host)
+    design._HOST_CACHE.clear()
+    try:
+        with _serving("vskipper"):
+            assert design.flexidepth_weights_path() == str(llama)
+        with _serving("vskipper_qwen3_4b"):
+            assert design.flexidepth_weights_path() == str(qwen)
+        host.write_text(json.dumps({"host": "t", "flexidepth_weights": str(llama), "served_model_revision": "r", "gate_workdir": str(tmp_path), "serve_python": "python", "model_path": str(tmp_path)}))
+        design._HOST_CACHE.clear()
+        with _serving("vskipper_qwen3_4b"):
+            try:
+                design.flexidepth_weights_path()
+            except ValueError as e:
+                assert "flexidepth_weights_qwen3_4b" in str(e)
+            else:
+                raise AssertionError("a missing checkpoint key must refuse")
+    finally:
+        design._HOST_CACHE.clear()
+        if saved_env is None: os.environ.pop(design._HOST_CONFIG_ENV, None)
+        else: os.environ[design._HOST_CONFIG_ENV] = saved_env
