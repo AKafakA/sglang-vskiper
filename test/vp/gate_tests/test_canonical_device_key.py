@@ -109,3 +109,34 @@ def test_h100_form_factors_do_not_merge_and_have_roofline_entries():
         band = derived_decode_band(key, ladder)
         assert 200 <= ridge <= 320 and band[0] < ridge < band[1] + 32, (name, ridge, band)
     assert keys["NVIDIA H100 PCIe"] not in table, "PCIe must fail closed until its datasheet is read"
+
+
+# --- the K/V-volume band rule (D-738): served A100 constants reproduced, H100 predicted -------
+def test_kv_band_rule_reproduces_the_served_a100_band_and_predicts_h100():
+    from sglang.srt.vpipe.design import SERVED_REGIME_SWITCH
+    from sglang.srt.vpipe.roofline import (
+        assert_kv_band_follows_rule, derived_kv_band, kv_crossover_tokens,
+    )
+    v = kv_crossover_tokens("NVIDIA_A100")
+    assert 150_000 < v < 165_000, v                      # 2.67 ms * 1.935 TB/s / (0.5*16*4 KB)
+    served = (SERVED_REGIME_SWITCH["decode"]["exit_kv_tokens"], SERVED_REGIME_SWITCH["decode"]["enter_kv_tokens"])
+    assert derived_kv_band("NVIDIA_A100") == served == (160_000, 200_000)
+    assert_kv_band_follows_rule(served_exit_kv_tokens=served[0], served_enter_kv_tokens=served[1], device_key="NVIDIA_A100")
+    assert derived_kv_band("NVIDIA_H100_HBM3") == (270_000, 340_000)
+    assert derived_kv_band("NVIDIA_H100_NVL") == (320_000, 400_000)
+
+
+def test_kv_band_rule_refuses_a_retuned_band():
+    from sglang.srt.vpipe.roofline import assert_kv_band_follows_rule
+    try:
+        assert_kv_band_follows_rule(served_exit_kv_tokens=150_000, served_enter_kv_tokens=200_000, device_key="NVIDIA_A100")
+    except RuntimeError as e:
+        assert "does not follow the derived rule" in str(e)
+    else:
+        raise AssertionError("a band off the rule must refuse")
+    try:  # the A100 constants on an H100 must refuse too (a prediction, not a carry-over)
+        assert_kv_band_follows_rule(served_exit_kv_tokens=160_000, served_enter_kv_tokens=200_000, device_key="NVIDIA_H100_HBM3")
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("the A100 band must not serve on an H100")

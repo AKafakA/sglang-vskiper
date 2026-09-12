@@ -156,3 +156,78 @@ def assert_band_follows_rule(
             f"(ridge {ridge_rows(device_key):.1f} rows, jitter p90 {jitter_p90_rows}). "
             "Either declare the derived band for this device, or record why it deviates."
         )
+
+
+# ---------------------------------------------------------------------------------------
+# The K/V-VOLUME band (the criterion the served design actually switches on, D-738/D-739).
+# ---------------------------------------------------------------------------------------
+# Below the ridge a decode step is weight-bandwidth-bound: the weights are streamed whether
+# or not a row skips, so what a skipped row saves at a routed layer is that layer's attention
+# read of its own context -- b bytes per resident token. Over L_r routed layers with a
+# fraction s of decisions projecting, a batch holding V resident K/V tokens removes
+# s*L_r*b*V bytes of traffic, i.e. s*L_r*b*V/BW seconds, against the routed body's fixed
+# per-step cost tau (its extra per-layer kernels). The routed body pays when
+#
+#     V > V* = tau * BW / (s * L_r * b)
+#
+# On the A100-80GB PCIe (BW 1935 GB/s): 2.67 ms * 1.935 TB/s / (0.5 * 16 * 4 KB) = 158k tokens.
+# The served band (exit 160k, enter 200k = 1.25 V*) was set from the two-body crossover
+# ladder (lane-2 cut1: 131k parity, 262k win) BEFORE this derivation, which reproduces it
+# without fitting. tau is D-368's one profile on the 2026-09-04 body: a cheaper body moves V*
+# down, so the served constants can only engage LATER than optimal, never in the wrong
+# direction. No optimum is claimed. For another device the same rule with its bandwidth is a
+# PREDICTION (H100 HBM3: 270k/340k; H100 NVL: 320k/400k), checked by that device's ladder.
+
+#: Routed decode body's fixed per-step cost, ms (D-368: ~12 extra kernels per routed layer,
+#: 320 launches per 20 steps; measured once on the A100 testbed, disclosed as such).
+DECODE_BODY_TAX_MS = 2.67
+#: Fraction of routed-layer decisions that PROJECT, as attested on served decode passes
+#: (0.50-0.57 on gsm8k/CoQA cells); the rule uses 0.5.
+DESIGN_DECODE_SKIP_RATIO = 0.5
+#: K/V bytes per token per layer for the served model: 2 (K,V) * 8 KV heads * 128 * fp16.
+LLAMA3_8B_KV_BYTES_PER_TOKEN_LAYER = 2 * 8 * 128 * 2
+#: Thresholds are declared on a 10k-token grid.
+KV_BAND_ROUND_TOKENS = 10_000
+#: enter = this multiple of V*: the hysteresis width the A100 ladder showed (200k over 160k).
+KV_BAND_ENTER_FACTOR = 1.25
+
+
+def kv_crossover_tokens(
+    device_key: str,
+    *,
+    tau_ms: float = DECODE_BODY_TAX_MS,
+    skip_ratio: float = DESIGN_DECODE_SKIP_RATIO,
+    routed_layers: int = 16,
+    kv_bytes_per_token_layer: int = LLAMA3_8B_KV_BYTES_PER_TOKEN_LAYER,
+) -> float:
+    """V* in resident K/V tokens for this device (see the module note above)."""
+    _, bw_gbs = device_peaks(device_key)
+    return (tau_ms * 1e-3) * (bw_gbs * 1e9) / (skip_ratio * routed_layers * kv_bytes_per_token_layer)
+
+
+def derived_kv_band(device_key: str, **rule) -> tuple[int, int]:
+    """Return (exit_kv_tokens, enter_kv_tokens) = (V*, 1.25 V*) on the 10k grid."""
+    v = kv_crossover_tokens(device_key, **rule)
+    r = KV_BAND_ROUND_TOKENS
+    return int(round(v / r) * r), int(round(KV_BAND_ENTER_FACTOR * v / r) * r)
+
+
+def assert_kv_band_follows_rule(
+    *, served_exit_kv_tokens: int, served_enter_kv_tokens: int, device_key: str, **rule
+) -> None:
+    """Refuse to serve a K/V band that is not what the rule gives for this device.
+
+    Asserted, not computed (D-609: the design is DECLARED in the tree; the runtime refuses to
+    boot if the declaration has drifted from the rule). On a device whose bandwidth differs
+    this refuses until the arm declares that device's band -- the H100 row is a prediction,
+    not a re-tune. Passing changes nothing: this can only refuse.
+    """
+    expected = derived_kv_band(device_key, **rule)
+    if (served_exit_kv_tokens, served_enter_kv_tokens) != expected:
+        raise RuntimeError(
+            "served decode K/V band does not follow the derived rule: declared "
+            f"(exit={served_exit_kv_tokens}, enter={served_enter_kv_tokens}), rule gives "
+            f"(exit={expected[0]}, enter={expected[1]}) for device {device_key!r} "
+            f"(V* = {kv_crossover_tokens(device_key, **rule):.0f} tokens). Either declare the "
+            "derived band for this device, or record why it deviates."
+        )
