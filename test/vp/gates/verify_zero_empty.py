@@ -23,6 +23,13 @@ Usage:
     verify_zero_empty.py --artifact cell.jsonl            # performance lane (serving cell)
     verify_zero_empty.py --lmeval-dir out/                 # quality lane (lm-eval samples)
     [--max-empty N]   allow N empties (default 0 -- the gate is ZERO by order)
+
+[D-728, owner 2026-09-12] KNOWN empties. An empty that the CHECKPOINT ITSELF produces under its
+own code on the exact served tokens (arm B is the witness) is inherited, not lost output, and is
+listed in ``known_empties.json`` next to this file with its witness. The gate still COUNTS and
+NAMES every such empty in its output -- the number is disclosed, never hidden -- but does not
+refuse the cell for it. Anything not on the list refuses exactly as before. The list is data in
+the tree, not an environment knob (D-609), and every entry must carry a witness.
 """
 from __future__ import annotations
 
@@ -31,6 +38,20 @@ import glob
 import json
 import sys
 from pathlib import Path
+
+
+KNOWN_EMPTIES_PATH = Path(__file__).with_name("known_empties.json")
+
+
+def load_known_empties(path: Path = KNOWN_EMPTIES_PATH) -> dict[str, dict]:
+    """request_id -> entry. Fails closed on an entry without a witness."""
+    entries = json.loads(path.read_text())["entries"]
+    known: dict[str, dict] = {}
+    for entry in entries:
+        if not entry.get("witness") or not entry.get("evidence"):
+            sys.exit(f"FATAL: known_empties.json entry {entry.get('request_id')!r} has no witness/evidence")
+        known[str(entry["request_id"])] = entry
+    return known
 
 
 def _flatten(value):
@@ -112,7 +133,10 @@ def main() -> int:
               "42-52% while the chat protocol measures 0.0% on the same tree (D-628).")
         return 1
 
-    print("\nOK: no empty generations.")
+    if inherited:
+        print(f"\nOK: {len(inherited)} known (inherited) empty generation(s) disclosed above; none unknown.")
+    else:
+        print("\nOK: no empty generations.")
     return 0
 
 
