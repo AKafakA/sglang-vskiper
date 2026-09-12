@@ -39,7 +39,7 @@ def test_prefill_runner_gate_is_the_design_not_an_env_var():
     """[D-734] The runner's prefill-regime machinery was gated on SGLANG_FD_WEIGHTS, which
     D-609 stopped exporting; every headline cell then served with the escape and the
     counters dead. The serving path must never read that variable again."""
-    runner = (ROOT / "python/sglang/srt/model_executor/runner/prefill_cuda_graph_runner.py").read_text()
+    runner = _code((ROOT / "python/sglang/srt/model_executor/runner/prefill_cuda_graph_runner.py").read_text())
     assert 'os.environ.get("SGLANG_FD_WEIGHTS"' not in runner
     # no serving-path module may key behaviour on the deleted variable (D-609/D-734)
     import subprocess

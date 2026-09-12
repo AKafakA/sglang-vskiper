@@ -199,7 +199,7 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
         # capture BOTH body variants per bucket (dense/base-Llama and routed)
         # and select per pass at replay from the RAW shape — the model-side
         # stamp cannot act on replayed passes (it executes only at capture).
-        # [D-734] The last predicate used to be `os.environ.get("SGLANG_FD_WEIGHTS")`.
+        # [D-734] The last predicate used to be an environment read of SGLANG_FD_WEIGHTS.
         # D-609 (2026-09-09) deleted the scripts that exported it, so from then on this
         # condition was FALSE in every served cell: no dual-variant capture, no per-pass
         # dispatch, no prefill counters, no engagement escape -- the captured body was
