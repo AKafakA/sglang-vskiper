@@ -35,7 +35,12 @@ def test_hf_arms_do_not_add_bos_either():
     assert "add_bos_token" not in _code(DRIVER)
 
 
-def test_attestation_does_not_report_the_dead_prefill_counters():
-    """[D-726] {dense: 0, fd: 0} under captured prefill was read as 'never engaged'."""
+def test_prefill_runner_gate_is_the_design_not_an_env_var():
+    """[D-734] The runner's prefill-regime machinery was gated on SGLANG_FD_WEIGHTS, which
+    D-609 stopped exporting; every headline cell then served with the escape and the
+    counters dead. The serving path must never read that variable again."""
+    runner = (ROOT / "python/sglang/srt/model_executor/runner/prefill_cuda_graph_runner.py").read_text()
+    assert 'os.environ.get("SGLANG_FD_WEIGHTS"' not in runner
+    assert "skipper_deployed()" in runner and "flexidepth_weights_path()" in runner
     src = (ROOT / "python/sglang/srt/vpipe/attestation.py").read_text()
-    assert 'regime_counters.pop("prefill", None)' in src
+    assert 'regime_counters.pop("prefill", None)' not in src, "the prefill counters are live again"
