@@ -140,3 +140,28 @@ def test_latex_emit_is_REFUSED_when_arm_C_is_not_upstream(tmp_path: Path):
     out = _run(tmp_path, "--dataset", "gsm8k", *args, "--latex", tmp_path / "q.tex")
     assert out.returncode != 0
     assert not (tmp_path / "q.tex").exists(), "it wrote a row despite refusing"
+
+
+def test_a_REFUSED_cell_must_not_enter_the_2x2(tmp_path: Path):
+    """Found in production 2026-09-12: coqa arm D was REFUSED on zero_empty and the
+    summariser published its score anyway. A gate that fires and a consumer that ignores it
+    is this project's most-repeated defect."""
+    args = _campaign(tmp_path)
+    d = tmp_path / "integrated_alwaysskip" / "gsm8k" / "quality_manifest.json"
+    record = json.loads(d.read_text())
+    record.update(status="refused", failed_gates=["zero_empty"])
+    d.write_text(json.dumps(record))
+    out = _run(tmp_path, "--dataset", "gsm8k", *args, "--latex", tmp_path / "q.tex")
+    assert out.returncode != 0
+    blob = out.stdout + out.stderr
+    assert "status='refused'" in blob and "never publish a refused number" in blob
+    assert not (tmp_path / "q.tex").exists(), "it emitted a row for a refused cell"
+
+
+def test_a_missing_status_is_refused_not_assumed(tmp_path: Path):
+    args = _campaign(tmp_path)
+    d = tmp_path / "armA" / "gsm8k" / "quality_manifest.json"
+    record = json.loads(d.read_text()); record.pop("status", None)
+    d.write_text(json.dumps(record))
+    out = _run(tmp_path, "--dataset", "gsm8k", *args)
+    assert out.returncode != 0 and "status=None" in (out.stdout + out.stderr)

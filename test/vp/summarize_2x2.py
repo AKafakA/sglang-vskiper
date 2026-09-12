@@ -67,6 +67,37 @@ def _arm_dir(root: Path, arm: str, mapping: dict[str, str]) -> str:
     return f"{root}/{mapped}"
 
 
+def _assert_every_arm_passed(root: Path, mapping: dict[str, str]) -> None:
+    """Refuse if ANY arm's cell was refused by its own gates.
+
+    Found 2026-09-12 by reading an emitted row: coqa arm D was REFUSED on `zero_empty` --
+    one empty generation, the gate doing exactly its job -- and the summariser read its
+    `results_*.json` anyway and published $0.7760$ as arm D. **A gate that fires and a
+    consumer that ignores it is the defect this project has logged four times** (D-256,
+    D-614, D-624 #5, D-627); here it would have put a refused measurement into the paper's
+    faithfulness table, which is the one table whose entire purpose is to be trustworthy.
+
+    Checked per ARM rather than per file: a refused cell still writes complete-looking
+    results, so nothing downstream can tell by inspection.
+    """
+    for arm in sorted(ARMS):
+        manifests = sorted(glob.glob(f"{_arm_dir(root, arm, mapping)}/**/quality_manifest.json",
+                                     recursive=True))
+        if not manifests:
+            sys.exit(f"FATAL: arm {arm} has no quality_manifest.json under "
+                     f"{_arm_dir(root, arm, mapping)} -- cannot verify its cell passed")
+        for path in manifests:
+            record = json.loads(Path(path).read_text())
+            status = record.get("status")
+            if status != "passed":
+                sys.exit(
+                    f"FATAL: arm {arm} cell {path} has status={status!r} "
+                    f"failed_gates={record.get('failed_gates')}. Its gates REFUSED this "
+                    "measurement; it must not enter the 2x2. Re-run the cell, or drop the "
+                    "row and say why -- never publish a refused number."
+                )
+
+
 def _assert_arm_c_is_upstream(root: Path, mapping: dict[str, str]) -> None:
     """Arm C must be GENUINE upstream, because that is what the gate condition names.
 
@@ -150,6 +181,7 @@ def main() -> int:
         if arm not in ARMS or not dirname:
             ap.error(f"--arm-dir wants one of {sorted(ARMS)}=DIRNAME, got {entry!r}")
         mapping[arm] = dirname
+    _assert_every_arm_passed(args.root, mapping)
     if not args.skip_upstream_check:
         _assert_arm_c_is_upstream(args.root, mapping)
     vals = {arm: _load(args.root, arm, args.dataset, mapping) for arm in ARMS}
