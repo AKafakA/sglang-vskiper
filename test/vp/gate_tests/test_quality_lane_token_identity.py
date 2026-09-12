@@ -41,6 +41,11 @@ def test_prefill_runner_gate_is_the_design_not_an_env_var():
     counters dead. The serving path must never read that variable again."""
     runner = (ROOT / "python/sglang/srt/model_executor/runner/prefill_cuda_graph_runner.py").read_text()
     assert 'os.environ.get("SGLANG_FD_WEIGHTS"' not in runner
+    # no serving-path module may key behaviour on the deleted variable (D-609/D-734)
+    import subprocess
+    hits = subprocess.run(["grep", "-rln", 'environ.get("SGLANG_FD_WEIGHTS"', str(ROOT / "python/sglang/srt")],
+                          capture_output=True, text=True).stdout.split()
+    assert hits == [], hits
     assert "skipper_deployed()" in runner and "flexidepth_weights_path()" in runner
     src = (ROOT / "python/sglang/srt/vpipe/attestation.py").read_text()
     assert 'regime_counters.pop("prefill", None)' not in src, "the prefill counters are live again"
