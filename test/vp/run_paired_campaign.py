@@ -331,11 +331,15 @@ def default_conformance_gate(spec: dict[str, Any], arm: str, port: int) -> None:
     snapshot = Path(spec["staging_root"]) / f"server_info.conformance.{arm}.{port}.json"
     snapshot.parent.mkdir(parents=True, exist_ok=True)
     snapshot.write_text(json.dumps(server_info(port), indent=2, sort_keys=True) + "\n")
-    gate = Path(spec["tree"]) / "test/vp/gates/verify_default_conformance.py"
+    # The gate is THIS driver's (a legacy tree booted for equivalence has neither the gate nor
+    # the declarations); the design tree is the spec's, and the gate falls back to this
+    # driver's declarations when that tree declares none (the paper protocol it hard-coded).
+    gate = Path(__file__).resolve().parent / "gates/verify_default_conformance.py"
     done = subprocess.run(
         [sys.executable, str(gate), "--server-info", str(snapshot),
          "--model-path", spec["model_path"], "--defaults-tree", spec["upstream_tree"],
          "--design-tree", spec["tree"], "--python", spec["python"],
+         "--fallback-design-tree", str(Path(__file__).resolve().parents[2]),
          *(["--launch-profile", launch_profile_name(spec)] if launch_profile_name(spec) else [])],
         capture_output=True, text=True,
     )
