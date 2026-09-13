@@ -39,11 +39,11 @@ from pathlib import Path
 # reported, never headlined — in the equal-work lane it is algebraically the drain time, because
 # identical tokens make TPS = tokens/duration with tokens fixed.
 LATENCY_METRICS = [
-    ("TTFT p50", "median_ttft_ms"), ("TTFT mean", "mean_ttft_ms"), ("TTFT p99", "p99_ttft_ms"),
-    ("TPOT p50", "median_tpot_ms"), ("TPOT mean", "mean_tpot_ms"), ("TPOT p99", "p99_tpot_ms"),
-    ("E2E p50", "median_e2e_latency_ms"), ("E2E mean", "mean_e2e_latency_ms"),
+    ("TTFT p50", "median_ttft_ms"), ("TTFT mean", "mean_ttft_ms"), ("TTFT p95", "p95_ttft_ms"), ("TTFT p99", "p99_ttft_ms"),
+    ("TPOT p50", "median_tpot_ms"), ("TPOT mean", "mean_tpot_ms"), ("TPOT p95", "p95_tpot_ms"), ("TPOT p99", "p99_tpot_ms"),
+    ("E2E p50", "median_e2e_latency_ms"), ("E2E mean", "mean_e2e_latency_ms"), ("E2E p95", "p95_e2e_latency_ms"),
     ("E2E p99", "p99_e2e_latency_ms"),
-]
+]  # [D-750 add.2, owner 09-13] p95 added: reported, not gated (the bank-set rule is on the means)
 THROUGHPUT_METRICS = [("output TPS", "output_throughput")]
 
 
