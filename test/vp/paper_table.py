@@ -43,6 +43,13 @@ COLUMNS = [
     "E2E p50", "E2E mean", "E2E p95", "E2E p99",
     "output TPS",
 ]
+# [D-752/D-754, owner 2026-09-13] The paper's headline table is latency-led: E2E first, means + p95;
+# p50/p99 go to the appendix table. Macros are always emitted for every column.
+COLUMN_SETS = {
+    "all": COLUMNS,
+    "main": ["E2E mean", "E2E p95", "TPOT mean", "TPOT p95", "TTFT mean", "TTFT p95", "output TPS"],
+    "tails": ["E2E p50", "E2E p99", "TPOT p50", "TPOT p99", "TTFT p50", "TTFT p99"],
+}
 MULTIPLIERS = (0.75, 0.95, 1.25)
 DISPLAY = {"gsm8k": "GSM8K", "bbh_cot": "BBH", "coqa": "CoQA"}
 # A LaTeX control sequence is letters ONLY -- \vpTPSGSM8KLow and \vpE2E... are syntax
@@ -99,11 +106,12 @@ def table_rows(report: dict[str, Any], knees: dict[str, float]) -> list[dict[str
     return out
 
 
-def latex_rows(rows: list[dict[str, Any]]) -> str:
+def latex_rows(rows: list[dict[str, Any]], columns: list[str] = COLUMNS) -> str:
     lines = []
     for row in rows:
         cells = []
-        for _, mean, half in row["cells"]:
+        by_name = {c[0]: c for c in row["cells"]}
+        for _, mean, half in [by_name[name] for name in columns]:  # in the column set's order
             cells.append(f"{mean:+.1f}" if half is None
                          else f"{mean:+.1f} $\\pm$ {half:.1f}")
         lines.append(
@@ -231,6 +239,8 @@ def main() -> int:
                     help="comma list of datasets whose main.tex rows are placeholders: verify "
                          "skips them instead of refusing. Interim use only; the flag lives in "
                          "the regeneration script so its presence is visible.")
+    ap.add_argument("--columns", default="all", choices=sorted(COLUMN_SETS),
+                    help="column set for the emitted rows (macros always cover every column)")
     ap.add_argument("--tol", type=float, default=0.05,
                     help="printed to one decimal, so 0.05 is exact-match at that precision")
     args = ap.parse_args()
@@ -266,7 +276,7 @@ def main() -> int:
     placeholder = {DISPLAY.get(d, d) for d in args.placeholder_datasets.split(",") if d}
     table_only = [r for r in rows if r["dataset"] not in excluded]
     if args.emit:
-        print(latex_rows(table_only))
+        print(latex_rows(table_only, COLUMN_SETS[args.columns]))
         if args.macros:
             args.macros.write_text(macros(rows))
             print(f"\n% wrote {len(rows) * len(COLUMNS)} macros to {args.macros}",
