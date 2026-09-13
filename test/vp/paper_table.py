@@ -292,7 +292,7 @@ def main() -> int:
     table_only = [r for r in rows if r["dataset"] not in excluded]
     if args.emit:
         if args.dataset_suffix:
-            table_only = [dict(r, dataset=r["dataset"] + args.dataset_suffix) for r in table_only]
+            table_only = [dict(r, dataset=DISPLAY.get(r["dataset"], r["dataset"]) + args.dataset_suffix) for r in table_only]
         print(latex_rows(table_only, COLUMN_SETS[args.columns]))
         if args.macros:
             args.macros.write_text(macros(rows))
