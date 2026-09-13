@@ -313,17 +313,57 @@ ARMS["vskipper_qwen3_4b_alwaysroute"] = {
 _SWEEP_SKIP_RATES = (0.10, 0.25, 0.50, 0.75)
 _SWEEP_DEPTH_RATIOS = (0.25, 0.50, 0.75)
 
-ARMS.update({
-    f"integrated_randomskip_r{int(rate * 100)}_d{int(depth * 100)}": {
+
+def _rule_band(arm: Mapping[str, Any]) -> dict[str, tuple[int, int]]:
+    """The arm's decode K/V band FROM THE RULE (Appendix "band from the roofline"), for the A100.
+
+    [D-764, owner 2026-09-13] Each sweep arm reads its own removable work: a mock that skips a
+    fraction `rate` of rows around a fraction `depth` of the routed set removes rate x depth of
+    the routed (row, layer) work, and that is the `s` the rule takes (FlexiDepth's `s` = 0.5 is
+    the same quantity: every routed layer's router skips half the rows). The v1.4 sweep served
+    every mock under the FlexiDepth band (160k/200k, s = 0.5), so a 25 % mock was engaged
+    where the rule predicts a loss and lost (+26 % E2E at 25 % x 25 %). Computed in the tree at
+    import from the same function the boot assertion uses -- not tuned, and printed in the
+    attestation of every cell; a device without a roofline entry refuses to boot.
+    """
+    from sglang.srt.vpipe import roofline  # lazy: roofline reads this module's constants
+
+    return {"NVIDIA_A100": roofline.derived_kv_band("NVIDIA_A100", **roofline.arm_kv_rule_inputs(arm))}
+
+
+def _mock_arm(rate: float, depth: float, **family: Any) -> dict[str, Any]:
+    arm: dict[str, Any] = {
         "skipper": "deterministic_mock",
         "phases": "both",
         "regime_switch": True,
         "mock_token_skip_rate": rate,
         "mock_skipped_depth_ratio": depth,
         "mock_seed": 1234,
+        "design_skip_ratio": rate * depth,
+        **family,
     }
+    arm["decode_kv_band"] = _rule_band(arm)
+    return arm
+
+
+ARMS.update({
+    f"integrated_randomskip_r{int(rate * 100)}_d{int(depth * 100)}": _mock_arm(rate, depth)
     for rate in _SWEEP_SKIP_RATES
     for depth in _SWEEP_DEPTH_RATIOS
+})
+
+# [D-764] The Qwen3-4B applicability-boundary points: the SAME mock on the Qwen family (its
+# routed range, hard-mask bodies, its projector weights, its own rule-derived band). The
+# learned Qwen skipper removes ~0.25 x 1.0 of the routed work; these two remove 0.375 and
+# 0.5625 -- past the crossover -- so the row can separate "the family does not work" from "the
+# trained skipper removes too little work".
+ARMS.update({
+    f"integrated_randomskip_qwen3_4b_r{int(rate * 100)}_d{int(depth * 100)}": _mock_arm(
+        rate, depth,
+        gate_mode="hard_mask", compact=False, routed_layers=tuple(range(18, 36)),
+        weights_key="flexidepth_weights_qwen3_4b",
+    )
+    for rate, depth in ((0.50, 0.75), (0.75, 0.75))
 })
 
 
