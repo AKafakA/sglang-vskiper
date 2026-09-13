@@ -49,6 +49,8 @@ COLUMN_SETS = {
     "all": COLUMNS,
     "main": ["E2E mean", "E2E p95", "TPOT mean", "TPOT p95", "TTFT mean", "TTFT p95", "makespan"],
     "tails": ["E2E p50", "E2E p99", "TPOT p50", "TPOT p99", "TTFT p50", "TTFT p99"],
+    # The served-arm-bank campaign (D-749 backup): E2E and makespan only (owner, 2026-09-13).
+    "backup": ["E2E mean", "E2E p95", "makespan"],
 }
 MULTIPLIERS = (0.75, 0.95, 1.25)
 DISPLAY = {"gsm8k": "GSM8K", "bbh_cot": "BBH", "coqa": "CoQA"}
@@ -249,6 +251,9 @@ def main() -> int:
                     help="comma list of datasets whose main.tex rows are placeholders: verify "
                          "skips them instead of refusing. Interim use only; the flag lives in "
                          "the regeneration script so its presence is visible.")
+    ap.add_argument("--dataset-suffix", default="",
+                    help="appended to the dataset name in emitted rows (e.g. ' (served-arm banks)') so a "
+                         "companion table's rows are not read as headline rows by --verify")
     ap.add_argument("--columns", default="all", choices=sorted(COLUMN_SETS),
                     help="column set for the emitted rows (macros always cover every column)")
     ap.add_argument("--tol", type=float, default=0.05,
@@ -286,6 +291,8 @@ def main() -> int:
     placeholder = {DISPLAY.get(d, d) for d in args.placeholder_datasets.split(",") if d}
     table_only = [r for r in rows if r["dataset"] not in excluded]
     if args.emit:
+        if args.dataset_suffix:
+            table_only = [dict(r, dataset=r["dataset"] + args.dataset_suffix) for r in table_only]
         print(latex_rows(table_only, COLUMN_SETS[args.columns]))
         if args.macros:
             args.macros.write_text(macros(rows))
