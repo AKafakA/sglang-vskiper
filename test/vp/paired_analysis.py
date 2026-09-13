@@ -43,6 +43,11 @@ LATENCY_METRICS = [
     ("TPOT p50", "median_tpot_ms"), ("TPOT mean", "mean_tpot_ms"), ("TPOT p95", "p95_tpot_ms"), ("TPOT p99", "p99_tpot_ms"),
     ("E2E p50", "median_e2e_latency_ms"), ("E2E mean", "mean_e2e_latency_ms"), ("E2E p95", "p95_e2e_latency_ms"),
     ("E2E p99", "p99_e2e_latency_ms"),
+    # [D-756, owner 09-13] makespan = the cell's wall time to complete its FIXED work, drain included
+    # (the benchmark's `duration`). Negative = better, like every latency. With the work pinned,
+    # output TPS is exactly tokens/makespan, so TPS is reported as a derived line and never called
+    # a throughput in the paper: the drain of the few longest requests decides it.
+    ("makespan", "duration"),
 ]  # [D-750 add.2, owner 09-13] p95 added: reported, not gated (the bank-set rule is on the means)
 THROUGHPUT_METRICS = [("output TPS", "output_throughput")]
 

@@ -45,6 +45,7 @@ def main():
                          "e2e_reduction_pct": round(e2e, 2), "ttft_reduction_pct": round(ttft, 2)})
         rows.append({"dataset": ds, "suite": suite, "rep": rep, "bin_lo": None, "bin_hi": None, "n": len(bi),
                      "tps_gain_pct": round(100 * (t["output_throughput"] - b["output_throughput"]) / b["output_throughput"], 2),
+                     "makespan_reduction_pct": round(100 * (t["duration"] - b["duration"]) / b["duration"], 2),
                      "e2e_mean_reduction_pct": round(100 * (t["mean_e2e_latency_ms"] - b["mean_e2e_latency_ms"]) / b["mean_e2e_latency_ms"], 2)})
     # pooled view across reps per (dataset, suite, bin)
     pooled = {}
@@ -58,8 +59,11 @@ def main():
     tps = {}
     for r in rows:
         if r["bin_lo"] is None: tps.setdefault((r["dataset"], r["suite"]), []).append(r["tps_gain_pct"])
-    print("\nTPS gain % per row (mean over reps):")
-    for k, v in sorted(tps.items()): print(f"  {k[0]:8s} {k[1]:20s} {st.mean(v):+7.2f}  (reps {len(v)})")
+    mk = {}
+    for r in rows:
+        if r["bin_lo"] is None: mk.setdefault((r["dataset"], r["suite"]), []).append(r["makespan_reduction_pct"])
+    print("\nmakespan change % (negative = faster; TPS gain in brackets) per row, mean over reps:")
+    for k, v in sorted(mk.items()): print(f"  {k[0]:8s} {k[1]:20s} {st.mean(v):+7.2f}  [TPS {st.mean(tps[k]):+6.2f}]  (reps {len(v)})")
     if a.json: json.dump({"rows": rows, "bins": edges}, open(a.json, "w"), indent=1); print("wrote", a.json)
 
 if __name__ == "__main__": main()

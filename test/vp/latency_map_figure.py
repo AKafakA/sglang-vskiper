@@ -20,7 +20,7 @@ def main():
     for r in rows:
         lbl = r["suite"].rsplit("_r", 1)[1]; m = MULT["r" + lbl]; k = (r["dataset"], m)
         if r["bin_lo"] is None:
-            e2e.setdefault(k, []).append(r["e2e_mean_reduction_pct"]); tps.setdefault(k, []).append(r["tps_gain_pct"])
+            e2e.setdefault(k, []).append(r["e2e_mean_reduction_pct"]); tps.setdefault(k, []).append(r.get("makespan_reduction_pct", -r["tps_gain_pct"] / (1 + r["tps_gain_pct"] / 100)))
         elif r["n"] >= 50:
             bins.setdefault(k, {}).setdefault((r["bin_lo"], r["bin_hi"]), []).append((r["e2e_reduction_pct"], r["n"]))
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
@@ -29,7 +29,7 @@ def main():
         xs = [m for (d, m) in sorted(e2e) if d == ds]
         ax1.plot(xs, [st.mean(e2e[(ds, m)]) for m in xs], marker="o", label=NAMES[ds])
         ax2.plot(xs, [st.mean(tps[(ds, m)]) for m in xs], marker="o", label=NAMES[ds])
-    for ax, yl, t in ((ax1, "mean E2E latency change vs upstream (%)", "latency: grows with load"), (ax2, "output throughput change vs upstream (%)", "throughput: parity below the knee")):
+    for ax, yl, t in ((ax1, "mean E2E latency change vs upstream (%)", "latency: grows with load"), (ax2, "makespan change vs upstream (%)", "makespan: parity below the knee")):
         ax.axhline(0, color="gray", lw=0.6); ax.set_xticks([0.75, 0.95, 1.25]); ax.set_xticklabels(["0.75", "0.95", "1.25"])
         ax.set_xlabel("offered load ($\\times Q^*$)"); ax.set_ylabel(yl, fontsize=8); ax.set_title(t, fontsize=9); ax.grid(alpha=0.3)
     ax1.legend(fontsize=8); fig.tight_layout(); fig.savefig(a.pdf); print("wrote", a.pdf)
@@ -40,7 +40,7 @@ def main():
         macros.append(f"\\newcommand{{\\vpMapBins{MW[ds]}{WORD[m]}}}{{{len(vals)}}}")
     for (ds, m) in sorted(e2e):
         macros.append(f"\\newcommand{{\\vpMapEtoE{MW[ds]}{WORD[m]}}}{{{st.mean(e2e[(ds, m)]):+.1f}}}")
-        macros.append(f"\\newcommand{{\\vpMapTPS{MW[ds]}{WORD[m]}}}{{{st.mean(tps[(ds, m)]):+.1f}}}")
+        macros.append(f"\\newcommand{{\\vpMapMakespan{MW[ds]}{WORD[m]}}}{{{st.mean(tps[(ds, m)]):+.1f}}}")
     open(a.macros, "w").write("\n".join(macros) + "\n"); print("wrote", a.macros, len(macros), "macros")
 
 if __name__ == "__main__": main()
