@@ -48,9 +48,23 @@ LATENCY_METRICS = [
     # output TPS is exactly tokens/makespan, so TPS is reported as a derived line and never called
     # a throughput in the paper: the drain of the few longest requests decides it.
     ("makespan", "duration"),
+    ("drain", "drain_s"),   # makespan - injection window: the tail after the last arrival (the pinned natural lengths' longest requests)
 ]  # [D-750 add.2, owner 09-13] p95 added: reported, not gated (the bank-set rule is on the means)
 THROUGHPUT_METRICS = [("output TPS", "output_throughput"),
-                      ("request rate", "request_throughput")]  # completed requests per second of makespan (reviewer: the achieved rate beside the offered one)
+                      ("injected rate", "injected_rate")]  # requests / injection window: the arrival rate the client actually delivered (open-loop check)
+
+
+def derive(record: dict) -> dict:
+    """Two derived fields the runner does not write: the injection window's arrival rate and the drain.
+    Reviewer round 2 read completed/makespan as "achieved rate"; that ratio is the drain's, not the
+    server's -- the arrival process delivers the offered rate (open-loop), and the makespan exceeds the
+    injection window by the tail of the longest pinned requests."""
+    starts = record.get("request_start_offsets_s") or []
+    if len(starts) > 1 and record.get("duration"):
+        window = max(starts) - min(starts)
+        record["injected_rate"] = record["completed"] / window if window > 0 else None
+        record["drain_s"] = record["duration"] - window
+    return record
 
 
 def last_record(path: Path) -> dict:
@@ -144,7 +158,7 @@ def main() -> int:
                     if base is None or treat is None:
                         refused.append(f"rep{rep} {dataset} {suite}: missing a unique cell artifact")
                         continue
-                    b, t = last_record(base), last_record(treat)
+                    b, t = derive(last_record(base)), derive(last_record(treat))
                     key = (dataset, suite)
                     bucket = cells.setdefault(key, {})
                     for _, field in LATENCY_METRICS + THROUGHPUT_METRICS:
@@ -170,7 +184,7 @@ def main() -> int:
     print("  an interval containing zero is PARITY, reported as parity (straddle rule)\n")
 
     report: dict = {"baseline": args.baseline, "treatment": args.treatment, "rows": []}
-    unit = {"duration": "s", "output_throughput": "tok/s", "request_throughput": "req/s"}
+    unit = {"duration": "s", "drain_s": "s", "output_throughput": "tok/s", "injected_rate": "req/s"}
     for (dataset, suite), bucket in sorted(cells.items()):
         n = len(counted[(dataset, suite)])
         print(f"  {dataset}  {suite}   (n = {n} gated rep{'s' if n != 1 else ''}: "
