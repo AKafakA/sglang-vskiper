@@ -1,0 +1,870 @@
+{
+ "gateup@205": {
+  "cublas_ms": 0.2163,
+  "best_ms": 0.2399,
+  "ratio": 1.109,
+  "config": [
+   64,
+   128,
+   64,
+   4,
+   3
+  ],
+  "tuned_at_counts": [
+   64,
+   128,
+   192
+  ],
+  "bk_fixed": 64,
+  "prev_config": [
+   64,
+   128,
+   64,
+   4,
+   3
+  ],
+  "prev_ms": 0.2399,
+  "identical_to_prev": true,
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
+ },
+ "gateup@512": {
+  "cublas_ms": 0.309,
+  "best_ms": 0.3897,
+  "ratio": 1.261,
+  "config": [
+   64,
+   256,
+   64,
+   4,
+   3
+  ],
+  "tuned_at_counts": [
+   128,
+   256,
+   384
+  ],
+  "bk_fixed": 64,
+  "prev_config": [
+   64,
+   256,
+   64,
+   4,
+   3
+  ],
+  "prev_ms": 0.3897,
+  "identical_to_prev": true,
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
+ },
+ "gateup@1024": {
+  "cublas_ms": 0.5587,
+  "best_ms": 0.681,
+  "ratio": 1.219,
+  "config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ],
+  "tuned_at_counts": [
+   256,
+   512,
+   768
+  ],
+  "bk_fixed": 32,
+  "prev_config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ],
+  "prev_ms": 0.681,
+  "identical_to_prev": true,
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
+ },
+ "gateup@2048": {
+  "cublas_ms": 2.3071,
+  "best_ms": 2.4572,
+  "ratio": 1.065,
+  "config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ]
+ },
+ "gateup@4096": {
+  "cublas_ms": 4.1834,
+  "best_ms": 4.843,
+  "ratio": 1.158,
+  "config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ]
+ },
+ "down@205": {
+  "cublas_ms": 0.1215,
+  "best_ms": 0.2172,
+  "ratio": 1.787,
+  "config": [
+   32,
+   128,
+   64,
+   4,
+   4
+  ],
+  "tuned_at_counts": [
+   64,
+   128,
+   192
+  ],
+  "bk_fixed": 64,
+  "prev_config": [
+   64,
+   64,
+   64,
+   4,
+   4
+  ],
+  "prev_ms": 0.2273,
+  "identical_to_prev": true,
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
+ },
+ "down@512": {
+  "cublas_ms": 0.1691,
+  "best_ms": 0.2938,
+  "ratio": 1.738,
+  "config": [
+   64,
+   128,
+   64,
+   4,
+   4
+  ],
+  "tuned_at_counts": [
+   128,
+   256,
+   384
+  ],
+  "bk_fixed": 64,
+  "prev_config": [
+   64,
+   128,
+   64,
+   4,
+   3
+  ],
+  "prev_ms": 0.4317,
+  "identical_to_prev": true,
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
+ },
+ "down@1024": {
+  "cublas_ms": 0.3209,
+  "best_ms": 0.4516,
+  "ratio": 1.407,
+  "config": [
+   64,
+   128,
+   64,
+   4,
+   4
+  ],
+  "tuned_at_counts": [
+   256,
+   512,
+   768
+  ],
+  "bk_fixed": 64,
+  "prev_config": [
+   64,
+   128,
+   64,
+   4,
+   3
+  ],
+  "prev_ms": 0.4994,
+  "identical_to_prev": true,
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
+ },
+ "down@2048": {
+  "cublas_ms": 1.06,
+  "best_ms": 1.3184,
+  "ratio": 1.244,
+  "config": [
+   64,
+   256,
+   64,
+   4,
+   3
+  ]
+ },
+ "down@4096": {
+  "cublas_ms": 2.0931,
+  "best_ms": 2.5164,
+  "ratio": 1.202,
+  "config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ]
+ },
+ "gateup@4608": {
+  "cublas_ms": 4.6854,
+  "best_ms": 5.4351,
+  "ratio": 1.16,
+  "config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ]
+ },
+ "gateup@5120": {
+  "cublas_ms": 5.1781,
+  "best_ms": 6.0263,
+  "ratio": 1.164,
+  "config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ]
+ },
+ "gateup@6144": {
+  "cublas_ms": 6.175,
+  "best_ms": 7.2216,
+  "ratio": 1.169,
+  "config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ]
+ },
+ "gateup@7168": {
+  "cublas_ms": 7.254,
+  "best_ms": 8.4174,
+  "ratio": 1.16,
+  "config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ]
+ },
+ "gateup@8192": {
+  "cublas_ms": 8.2437,
+  "best_ms": 9.6232,
+  "ratio": 1.167,
+  "config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ]
+ },
+ "down@4608": {
+  "cublas_ms": 2.5017,
+  "best_ms": 2.8386,
+  "ratio": 1.135,
+  "config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ]
+ },
+ "down@5120": {
+  "cublas_ms": 2.5163,
+  "best_ms": 3.0226,
+  "ratio": 1.201,
+  "config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ]
+ },
+ "down@6144": {
+  "cublas_ms": 3.2541,
+  "best_ms": 3.8098,
+  "ratio": 1.171,
+  "config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ]
+ },
+ "down@7168": {
+  "cublas_ms": 3.6649,
+  "best_ms": 4.3167,
+  "ratio": 1.178,
+  "config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ]
+ },
+ "down@8192": {
+  "cublas_ms": 4.0765,
+  "best_ms": 4.8254,
+  "ratio": 1.184,
+  "config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ]
+ },
+ "projgd@205": {
+  "cublas_ms": 0.0273,
+  "best_ms": 0.0462,
+  "ratio": 1.689,
+  "config": [
+   32,
+   128,
+   64,
+   4,
+   3
+  ],
+  "tuned_at_counts": [
+   64,
+   128,
+   192
+  ],
+  "bk_fixed": 64,
+  "prev_config": [
+   64,
+   128,
+   64,
+   4,
+   3
+  ],
+  "prev_ms": 0.0555,
+  "identical_to_prev": true,
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
+ },
+ "projgd@512": {
+  "cublas_ms": 0.0374,
+  "best_ms": 0.0581,
+  "ratio": 1.553,
+  "config": [
+   128,
+   32,
+   64,
+   4,
+   4
+  ],
+  "tuned_at_counts": [
+   128,
+   256,
+   384
+  ],
+  "bk_fixed": 64,
+  "prev_config": [
+   64,
+   256,
+   64,
+   4,
+   3
+  ],
+  "prev_ms": 0.0908,
+  "identical_to_prev": true,
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
+ },
+ "projgd@1024": {
+  "cublas_ms": 0.0633,
+  "best_ms": 0.1026,
+  "ratio": 1.619,
+  "config": [
+   64,
+   256,
+   32,
+   4,
+   3
+  ],
+  "tuned_at_counts": [
+   256,
+   512,
+   768
+  ],
+  "bk_fixed": 32,
+  "prev_config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ],
+  "prev_ms": 0.1191,
+  "identical_to_prev": true,
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
+ },
+ "projgd@2048": {
+  "cublas_ms": 0.1,
+  "best_ms": 0.1481,
+  "ratio": 1.48,
+  "config": [
+   128,
+   64,
+   32,
+   4,
+   3
+  ],
+  "tuned_at_counts": [
+   1024
+  ],
+  "bk_fixed": 32,
+  "prev_config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ],
+  "prev_ms": 0.1544,
+  "identical_to_prev": true,
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
+ },
+ "projgd@4096": {
+  "cublas_ms": 0.1531,
+  "best_ms": 0.2229,
+  "ratio": 1.456,
+  "config": [
+   64,
+   128,
+   32,
+   4,
+   3
+  ],
+  "tuned_at_counts": [
+   2048
+  ],
+  "bk_fixed": 32,
+  "prev_config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ],
+  "prev_ms": 0.2491,
+  "identical_to_prev": true,
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
+ },
+ "projgd@4608": {
+  "cublas_ms": 0.176,
+  "best_ms": 0.2183,
+  "ratio": 1.24,
+  "config": [
+   64,
+   128,
+   32,
+   4,
+   4
+  ],
+  "tuned_at_counts": [
+   2304
+  ],
+  "bk_fixed": 32,
+  "prev_config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ],
+  "prev_ms": 0.2629,
+  "identical_to_prev": true,
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
+ },
+ "projgd@5120": {
+  "cublas_ms": 0.1936,
+  "best_ms": 0.2573,
+  "ratio": 1.329,
+  "config": [
+   64,
+   128,
+   32,
+   4,
+   3
+  ],
+  "tuned_at_counts": [
+   2560
+  ],
+  "bk_fixed": 32,
+  "prev_config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ],
+  "prev_ms": 0.2883,
+  "identical_to_prev": true,
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
+ },
+ "projgd@6144": {
+  "cublas_ms": 0.2383,
+  "best_ms": 0.2994,
+  "ratio": 1.256,
+  "config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ],
+  "tuned_at_counts": [
+   3072
+  ],
+  "bk_fixed": 32,
+  "prev_config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ],
+  "prev_ms": 0.2994,
+  "identical_to_prev": true,
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
+ },
+ "projgd@7168": {
+  "cublas_ms": 0.2698,
+  "best_ms": 0.3018,
+  "ratio": 1.119,
+  "config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ],
+  "tuned_at_counts": [
+   3584
+  ],
+  "bk_fixed": 32,
+  "prev_config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ],
+  "prev_ms": 0.3018,
+  "identical_to_prev": true,
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
+ },
+ "projgd@8192": {
+  "cublas_ms": 0.2839,
+  "best_ms": 0.3795,
+  "ratio": 1.337,
+  "config": [
+   64,
+   128,
+   32,
+   4,
+   3
+  ],
+  "tuned_at_counts": [
+   4096
+  ],
+  "bk_fixed": 32,
+  "prev_config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ],
+  "prev_ms": 0.3928,
+  "identical_to_prev": true,
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
+ },
+ "projup@205": {
+  "cublas_ms": 0.0194,
+  "best_ms": 0.0204,
+  "ratio": 1.055,
+  "config": [
+   32,
+   256,
+   64,
+   8,
+   4
+  ],
+  "tuned_at_counts": [
+   64,
+   128,
+   192
+  ],
+  "bk_fixed": 64,
+  "prev_config": [
+   64,
+   64,
+   64,
+   4,
+   4
+  ],
+  "prev_ms": 0.023,
+  "identical_to_prev": true,
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
+ },
+ "projup@512": {
+  "cublas_ms": 0.0307,
+  "best_ms": 0.0252,
+  "ratio": 0.821,
+  "config": [
+   128,
+   128,
+   64,
+   8,
+   3
+  ],
+  "tuned_at_counts": [
+   128,
+   256,
+   384
+  ],
+  "bk_fixed": 64,
+  "prev_config": [
+   64,
+   128,
+   64,
+   4,
+   3
+  ],
+  "prev_ms": 0.0345,
+  "identical_to_prev": true,
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
+ },
+ "projup@1024": {
+  "cublas_ms": 0.0325,
+  "best_ms": 0.0388,
+  "ratio": 1.195,
+  "config": [
+   64,
+   128,
+   64,
+   8,
+   3
+  ],
+  "tuned_at_counts": [
+   256,
+   512,
+   768
+  ],
+  "bk_fixed": 64,
+  "prev_config": [
+   64,
+   128,
+   64,
+   4,
+   3
+  ],
+  "prev_ms": 0.0406,
+  "identical_to_prev": true,
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
+ },
+ "projup@2048": {
+  "cublas_ms": 0.0537,
+  "best_ms": 0.0568,
+  "ratio": 1.057,
+  "config": [
+   64,
+   128,
+   64,
+   4,
+   3
+  ],
+  "tuned_at_counts": [
+   1024
+  ],
+  "bk_fixed": 64,
+  "prev_config": [
+   64,
+   256,
+   64,
+   4,
+   3
+  ],
+  "prev_ms": 0.0639,
+  "identical_to_prev": true,
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
+ },
+ "projup@4096": {
+  "cublas_ms": 0.0855,
+  "best_ms": 0.1015,
+  "ratio": 1.188,
+  "config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ],
+  "tuned_at_counts": [
+   2048
+  ],
+  "bk_fixed": 32,
+  "prev_config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ],
+  "prev_ms": 0.1015,
+  "identical_to_prev": true,
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
+ },
+ "projup@4608": {
+  "cublas_ms": 0.1002,
+  "best_ms": 0.1131,
+  "ratio": 1.129,
+  "config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ],
+  "tuned_at_counts": [
+   2304
+  ],
+  "bk_fixed": 32,
+  "prev_config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ],
+  "prev_ms": 0.1131,
+  "identical_to_prev": true,
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
+ },
+ "projup@5120": {
+  "cublas_ms": 0.1019,
+  "best_ms": 0.1145,
+  "ratio": 1.124,
+  "config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ],
+  "tuned_at_counts": [
+   2560
+  ],
+  "bk_fixed": 32,
+  "prev_config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ],
+  "prev_ms": 0.1145,
+  "identical_to_prev": true,
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
+ },
+ "projup@6144": {
+  "cublas_ms": 0.1303,
+  "best_ms": 0.1465,
+  "ratio": 1.125,
+  "config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ],
+  "tuned_at_counts": [
+   3072
+  ],
+  "bk_fixed": 32,
+  "prev_config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ],
+  "prev_ms": 0.1465,
+  "identical_to_prev": true,
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
+ },
+ "projup@7168": {
+  "cublas_ms": 0.1457,
+  "best_ms": 0.1692,
+  "ratio": 1.162,
+  "config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ],
+  "tuned_at_counts": [
+   3584
+  ],
+  "bk_fixed": 32,
+  "prev_config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ],
+  "prev_ms": 0.1692,
+  "identical_to_prev": true,
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
+ },
+ "projup@8192": {
+  "cublas_ms": 0.1617,
+  "best_ms": 0.1827,
+  "ratio": 1.13,
+  "config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ],
+  "tuned_at_counts": [
+   4096
+  ],
+  "bk_fixed": 32,
+  "prev_config": [
+   128,
+   128,
+   32,
+   4,
+   3
+  ],
+  "prev_ms": 0.1827,
+  "identical_to_prev": true,
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
+ }
+}
