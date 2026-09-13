@@ -38,9 +38,9 @@ from typing import Any
 # order the paper prints them; a metric absent from the report is an absent COLUMN, refused,
 # never a silently short row.
 COLUMNS = [
-    "TTFT p50", "TTFT mean", "TTFT p99",
-    "TPOT p50", "TPOT mean", "TPOT p99",
-    "E2E p50", "E2E mean", "E2E p99",
+    "TTFT p50", "TTFT mean", "TTFT p95", "TTFT p99",
+    "TPOT p50", "TPOT mean", "TPOT p95", "TPOT p99",
+    "E2E p50", "E2E mean", "E2E p95", "E2E p99",
     "output TPS",
 ]
 MULTIPLIERS = (0.75, 0.95, 1.25)
@@ -122,7 +122,7 @@ def macro_name(dataset: str, multiplier: float, column: str) -> str:
     """A LaTeX-legal name: letters only, so the prose can reference it."""
     rung = {0.75: "Low", 0.95: "Mid", 1.25: "High"}[multiplier]
     metric = column.replace(" ", "").replace("output", "").replace("p50", "Pfifty")
-    metric = metric.replace("p99", "Pninetynine").replace("mean", "Mean")
+    metric = metric.replace("p99", "Pninetynine").replace("p95", "Pninetyfive").replace("mean", "Mean")
     metric = metric.replace("E2E", "EtoE")
     name = "vp" + metric + MACRO_DISPLAY.get(dataset, dataset.replace("_", "").title()) + rung
     if not name.isalpha():
