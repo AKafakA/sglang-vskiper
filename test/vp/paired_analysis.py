@@ -108,6 +108,7 @@ def main() -> int:
 
     # (dataset, suite) -> {metric: [per-rep delta %]}
     cells: dict[tuple[str, str], dict[str, list[float]]] = {}
+    absolutes: dict = {}
     refused: list[str] = []
     counted: dict[tuple[str, str], list[int]] = {}
 
@@ -148,6 +149,9 @@ def main() -> int:
                     for _, field in LATENCY_METRICS + THROUGHPUT_METRICS:
                         if field in b and field in t and b[field]:
                             bucket.setdefault(field, []).append((t[field] - b[field]) / b[field] * 100.0)
+                            # Absolutes travel with the delta (reviewer W7: a systems reader
+                            # needs the baseline's ms / s / tok/s to check the story).
+                            absolutes.setdefault(key, {}).setdefault(field, []).append((b[field], t[field]))
                     counted.setdefault(key, []).append(rep)
 
     if refused:
@@ -165,6 +169,7 @@ def main() -> int:
     print("  an interval containing zero is PARITY, reported as parity (straddle rule)\n")
 
     report: dict = {"baseline": args.baseline, "treatment": args.treatment, "rows": []}
+    unit = {"duration": "s", "output_throughput": "tok/s"}
     for (dataset, suite), bucket in sorted(cells.items()):
         n = len(counted[(dataset, suite)])
         print(f"  {dataset}  {suite}   (n = {n} gated rep{'s' if n != 1 else ''}: "
@@ -183,10 +188,14 @@ def main() -> int:
                     or (lo > 0 and field == "output_throughput") else "treatment worse")
                 span = f"  [{lo:+.2f}, {hi:+.2f}]"
             print(f"      {label:<11} {mean:+7.2f} %{span:<22} {verdict}")
+            pairs = absolutes.get((dataset, suite), {}).get(field, [])
             report["rows"].append({"dataset": dataset, "suite": suite, "metric": label,
                                   "field": field, "n": n, "mean_pct": mean,
                                   "ci95_half": None if math.isnan(half) else half,
-                                  "verdict": verdict})
+                                  "verdict": verdict,
+                                  "baseline_abs": st.fmean(b for b, _ in pairs) if pairs else None,
+                                  "treatment_abs": st.fmean(t for _, t in pairs) if pairs else None,
+                                  "unit": unit.get(field, "ms")})
         print()
 
     if args.json:
