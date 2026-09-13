@@ -66,16 +66,28 @@ def upstream_defaults(defaults_tree: Path, model_path: str, python: str) -> dict
     return json.loads(done.stdout.strip().splitlines()[-1])
 
 
-def load_exemptions(design_tree: Path) -> dict[str, dict[str, Any]]:
+def load_exemptions(design_tree: Path, profile: str | None) -> dict[str, dict[str, Any]]:
+    """The declared exemptions that apply under `profile` (None = the design's default profile).
+
+    An exemption carrying a "profile" key applies only under that launch profile; under any
+    other profile the field is held to the default. So `sglang_default` cannot inherit the
+    paper profile's fp16, and the paper profile cannot smuggle a value it did not declare."""
     env = dict(os.environ)
     env["PYTHONPATH"] = str(design_tree / "python")
     code = ("import json; from sglang.srt.vpipe import design; "
-            "print(json.dumps(design.SERVED_LAUNCH_EXEMPTIONS, default=str))")
+            "print(json.dumps({'exemptions': design.SERVED_LAUNCH_EXEMPTIONS, "
+            "'profiles': design.SERVED_LAUNCH_PROFILES, "
+            "'default_profile': design.SERVED_LAUNCH_PROFILE_DEFAULT}, default=str))")
     done = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
     if done.returncode != 0:
-        sys.exit(f"could not read SERVED_LAUNCH_EXEMPTIONS from {design_tree}:\n"
+        sys.exit(f"could not read the launch declarations from {design_tree}:\n"
                  f"{done.stderr[-2000:]}")
-    return json.loads(done.stdout.strip().splitlines()[-1])
+    decl = json.loads(done.stdout.strip().splitlines()[-1])
+    active = profile or decl["default_profile"]
+    if active not in decl["profiles"]:
+        sys.exit(f"unknown launch profile {active!r}; declared: {sorted(decl['profiles'])}")
+    return {field: rule for field, rule in decl["exemptions"].items()
+            if rule.get("profile") in (None, active)}
 
 
 def same(served: Any, default: Any) -> bool:
@@ -116,16 +128,20 @@ def main() -> int:
     ap.add_argument("--design-tree", required=True, type=Path,
                     help="the fork tree whose design.py declares the exemptions")
     ap.add_argument("--python", default=sys.executable)
+    ap.add_argument("--launch-profile", default=None,
+                    help="the launch profile the server was booted under (design.SERVED_LAUNCH_PROFILES); "
+                         "default: the design's default profile")
     ap.add_argument("--report", action="store_true")
     args = ap.parse_args()
 
     info = json.loads(args.server_info.read_text())
     defaults = upstream_defaults(args.defaults_tree, args.model_path, args.python)
-    exemptions = load_exemptions(args.design_tree)
+    exemptions = load_exemptions(args.design_tree, args.launch_profile)
     declared, undeclared = conformance(info, defaults, exemptions)
 
     print(f"default conformance: {len(declared)} declared, {len(undeclared)} undeclared "
-          f"(defaults from {args.defaults_tree}, exemptions from design.py)")
+          f"(profile {args.launch_profile or 'default'}; defaults from {args.defaults_tree}, "
+          f"exemptions from design.py)")
     for line in declared + undeclared:
         print(line)
     if undeclared and not args.report:
