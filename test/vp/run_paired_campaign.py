@@ -173,7 +173,11 @@ class Server:
             "--revision", MODEL_REVISION,
             "--served-model-name", SERVED_MODEL_NAME,
             "--host", "127.0.0.1", "--port", str(self.port),
-            "--mem-fraction-static", "0.8", "--dtype=float16",
+            # No dtype, no memory fraction: SGLang's computed defaults for the model on
+            # this device (D-757). `--dtype=float16` and `--mem-fraction-static 0.8` were
+            # carried here from a Turing dev host and sat undeclared in every headline
+            # cell since v1.3. Only the D-187 substrate below is non-default, and it is
+            # declared in design.SERVED_LAUNCH_EXEMPTIONS.
             "--attention-backend=triton",
             "--prefill-attention-backend=triton",
             "--decode-attention-backend=triton",
@@ -226,6 +230,7 @@ class Server:
                     "Refusing to record it as upstream."
                 )
             log(f"    {self.arm} up on :{self.port}, attested UPSTREAM (no vp_runtime)")
+            default_conformance_gate(self.spec, self.arm, self.port)
             return self
         # G1b — INTENDED vs RESOLVED design, on the live server, before the cell runs.
         # verify_served_design's only invocation sites were cell_gates.py (which nothing
@@ -244,6 +249,7 @@ class Server:
                 f"{tail[-1][:200] if tail else 'no output'}"
             )
         log(f"    G1 served design == intended design ({self.arm})")
+        default_conformance_gate(self.spec, self.arm, self.port)
 
         live = served_arm(self.port)
         if live != self.arm:
@@ -263,6 +269,31 @@ class Server:
         except subprocess.TimeoutExpired:
             os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
             self.process.wait(timeout=30)
+
+
+def default_conformance_gate(spec: dict[str, Any], arm: str, port: int) -> None:
+    """Gate E (D-184, restored by D-757): this server runs at SGLang's DEFAULTS for its model
+    on this device, except the knobs design.SERVED_LAUNCH_EXEMPTIONS names. Both arms, at
+    boot, before any GPU time is spent. The cross-arm gate cannot see what both arms share;
+    this one compares each arm against the defaults the BASELINE tree computes."""
+    snapshot = Path(spec["staging_root"]) / f"server_info.conformance.{arm}.{port}.json"
+    snapshot.parent.mkdir(parents=True, exist_ok=True)
+    snapshot.write_text(json.dumps(server_info(port), indent=2, sort_keys=True) + "\n")
+    gate = Path(spec["tree"]) / "test/vp/gates/verify_default_conformance.py"
+    done = subprocess.run(
+        [sys.executable, str(gate), "--server-info", str(snapshot),
+         "--model-path", spec["model_path"], "--defaults-tree", spec["upstream_tree"],
+         "--design-tree", spec["tree"], "--python", spec["python"]],
+        capture_output=True, text=True,
+    )
+    for line in done.stdout.splitlines():
+        log(f"      {line}")
+    if done.returncode != 0:
+        raise RuntimeError(
+            f"Gate E default conformance REFUSED arm {arm!r}: an undeclared non-default "
+            f"launch value (see lines marked '!'); {done.stderr.strip()[-300:]}"
+        )
+    log(f"    Gate E default conformance ({arm}): PASS")
 
 
 def run_arm_cells(spec: dict[str, Any], dataset: str, rates: dict[str, float],
