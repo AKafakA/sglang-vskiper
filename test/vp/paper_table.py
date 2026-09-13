@@ -203,11 +203,20 @@ def verify(rows: list[dict[str, Any]], tex: str, tol: float,
         if int(match.group("n")) != row["n"]:
             problems.append(f"{key}: n={match.group('n')} in main.tex, {row['n']} measured")
         found = CELL_RE.findall(match.group("cells"))
-        if len(found) != len(row["cells"]):
+        # The paper carries the same (dataset, rate) row in more than one table (the headline
+        # with COLUMN_SETS["main"], the tails appendix with COLUMN_SETS["tails"]); a tex row is
+        # checked against the column set whose width it has. A width matching no declared set
+        # is a mismatch, never a skip.
+        by_name = {c[0]: c for c in row["cells"]}
+        widths = {name: cols for name, cols in COLUMN_SETS.items() if len(cols) == len(found)}
+        if not widths:
             problems.append(
-                f"{key}: {len(found)} cells in main.tex, {len(row['cells'])} measured")
+                f"{key}: {len(found)} cells in main.tex match no column set "
+                f"({', '.join(f'{n}={len(c)}' for n, c in COLUMN_SETS.items())})")
             continue
-        for (column, mean, half), (tex_mean, tex_half) in zip(row["cells"], found):
+        columns = next(iter(widths.values()))
+        cells = [by_name[c] for c in columns]
+        for (column, mean, half), (tex_mean, tex_half) in zip(cells, found):
             if abs(float(tex_mean) - mean) > tol:
                 problems.append(
                     f"{key} {column}: main.tex {tex_mean}, measured {mean:+.1f}")
