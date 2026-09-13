@@ -84,14 +84,26 @@ def launch_profile(spec: dict[str, Any]) -> dict[str, Any]:
         env = dict(os.environ)
         env["PYTHONPATH"] = str(Path(spec["tree"]) / "python")
         code = ("import json, sys; from sglang.srt.vpipe import design; "
-                "name = sys.argv[1] or design.SERVED_LAUNCH_PROFILE_DEFAULT; "
-                "print(json.dumps(design.SERVED_LAUNCH_PROFILES[name]))")
+                "profiles = getattr(design, 'SERVED_LAUNCH_PROFILES', None); "
+                "name = sys.argv[1] or getattr(design, 'SERVED_LAUNCH_PROFILE_DEFAULT', 'paper'); "
+                "print(json.dumps(None if profiles is None else profiles[name]))")
         done = subprocess.run([spec["python"], "-c", code, name or ""], env=env,
                               capture_output=True, text=True)
         if done.returncode != 0:
             raise RuntimeError(f"launch profile {name!r} could not be read from the tree: "
                                f"{done.stderr.strip()[-400:]}")
-        _PROFILE_CACHE[key] = json.loads(done.stdout.strip().splitlines()[-1])
+        profile = json.loads(done.stdout.strip().splitlines()[-1])
+        if profile is None:
+            # A tree from before the profiles existed (e.g. the measured 735d451c89, booted by
+            # this driver for tree equivalence) hard-coded the paper protocol in its OWN driver;
+            # booting it under any other launch would compare the wrong thing. Say so.
+            if name not in (None, "paper"):
+                raise RuntimeError(f"tree {spec['tree']} declares no launch profiles; only the "
+                                   f"paper protocol it hard-coded can be reproduced, not {name!r}")
+            log(f"    launch profile: tree declares none -- paper protocol (fp16, 0.8) as that "
+                f"tree's own driver hard-coded it")
+            profile = {"dtype": "float16", "mem_fraction_static": 0.8}
+        _PROFILE_CACHE[key] = profile
     return _PROFILE_CACHE[key]
 
 
