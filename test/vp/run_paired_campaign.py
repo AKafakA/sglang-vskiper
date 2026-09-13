@@ -69,6 +69,32 @@ def served_model_name(spec: dict[str, Any]) -> str:
     return str(spec.get("served_model_name", SERVED_MODEL_NAME))
 
 
+_PROFILE_CACHE: dict[str, dict[str, Any]] = {}
+
+
+def launch_profile_name(spec: dict[str, Any]) -> str | None:
+    return spec.get("launch_profile")
+
+
+def launch_profile(spec: dict[str, Any]) -> dict[str, Any]:
+    """The launch profile's arguments, read from the TREE's design table (never from here)."""
+    name = launch_profile_name(spec)
+    key = f"{spec['tree']}::{name}"
+    if key not in _PROFILE_CACHE:
+        env = dict(os.environ)
+        env["PYTHONPATH"] = str(Path(spec["tree"]) / "python")
+        code = ("import json, sys; from sglang.srt.vpipe import design; "
+                "name = sys.argv[1] or design.SERVED_LAUNCH_PROFILE_DEFAULT; "
+                "print(json.dumps(design.SERVED_LAUNCH_PROFILES[name]))")
+        done = subprocess.run([spec["python"], "-c", code, name or ""], env=env,
+                              capture_output=True, text=True)
+        if done.returncode != 0:
+            raise RuntimeError(f"launch profile {name!r} could not be read from the tree: "
+                               f"{done.stderr.strip()[-400:]}")
+        _PROFILE_CACHE[key] = json.loads(done.stdout.strip().splitlines()[-1])
+    return _PROFILE_CACHE[key]
+
+
 def log(message: str) -> None:
     print(f"[{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}] {message}", flush=True)
 
@@ -177,17 +203,21 @@ class Server:
         self.process: subprocess.Popen[bytes] | None = None
 
     def command(self) -> list[str]:
+        # Beyond the D-187 substrate, ONLY the launch profile's arguments are passed
+        # (design.SERVED_LAUNCH_PROFILES, declared by name; the spec picks one). `--dtype=float16`
+        # and `--mem-fraction-static 0.8` used to be hard-coded here, carried from a Turing dev
+        # host and undeclared in every headline cell since v1.3 (D-757); they are now the
+        # "paper" profile, declared in SERVED_LAUNCH_EXEMPTIONS and checked by Gate E at boot.
+        profile_args: list[str] = []
+        for key, value in launch_profile(self.spec).items():
+            profile_args += [f"--{key.replace('_', '-')}", str(value)]
         return [
             self.spec["python"], "-m", "sglang.launch_server",
             "--model-path", self.spec["model_path"],
             "--revision", model_revision(self.spec),
             "--served-model-name", served_model_name(self.spec),
             "--host", "127.0.0.1", "--port", str(self.port),
-            # No dtype, no memory fraction: SGLang's computed defaults for the model on
-            # this device (D-757). `--dtype=float16` and `--mem-fraction-static 0.8` were
-            # carried here from a Turing dev host and sat undeclared in every headline
-            # cell since v1.3. Only the D-187 substrate below is non-default, and it is
-            # declared in design.SERVED_LAUNCH_EXEMPTIONS.
+            *profile_args,
             "--attention-backend=triton",
             "--prefill-attention-backend=triton",
             "--decode-attention-backend=triton",
@@ -293,7 +323,8 @@ def default_conformance_gate(spec: dict[str, Any], arm: str, port: int) -> None:
     done = subprocess.run(
         [sys.executable, str(gate), "--server-info", str(snapshot),
          "--model-path", spec["model_path"], "--defaults-tree", spec["upstream_tree"],
-         "--design-tree", spec["tree"], "--python", spec["python"]],
+         "--design-tree", spec["tree"], "--python", spec["python"],
+         *(["--launch-profile", launch_profile_name(spec)] if launch_profile_name(spec) else [])],
         capture_output=True, text=True,
     )
     for line in done.stdout.splitlines():

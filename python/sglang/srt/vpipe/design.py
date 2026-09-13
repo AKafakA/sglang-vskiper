@@ -139,7 +139,27 @@ SERVED_LAUNCH_EXEMPTIONS: Final[dict[str, dict[str, Any]]] = {
     # (SGLANG_IS_FLASHINFER_AVAILABLE=false in the campaign driver): upstream then defaults
     # its sampler to pytorch. Same on both arms; stated here so it is declared, not hidden.
     "sampling_backend": {"value": "pytorch", "decision": "D-187/D-757"},
+    # The PAPER PROTOCOL (owner, D-757 add., 2026-09-13): fp16 and a static memory fraction
+    # of 0.8, fixed rather than left to SGLang's version-dependent defaults so that every
+    # campaign shares one numeric format and one K/V budget. Declared HERE, by name, and
+    # applied by the driver only under the "paper" launch profile below; under
+    # "sglang_default" these two are not exempt and Gate E expects the computed defaults.
+    "dtype": {"value": "float16", "decision": "D-757 add.", "profile": "paper"},
+    "mem_fraction_static": {"value": 0.8, "decision": "D-757 add.", "profile": "paper"},
 }
+
+# A LAUNCH PROFILE is the set of launch arguments the driver passes beyond the substrate
+# (both arms, every boot). Two exist, both declared, neither an environment variable:
+#   paper           -- the paper's protocol (D-757 add.): fp16, static memory fraction 0.8
+#   sglang_default  -- nothing: SGLang's computed defaults (the CSD3 backup line, D-759)
+# The spec names one (`launch_profile`); absent, the paper profile is used. Gate E verifies
+# the served values against the defaults with the profile's exemptions applied, so a profile
+# cannot smuggle a value: every non-default it produces must also be listed above.
+SERVED_LAUNCH_PROFILES: Final[dict[str, dict[str, Any]]] = {
+    "paper": {"dtype": "float16", "mem_fraction_static": 0.8},
+    "sglang_default": {},
+}
+SERVED_LAUNCH_PROFILE_DEFAULT: Final[str] = "paper"
 
 # ---------------------------------------------------------------------------
 # THE CANONICAL ARMS

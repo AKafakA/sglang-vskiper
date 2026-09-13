@@ -45,3 +45,15 @@ def test_model_identity_is_not_a_knob():
     served = dict(HEADLINE_20260913, dtype="auto", mem_fraction_static=0.83)
     _, undeclared = conformance(served, DEFAULTS, EXEMPT)
     assert not any("revision" in l or "port" in l for l in undeclared)
+
+
+def test_profile_scoped_exemptions_apply_only_under_their_profile():
+    """The paper profile declares fp16/0.8; sglang_default must NOT inherit them."""
+    from verify_default_conformance import conformance as conf
+    paper = dict(EXEMPT, dtype={"value": "float16", "decision": "D-757 add.", "profile": "paper"},
+                 mem_fraction_static={"value": 0.8, "decision": "D-757 add.", "profile": "paper"})
+    declared, undeclared = conf(HEADLINE_20260913, DEFAULTS, paper)
+    assert undeclared == [] and len(declared) == 6
+    default_only = {k: v for k, v in paper.items() if v.get("profile") is None}
+    _, undeclared = conf(HEADLINE_20260913, DEFAULTS, default_only)
+    assert [l.split(":")[0].strip("! ") for l in undeclared] == ["dtype", "mem_fraction_static"]
