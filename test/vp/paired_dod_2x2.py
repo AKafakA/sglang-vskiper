@@ -61,6 +61,10 @@ def main() -> int:
     ap.add_argument("--dataset", choices=sorted(SPEC), required=True)
     ap.add_argument("--arm", action="append", default=[], help="A=<dir> ... (all four required)")
     ap.add_argument("--json", default=None)
+    ap.add_argument("--margin", type=float, default=None,
+                    help="non-inferiority margin epsilon in pp (owner, D-764: 1.0): the gate passes when the "
+                         "lower 95%% bound of the paired d-o-d is above -epsilon, i.e. the runtime adds at most "
+                         "epsilon on top of the checkpoint's own cost. Without it the old straddle rule is printed.")
     ap.add_argument("--latex", default=None, help="APPEND this dataset's table row and macros (same names as summarize_2x2, plus \\vpQ<Ds>DodCi)")
     args = ap.parse_args()
     arms = dict(a.split("=", 1) for a in args.arm)
@@ -84,7 +88,14 @@ def main() -> int:
            "means": {k: 100 * sum(v[q] for q in keys) / n for k, v in per.items()},
            "B_minus_A": stats(ba), "D_minus_C": stats(dc), "dod": stats(dod)}
     z = rep["dod"]
-    rep["verdict"] = "parity (interval contains zero)" if abs(z["mean_pp"]) <= z["ci95_half_pp"] else "differs"
+    if args.margin is not None:
+        lower = z["mean_pp"] - z["ci95_half_pp"]
+        rep["margin_pp"] = args.margin; rep["dod_lower_pp"] = lower
+        rep["verdict"] = (f"non-inferior at eps={args.margin:g} pp (lower bound {lower:+.2f} > {-args.margin:+.2f})"
+                          if lower > -args.margin else
+                          f"NOT shown non-inferior at eps={args.margin:g} pp (lower bound {lower:+.2f})")
+    else:
+        rep["verdict"] = "no resolved difference (interval contains zero)" if abs(z["mean_pp"]) <= z["ci95_half_pp"] else "differs"
     print(f"{args.dataset}: n={n} docs | A {rep['means']['A']:.2f} B {rep['means']['B']:.2f} C {rep['means']['C']:.2f} D {rep['means']['D']:.2f} | "
           f"(B-A) {rep['B_minus_A']['mean_pp']:+.2f} ± {rep['B_minus_A']['ci95_half_pp']:.2f} pp | "
           f"(D-C) {rep['D_minus_C']['mean_pp']:+.2f} ± {rep['D_minus_C']['ci95_half_pp']:.2f} pp | "
@@ -97,7 +108,10 @@ def main() -> int:
         metric_label = {"gsm8k": "\\texttt{exact\\_match,flexible-extract}", "coqa": "\\texttt{f1,none}",
                         "bbh_cot": "\\texttt{exact\\_match,get-answer}"}[args.dataset]
         m = rep["means"]
-        gate = "parity" if rep["verdict"].startswith("parity") else ("served above ref." if z["mean_pp"] > 0 else "served below ref.")
+        if args.margin is not None:
+            gate = ("pass" if rep["dod_lower_pp"] > -args.margin else "FAIL") + (" (served above ref.)" if rep["dod_lower_pp"] > 0 else "")
+        else:
+            gate = "no resolved diff." if rep["verdict"].startswith("no resolved") else ("served above ref." if z["mean_pp"] > 0 else "served below ref.")
         row = (f"{disp} & {metric_label} & {m['A']/100:.4f} & {m['B']/100:.4f} & {m['C']/100:.4f} & {m['D']/100:.4f} & "
                f"{rep['B_minus_A']['mean_pp']:+.2f} & {rep['D_minus_C']['mean_pp']:+.2f} & "
                f"{z['mean_pp']:+.2f} $\\pm$ {z['ci95_half_pp']:.2f} & {gate} \\\\\n")
@@ -109,6 +123,7 @@ def main() -> int:
             f"\\newcommand{{\\vpQ{macro}Ndocs}}{{{n:,}}}",
             f"\\newcommand{{\\vpQ{macro}ArmD}}{{{m['D']/100:.4f}}}",
             f"\\newcommand{{\\vpQ{macro}ArmC}}{{{m['C']/100:.4f}}}",
+            f"\\newcommand{{\\vpQ{macro}DodLower}}{{{z['mean_pp'] - z['ci95_half_pp']:+.2f}}}",
         ]) + "\n"
         with open(args.latex, "a") as fh:
             fh.write(row)
