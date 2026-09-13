@@ -119,6 +119,29 @@ SERVED_GATE_MODE: Final[str] = "released"
 SERVED_FUSED_ROUTER_NORM: Final[bool] = False
 
 # ---------------------------------------------------------------------------
+# LAUNCH ARGUMENTS: SGLang's DEFAULTS, except these, by name (D-184 Gate E; D-757)
+# ---------------------------------------------------------------------------
+# Every headline server must resolve to what `ServerArgs(model_path=...)` computes for the
+# model on the device it runs on (`test/vp/gates/verify_default_conformance.py`, at boot,
+# both arms). A field may differ ONLY if it is listed here with the exact served value and
+# the decision that exempted it. On 2026-09-13 two undeclared non-defaults (`dtype float16`
+# on bf16 checkpoints; `mem_fraction_static 0.8` vs the computed 0.83) were found in every
+# headline cell since v1.3, carried from a Turing dev host -- the cross-arm gate cannot see
+# what both arms share, and the D-184 gate had been lost in the refactor.
+SERVED_LAUNCH_EXEMPTIONS: Final[dict[str, dict[str, Any]]] = {
+    # The unified triton substrate (owner, D-187): FlexiDepth's masked/routed attention is
+    # served by the triton backend in both phases; the baseline runs the SAME substrate so
+    # the only cross-arm difference is the treatment.
+    "attention_backend": {"value": "triton", "decision": "D-187"},
+    "prefill_attention_backend": {"value": "triton", "decision": "D-187"},
+    "decode_attention_backend": {"value": "triton", "decision": "D-187"},
+    # Consequence of enforcing the no-FlashInfer substrate for both arms
+    # (SGLANG_IS_FLASHINFER_AVAILABLE=false in the campaign driver): upstream then defaults
+    # its sampler to pytorch. Same on both arms; stated here so it is declared, not hidden.
+    "sampling_backend": {"value": "pytorch", "decision": "D-187/D-757"},
+}
+
+# ---------------------------------------------------------------------------
 # THE CANONICAL ARMS
 # ---------------------------------------------------------------------------
 # An arm is WHAT IS BEING MEASURED; the design above is HOW it is served, and does not
