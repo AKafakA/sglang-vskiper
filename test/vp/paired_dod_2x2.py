@@ -61,6 +61,8 @@ def main() -> int:
     ap.add_argument("--dataset", choices=sorted(SPEC), required=True)
     ap.add_argument("--arm", action="append", default=[], help="A=<dir> ... (all four required)")
     ap.add_argument("--json", default=None)
+    ap.add_argument("--macro-prefix", default="vpQ", help="LaTeX macro prefix (vpQ for the Llama 2x2; e.g. vpQwen for the Qwen row)")
+    ap.add_argument("--macros", default=None, help="macros file (default: quality_macros.tex beside --latex)")
     ap.add_argument("--margin", type=float, default=None,
                     help="non-inferiority margin epsilon in pp (owner, D-764: 1.0): the gate passes when the "
                          "lower 95%% bound of the paired d-o-d is above -epsilon, i.e. the runtime adds at most "
@@ -116,18 +118,18 @@ def main() -> int:
                f"{rep['B_minus_A']['mean_pp']:+.2f} & {rep['D_minus_C']['mean_pp']:+.2f} & "
                f"{z['mean_pp']:+.2f} $\\pm$ {z['ci95_half_pp']:.2f} & {gate} \\\\\n")
         macros = "\n".join([
-            f"\\newcommand{{\\vpQ{macro}BminusA}}{{{rep['B_minus_A']['mean_pp']:+.2f}}}",
-            f"\\newcommand{{\\vpQ{macro}DminusC}}{{{rep['D_minus_C']['mean_pp']:+.2f}}}",
-            f"\\newcommand{{\\vpQ{macro}Dod}}{{{z['mean_pp']:+.2f}}}",
-            f"\\newcommand{{\\vpQ{macro}DodCi}}{{{z['ci95_half_pp']:.2f}}}",
-            f"\\newcommand{{\\vpQ{macro}Ndocs}}{{{n:,}}}",
-            f"\\newcommand{{\\vpQ{macro}ArmD}}{{{m['D']/100:.4f}}}",
-            f"\\newcommand{{\\vpQ{macro}ArmC}}{{{m['C']/100:.4f}}}",
-            f"\\newcommand{{\\vpQ{macro}DodLower}}{{{z['mean_pp'] - z['ci95_half_pp']:+.2f}}}",
+            f"\\newcommand{{\\{args.macro_prefix}{macro}BminusA}}{{{rep['B_minus_A']['mean_pp']:+.2f}}}",
+            f"\\newcommand{{\\{args.macro_prefix}{macro}DminusC}}{{{rep['D_minus_C']['mean_pp']:+.2f}}}",
+            f"\\newcommand{{\\{args.macro_prefix}{macro}Dod}}{{{z['mean_pp']:+.2f}}}",
+            f"\\newcommand{{\\{args.macro_prefix}{macro}DodCi}}{{{z['ci95_half_pp']:.2f}}}",
+            f"\\newcommand{{\\{args.macro_prefix}{macro}Ndocs}}{{{n:,}}}",
+            f"\\newcommand{{\\{args.macro_prefix}{macro}ArmD}}{{{m['D']/100:.4f}}}",
+            f"\\newcommand{{\\{args.macro_prefix}{macro}ArmC}}{{{m['C']/100:.4f}}}",
+            f"\\newcommand{{\\{args.macro_prefix}{macro}DodLower}}{{{z['mean_pp'] - z['ci95_half_pp']:+.2f}}}",
         ]) + "\n"
         with open(args.latex, "a") as fh:
             fh.write(row)
-        mpath = os.path.join(os.path.dirname(args.latex), "quality_macros.tex")
+        mpath = args.macros or os.path.join(os.path.dirname(args.latex), "quality_macros.tex")
         with open(mpath, "a") as fh:
             fh.write(macros)
         print(f"  appended row to {args.latex} and macros to {mpath}")
