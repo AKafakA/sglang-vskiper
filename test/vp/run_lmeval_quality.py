@@ -111,7 +111,12 @@ def _lmeval_command(args: argparse.Namespace, task: str, kind: str) -> list[str]
             # raw prompts; on coqa that alone flipped doc 80 (' Island' -> EOS) and made the
             # 2x2 compare lanes on different tokens. lm-eval's own default is True; the
             # False here was an unrecorded override.
-            f"max_retries=2,tokenized_requests=True"
+            # [2026-09-13] ...for the COMPLETIONS endpoint. A chat endpoint takes message dicts,
+            # and lm-eval's tokenized chat request is the rendered template as a string, which
+            # SGLang rejects (400, "messages.0 should be a valid dictionary"); the Llama arm-C
+            # gsm8k run (q2x2-corrected) was made with tokenized_requests=False, and the served
+            # side renders the same template from the same tokenizer directory.
+            f"max_retries=2,tokenized_requests={'False' if kind == 'chat_messages' else 'True'}"
         )
     else:
         model = "hf"
