@@ -49,7 +49,8 @@ LATENCY_METRICS = [
     # a throughput in the paper: the drain of the few longest requests decides it.
     ("makespan", "duration"),
 ]  # [D-750 add.2, owner 09-13] p95 added: reported, not gated (the bank-set rule is on the means)
-THROUGHPUT_METRICS = [("output TPS", "output_throughput")]
+THROUGHPUT_METRICS = [("output TPS", "output_throughput"),
+                      ("request rate", "request_throughput")]  # completed requests per second of makespan (reviewer: the achieved rate beside the offered one)
 
 
 def last_record(path: Path) -> dict:
@@ -169,7 +170,7 @@ def main() -> int:
     print("  an interval containing zero is PARITY, reported as parity (straddle rule)\n")
 
     report: dict = {"baseline": args.baseline, "treatment": args.treatment, "rows": []}
-    unit = {"duration": "s", "output_throughput": "tok/s"}
+    unit = {"duration": "s", "output_throughput": "tok/s", "request_throughput": "req/s"}
     for (dataset, suite), bucket in sorted(cells.items()):
         n = len(counted[(dataset, suite)])
         print(f"  {dataset}  {suite}   (n = {n} gated rep{'s' if n != 1 else ''}: "
