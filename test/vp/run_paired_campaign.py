@@ -55,8 +55,18 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+# The Llama-3-8B-Instruct defaults; a spec may name another model with "model_revision" and
+# "served_model_name" (v1.5: the Qwen3-4B feasibility row uses the same driver, same gates).
 MODEL_REVISION = "53346005fb0ef11d3b6a83b12c895cca40156b6c"
 SERVED_MODEL_NAME = "NousResearch/Meta-Llama-3-8B-Instruct"
+
+
+def model_revision(spec: dict[str, Any]) -> str:
+    return str(spec.get("model_revision", MODEL_REVISION))
+
+
+def served_model_name(spec: dict[str, Any]) -> str:
+    return str(spec.get("served_model_name", SERVED_MODEL_NAME))
 
 
 def log(message: str) -> None:
@@ -170,8 +180,8 @@ class Server:
         return [
             self.spec["python"], "-m", "sglang.launch_server",
             "--model-path", self.spec["model_path"],
-            "--revision", MODEL_REVISION,
-            "--served-model-name", SERVED_MODEL_NAME,
+            "--revision", model_revision(self.spec),
+            "--served-model-name", served_model_name(self.spec),
             "--host", "127.0.0.1", "--port", str(self.port),
             # No dtype, no memory fraction: SGLang's computed defaults for the model on
             # this device (D-757). `--dtype=float16` and `--mem-fraction-static 0.8` were
@@ -314,8 +324,8 @@ def run_arm_cells(spec: dict[str, Any], dataset: str, rates: dict[str, float],
         subprocess.run(
             [spec["python"], str(tree / "test/vp/make_deployment_manifest.py"),
              "--deployment-id", f"paired-{dataset}-{arm}-rep{rep}",
-             "--system-id", arm, "--model", SERVED_MODEL_NAME,
-             "--model-revision", MODEL_REVISION,
+             "--system-id", arm, "--model", served_model_name(spec),
+             "--model-revision", model_revision(spec),
              "--client-tokenizer-path", spec["model_path"],
              "--source-revision", spec["source_revision"],
              "--launch-command-file", str(launch),
@@ -353,7 +363,7 @@ def run_arm_cells(spec: dict[str, Any], dataset: str, rates: dict[str, float],
              # (<suite>_qps<rate>_rep<N>.jsonl).
              "--experiment", arm,
              "--deployment-manifest", str(manifest),
-             "--model", SERVED_MODEL_NAME, "--workload-dir", spec["suites_dir"],
+             "--model", served_model_name(spec), "--workload-dir", spec["suites_dir"],
              "--qps-config", str(qps_config), "--output-dir", str(cell_root / "cells"),
              "--evidence-class", spec.get("evidence_class", "development"),
              "--host", "127.0.0.1", "--port", str(port), "--reps", "1",
