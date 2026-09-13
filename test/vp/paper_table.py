@@ -41,13 +41,13 @@ COLUMNS = [
     "TTFT p50", "TTFT mean", "TTFT p95", "TTFT p99",
     "TPOT p50", "TPOT mean", "TPOT p95", "TPOT p99",
     "E2E p50", "E2E mean", "E2E p95", "E2E p99",
-    "output TPS",
+    "makespan", "output TPS",
 ]
 # [D-752/D-754, owner 2026-09-13] The paper's headline table is latency-led: E2E first, means + p95;
 # p50/p99 go to the appendix table. Macros are always emitted for every column.
 COLUMN_SETS = {
     "all": COLUMNS,
-    "main": ["E2E mean", "E2E p95", "TPOT mean", "TPOT p95", "TTFT mean", "TTFT p95", "output TPS"],
+    "main": ["E2E mean", "E2E p95", "TPOT mean", "TPOT p95", "TTFT mean", "TTFT p95", "makespan"],
     "tails": ["E2E p50", "E2E p99", "TPOT p50", "TPOT p99", "TTFT p50", "TTFT p99"],
 }
 MULTIPLIERS = (0.75, 0.95, 1.25)
@@ -129,7 +129,7 @@ def latex_rows(rows: list[dict[str, Any]], columns: list[str] = COLUMNS) -> str:
 def macro_name(dataset: str, multiplier: float, column: str) -> str:
     """A LaTeX-legal name: letters only, so the prose can reference it."""
     rung = {0.75: "Low", 0.95: "Mid", 1.25: "High"}[multiplier]
-    metric = column.replace(" ", "").replace("output", "").replace("p50", "Pfifty")
+    metric = column.replace(" ", "").replace("output", "").replace("makespan", "Makespan").replace("p50", "Pfifty")
     metric = metric.replace("p99", "Pninetynine").replace("p95", "Pninetyfive").replace("mean", "Mean")
     metric = metric.replace("E2E", "EtoE")
     name = "vp" + metric + MACRO_DISPLAY.get(dataset, dataset.replace("_", "").title()) + rung
