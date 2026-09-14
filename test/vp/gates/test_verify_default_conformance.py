@@ -57,3 +57,18 @@ def test_profile_scoped_exemptions_apply_only_under_their_profile():
     default_only = {k: v for k, v in paper.items() if v.get("profile") is None}
     _, undeclared = conf(HEADLINE_20260913, DEFAULTS, default_only)
     assert [l.split(":")[0].strip("! ") for l in undeclared] == ["dtype", "mem_fraction_static"]
+
+
+def test_multi_profile_rule_resolves_one_value_per_profile():
+    """D-773: a "profiles" rule gives fp16 under paper, bf16 under paper_bf16, nothing elsewhere."""
+    from verify_default_conformance import resolve_exemptions
+    rules = dict(EXEMPT, dtype={"profiles": {"paper": "float16", "paper_bf16": "bfloat16"}, "decision": "D-773"},
+                 mem_fraction_static={"profiles": {"paper": 0.8, "paper_bf16": 0.8}, "decision": "D-773"})
+    assert resolve_exemptions(rules, "paper")["dtype"]["value"] == "float16"
+    assert resolve_exemptions(rules, "paper_bf16")["dtype"]["value"] == "bfloat16"
+    assert resolve_exemptions(rules, "paper_bf16")["mem_fraction_static"]["value"] == 0.8
+    assert "dtype" not in resolve_exemptions(rules, "sglang_default")
+    assert "mem_fraction_static" not in resolve_exemptions(rules, "sglang_default")
+    # the substrate rules (no profile) survive under every profile
+    assert set(EXEMPT) <= set(resolve_exemptions(rules, "sglang_default"))
+
