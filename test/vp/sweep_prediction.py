@@ -59,7 +59,7 @@ def main() -> int:
     for arm in sorted(sweeps["fixed"], key=lambda n: (sweeps["fixed"][n]["r"], sweeps["fixed"][n]["d"])):
         r, d = sweeps["fixed"][arm]["r"], sweeps["fixed"][arm]["d"]; v = vstar(r, d, a.device); ex, en = band(v)
         cells = []
-        for label in ("fixed", "rule"):
+        for label in [l for l in ("fixed", "rule") if l in sweeps]:   # columns only for the maps that exist (no empty placeholders)
             row = sweeps.get(label, {}).get(arm); o = occ.get(label, {}).get(arm, {}).get(a.suite, {})
             if row is None:
                 cells += ["--", "--", "--"]; continue
@@ -86,9 +86,14 @@ def main() -> int:
                 if p90:
                     ax.plot([v_ / 1e3, p90 / 1e3], [dl, dl], color="#c0392b", lw=0.6, alpha=0.5, zorder=2)
                     ax.plot([p90 / 1e3], [dl], marker="|", color="#c0392b", ms=6, alpha=0.8, zorder=2)
+    for label, pts in points.items():
+        for v_, dl, p90, arm in pts:
+            m = ARM_RE.match(arm); ax.annotate(f"{m.group(1)}/{m.group(2)}", (v_ / 1e3, dl), textcoords="offset points", xytext=(4, -2 if label == "fixed" else 3), fontsize=5, color=style[label]["color"])
     ax.axhline(0, color="k", lw=0.6); ax.set_xscale("log")
-    ax.set_xlabel("rule crossover $V^*$ (k resident K/V tokens); tick = occupancy the cell ran at"); ax.set_ylabel("E2E mean $\\Delta$ (%)")
-    ax.legend(fontsize=6, frameon=False); ax.tick_params(labelsize=7); ax.xaxis.label.set_size(7); ax.yaxis.label.set_size(7)
+    from matplotlib.ticker import FixedLocator, FixedFormatter
+    ax.xaxis.set_major_locator(FixedLocator([100, 200, 300, 500, 1000, 1500])); ax.xaxis.set_major_formatter(FixedFormatter(["100k", "200k", "300k", "500k", "1M", "1.5M"])); ax.xaxis.set_minor_locator(FixedLocator([]))
+    ax.set_xlabel("rule crossover $V^*$ (resident K/V tokens); bar to the cell's own occupancy"); ax.set_ylabel("E2E mean $\\Delta$ (%)")
+    ax.legend(fontsize=6, frameon=False, loc="lower right"); ax.tick_params(labelsize=6.5); ax.xaxis.label.set_size(6.5); ax.yaxis.label.set_size(7)
     fig.tight_layout(); fig.savefig(a.png); print(f"{len(lines)} arms; fixed: {len(above)} above their occupancy ({sum(1 for p in above if p[1] > 0)} lost), {len(below)} below ({sum(1 for p in below if p[1] < 0)} won) -> {a.png}")
     return 0
 
