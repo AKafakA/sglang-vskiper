@@ -29,7 +29,7 @@ def main():
         xs = [m for (d, m) in sorted(e2e) if d == ds]
         ax1.plot(xs, [st.mean(e2e[(ds, m)]) for m in xs], marker="o", label=NAMES[ds])
         ax2.plot(xs, [st.mean(tps[(ds, m)]) for m in xs], marker="o", label=NAMES[ds])
-    for ax, yl, t in ((ax1, "mean E2E latency change vs upstream (%)", "latency: grows with load"), (ax2, "makespan change vs upstream (%)", "makespan: small below the knee, larger in overload")):
+    for ax, yl, t in ((ax1, "mean E2E latency change vs upstream (%)", "latency: grows with load"), (ax2, "makespan change vs upstream (%)", "makespan change vs upstream")):
         ax.axhline(0, color="gray", lw=0.6); ax.set_xticks([0.75, 0.95, 1.25]); ax.set_xticklabels(["0.75", "0.95", "1.25"])
         ax.set_xlabel("offered load ($\\times Q^*$)"); ax.set_ylabel(yl, fontsize=8); ax.set_title(t, fontsize=9); ax.grid(alpha=0.3)
     ax1.legend(fontsize=8); fig.tight_layout(); fig.savefig(a.pdf); print("wrote", a.pdf)
