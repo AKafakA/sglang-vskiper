@@ -51,6 +51,7 @@ def main() -> int:
     ap.add_argument("--rows", type=Path, required=True)
     ap.add_argument("--macros", type=Path, required=True)
     ap.add_argument("--model", action="append", default=[], help="tag=label (default: raw, fd_b1, fd)")
+    ap.add_argument("--population", type=Path, default=None, help="dir of the seeded random-sample run (native_fd_pop500.jsonl + population.json): population rows")
     a = ap.parse_args()
 
     groups = json.loads((a.loopers / "set.json").read_text())
@@ -86,6 +87,19 @@ def main() -> int:
             rows.append(f"    {head} & {gdesc} & {n} & {loops} & {pct:.1f} & {cap} & {mean:.0f} & {p90} \\\\")
             for name, val in (("N", str(n)), ("Loops", str(loops)), ("Pct", f"{pct:.1f}"), ("Cap", str(cap)), ("Mean", f"{mean:.0f}"), ("Pninety", str(p90))):
                 macros.append(f"\\newcommand{{\\vpAttr{mkey}{gkey}{name}}}{{{val}}}")
+        rows.append("    \\midrule")
+    # the seeded random sample of the whole population (2026-09-14, native_loop_check_v2_2: early stop on detected repetition)
+    if a.population and (a.population / "native_fd_pop500.jsonl").exists():
+        pop = load_records(a.population / "native_fd_pop500.jsonl"); pg = json.loads((a.population / "population.json").read_text())
+        vsk = set(pg.get("served_loopers", [])); first = True
+        for gname, gdesc, gkey in (("population", "random sample of the cell", "Pop"), ("served_loopers", "of which looped under \\sys{}", "PopVsk"), ("never_looped", "of which never looped", "PopCtl")):
+            rs = [r for i, r in pop.items() if gname == "population" or (i in vsk) == (gname == "served_loopers")]
+            n = len(rs); loops = sum(1 for r in rs if r["loop"]); cap = sum(1 for r in rs if r.get("stop_reason") == "window")
+            lens = sorted(r["output_len"] for r in rs); mean = statistics.mean(lens); p90 = lens[int(round(0.9 * (n - 1)))]; pct = 100.0 * loops / n
+            rows.append(f"    {'FlexiDepth, batch 16, sampled' if first else ''} & {gdesc} & {n} & {loops} & {pct:.1f} & {cap} & {mean:.0f} & {p90} \\\\"); first = False
+            for name, val in (("N", str(n)), ("Loops", str(loops)), ("Pct", f"{pct:.1f}"), ("Cap", str(cap)), ("Mean", f"{mean:.0f}"), ("Pninety", str(p90))):
+                macros.append(f"\\newcommand{{\\vpAttr{gkey}{name}}}{{{val}}}")
+        import math; pp = sum(1 for r in pop.values() if r["loop"]) / len(pop); macros.append(f"\\newcommand{{\\vpAttrPopCi}}{{{100 * 1.96 * math.sqrt(pp * (1 - pp) / len(pop)):.1f}}}")
         rows.append("    \\midrule")
     if rows and rows[-1].strip() == "\\midrule":
         rows.pop()
