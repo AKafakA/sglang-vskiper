@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""qwen_serving_macros.py HYBRID_REPORT ALWAYSROUTE_REPORT [ALWAYSROUTE_RATES_REPORT]
+"""qwen_serving_macros.py HYBRID_REPORT ALWAYSROUTE_REPORT [ALWAYSROUTE_RATES_REPORT] [--shared=SHAREDBAND_REPORT]
 
 Prints LaTeX macros for the Qwen3-4B serving rows (App. J): \\vpQwenHyb<Metric><Low|Mid|High> for the rule-governed arm and
 \\vpQwenAll<Metric><Low|Mid|High> for the always-route twin, from the paired reports' mean_pct (baseline upstream). Rates are
@@ -18,6 +18,10 @@ def emit(prefix: str, path: str) -> None:
             print(f"\\newcommand{{\\vpQwen{prefix}{m}{w}}}{{{r['mean_pct']:+.1f}}}")
 
 
-emit("Hyb", sys.argv[1])
-for p in sys.argv[2:]:
+args = [x for x in sys.argv[1:] if not x.startswith("--shared=")]
+shared = [x.split("=", 1)[1] for x in sys.argv[1:] if x.startswith("--shared=")]
+emit("Hyb", args[0])
+for p in args[1:]:
     emit("All", p)
+for p in shared:   # step 10d (D-778): the Qwen arm under the shared Llama band, prefix Shr
+    emit("Shr", p)
