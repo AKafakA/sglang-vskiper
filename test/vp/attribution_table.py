@@ -89,18 +89,26 @@ def main() -> int:
                 macros.append(f"\\newcommand{{\\vpAttr{mkey}{gkey}{name}}}{{{val}}}")
         rows.append("    \\midrule")
     # the seeded random sample of the whole population (2026-09-14, native_loop_check_v2_2: early stop on detected repetition)
-    if a.population and (a.population / "native_fd_pop500.jsonl").exists():
-        pop = load_records(a.population / "native_fd_pop500.jsonl"); pg = json.loads((a.population / "population.json").read_text())
-        vsk = set(pg.get("served_loopers", [])); first = True
-        for gname, gdesc, gkey in (("population", "random sample of the cell", "Pop"), ("served_loopers", "of which looped under \\sys{}", "PopVsk"), ("never_looped", "of which never looped", "PopCtl")):
-            rs = [r for i, r in pop.items() if gname == "population" or (i in vsk) == (gname == "served_loopers")]
-            n = len(rs); loops = sum(1 for r in rs if r["loop"]); cap = sum(1 for r in rs if r.get("stop_reason") == "window")
-            lens = sorted(r["output_len"] for r in rs); mean = statistics.mean(lens); p90 = lens[int(round(0.9 * (n - 1)))]; pct = 100.0 * loops / n
-            rows.append(f"    {'FlexiDepth, batch 16, sampled' if first else ''} & {gdesc} & {n} & {loops} & {pct:.1f} & {cap} & {mean:.0f} & {p90} \\\\"); first = False
-            for name, val in (("N", str(n)), ("Loops", str(loops)), ("Pct", f"{pct:.1f}"), ("Cap", str(cap)), ("Mean", f"{mean:.0f}"), ("Pninety", str(p90))):
-                macros.append(f"\\newcommand{{\\vpAttr{gkey}{name}}}{{{val}}}")
-        import math; pp = sum(1 for r in pop.values() if r["loop"]) / len(pop); macros.append(f"\\newcommand{{\\vpAttrPopCi}}{{{100 * 1.96 * math.sqrt(pp * (1 - pp) / len(pop)):.1f}}}")
-        rows.append("    \\midrule")
+    if a.population:
+        import math
+        pg = json.loads((a.population / "population.json").read_text()); vsk = set(pg.get("served_loopers", []))
+        for tag, label, pkey in (("raw", "Llama-3-8B-Instruct (base), batch 16, sampled", "Raw"), ("fd", "FlexiDepth, batch 16, sampled", "Fd")):
+            f = a.population / f"native_{tag}_pop500.jsonl"
+            if not f.exists():
+                continue
+            pop = load_records(f)
+            if len(pop) < 500:
+                print(f"  population {tag}: INCOMPLETE ({len(pop)}/500) -> not emitted", file=sys.stderr); continue
+            first = True
+            for gname, gdesc, gkey in (("population", "random sample of the cell", "Pop"), ("served_loopers", "of which looped under \\sys{}", "PopVsk"), ("never_looped", "of which never looped", "PopCtl")):
+                rs = [r for i, r in pop.items() if gname == "population" or (i in vsk) == (gname == "served_loopers")]
+                n = len(rs); loops = sum(1 for r in rs if r["loop"]); cap = sum(1 for r in rs if r.get("stop_reason") == "window")
+                lens = sorted(r["output_len"] for r in rs); mean = statistics.mean(lens); p90 = lens[int(round(0.9 * (n - 1)))]; pct = 100.0 * loops / n
+                rows.append(f"    {label if first else ''} & {gdesc} & {n} & {loops} & {pct:.1f} & {cap} & {mean:.0f} & {p90} \\\\"); first = False
+                for name, val in (("N", str(n)), ("Loops", str(loops)), ("Pct", f"{pct:.1f}"), ("Cap", str(cap)), ("Mean", f"{mean:.0f}"), ("Pninety", str(p90))):
+                    macros.append(f"\\newcommand{{\\vpAttr{pkey}{gkey}{name}}}{{{val}}}")
+            pp = sum(1 for r in pop.values() if r["loop"]) / len(pop); macros.append(f"\\newcommand{{\\vpAttr{pkey}PopCi}}{{{100 * 1.96 * math.sqrt(pp * (1 - pp) / len(pop)):.1f}}}")
+            rows.append("    \\midrule")
     if rows and rows[-1].strip() == "\\midrule":
         rows.pop()
     a.rows.write_text("\n".join(rows) + "\n")
