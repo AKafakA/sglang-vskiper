@@ -109,3 +109,27 @@ def test_weights_key_selects_the_checkpoint_file(tmp_path):
         design._HOST_CACHE.clear()
         if saved_env is None: os.environ.pop(design._HOST_CONFIG_ENV, None)
         else: os.environ[design._HOST_CONFIG_ENV] = saved_env
+
+
+def test_qwen_sharedband_arm_is_a_declared_deviation():
+    """[D-778] The shared-band posture serves the GLOBAL (Llama) band under the Qwen arm's inputs: the rule
+    would refuse that band, so `decode_kv_band_policy: shared` must be the only reason it boots, and the
+    attestation must say so; every other field is the learned arm's."""
+    from sglang.srt.vpipe import design
+    from sglang.srt.vpipe.roofline import arm_kv_rule_inputs, assert_kv_band_follows_rule
+
+    arm = design.ARMS["vskipper_qwen3_4b_sharedband"]; base = design.ARMS["vskipper_qwen3_4b"]
+    assert arm["decode_kv_band_policy"] == "shared" and base.get("decode_kv_band_policy", "rule") == "rule"
+    assert tuple(arm["decode_kv_band"]["NVIDIA_A100"]) == tuple(design.SERVED_DECODE_KV_BAND_BY_DEVICE["NVIDIA_A100"]) == (160_000, 200_000)
+    assert {k: v for k, v in arm.items() if k not in ("decode_kv_band", "decode_kv_band_policy")} == {k: v for k, v in base.items() if k != "decode_kv_band"}
+    try:
+        assert_kv_band_follows_rule(served_exit_kv_tokens=160_000, served_enter_kv_tokens=200_000, device_key="NVIDIA_A100", **arm_kv_rule_inputs(arm))
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("the rule must refuse the Llama band under the Qwen arm's inputs; the policy is the only permit")
+    with _serving("vskipper_qwen3_4b_sharedband"):
+        att = design.design_attestation()
+        assert att["decode_kv_band_policy"] == "shared" and att["decode_kv_band_by_device"]["NVIDIA_A100"] == [160_000, 200_000]
+    with _serving("vskipper_qwen3_4b"):
+        assert design.design_attestation()["decode_kv_band_policy"] == "rule"
