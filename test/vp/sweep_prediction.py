@@ -67,15 +67,29 @@ def main() -> int:
             eng = (sb / (sb + ar)) if (sb is not None and ar) else None
             cells += [f"{p90/1e3:.0f}k" if p90 else "--", f"{100*eng:.0f}\\%" if eng is not None else "--", f"{row['delta']:+.1f}"]
             points.setdefault(label, []).append((v, row["delta"], p90, arm))
-        tag = f"R{int(r*100)}D{int(d*100)}"
-        macros.append(f"\\newcommand{{\\vpVstar{tag}}}{{{v/1e3:.0f}}}")
         lines.append(f"{int(r*100)}\\,\\% & {int(d*100)}\\,\\% & {v/1e3:.0f}k & {ex//1000}k/{en//1000}k & " + " & ".join(cells) + r" \\")
     a.rows.write_text("\n".join(lines) + "\n"); a.macros.write_text("\n".join(macros) + "\n")
     # verdict macros: how many fixed-band arms with V* above their operating occupancy lost, etc.
     fx = points.get("fixed", []); above = [p for p in fx if p[2] and p[0] > p[2]]; below = [p for p in fx if p[2] and p[0] <= p[2]]
+    WORD = {25: "Twentyfive", 50: "Fifty", 75: "Seventyfive"}
+    def occ_of(arm): return occ.get("fixed", {}).get(arm, {}).get(a.suite, {})
+    losers = [p for p in fx if p[1] > 0]; winners = [p for p in fx if p[1] < 0]
+    def eng(arm):
+        o = occ_of(arm); sb, ar = o.get("decode_passes_skipbody"), o.get("decode_passes_allrun")
+        return 100.0 * sb / (sb + ar) if (sb is not None and ar) else None
+    up = occ.get("fixed", {}).get("upstream", {}).get(a.suite, {}).get("resident_kv_p90_est")
+    tie = [p for p in above if p[1] < 0]
     with open(a.macros, "a") as f:
         f.write(f"\\newcommand{{\\vpPredAboveN}}{{{len(above)}}}\n\\newcommand{{\\vpPredAboveLost}}{{{sum(1 for p in above if p[1] > 0)}}}\n")
         f.write(f"\\newcommand{{\\vpPredBelowN}}{{{len(below)}}}\n\\newcommand{{\\vpPredBelowWon}}{{{sum(1 for p in below if p[1] < 0)}}}\n")
+        if losers: f.write(f"\\newcommand{{\\vpPredLoserOccMin}}{{{min(p[2] for p in losers if p[2])/1e3:.0f}}}\n\\newcommand{{\\vpPredLoserOccMax}}{{{max(p[2] for p in losers if p[2])/1e3:.0f}}}\n")
+        if winners: f.write(f"\\newcommand{{\\vpPredWinnerOccMin}}{{{min(p[2] for p in winners if p[2])/1e3:.0f}}}\n\\newcommand{{\\vpPredWinnerOccMax}}{{{max(p[2] for p in winners if p[2])/1e3:.0f}}}\n")
+        le = [eng(p[3]) for p in losers if eng(p[3]) is not None]; we = [eng(p[3]) for p in winners if eng(p[3]) is not None]
+        if le: f.write(f"\\newcommand{{\\vpPredLoserEngMin}}{{{min(le):.0f}}}\n\\newcommand{{\\vpPredLoserEngMax}}{{{max(le):.0f}}}\n")
+        if we: f.write(f"\\newcommand{{\\vpPredWinnerEngMin}}{{{min(we):.0f}}}\n\\newcommand{{\\vpPredWinnerEngMax}}{{{max(we):.0f}}}\n")
+        if up: f.write(f"\\newcommand{{\\vpPredUpstreamOcc}}{{{up/1e3:.0f}}}\n")
+        if tie:
+            m = ARM_RE.match(tie[0][3]); f.write(f"\\newcommand{{\\vpPredTieArm}}{{{int(m.group(1))}\\%$\\times${int(m.group(2))}\\%}}\n\\newcommand{{\\vpPredTieVstar}}{{{tie[0][0]/1e3:.0f}}}\n\\newcommand{{\\vpPredTieOcc}}{{{tie[0][2]/1e3:.0f}}}\n\\newcommand{{\\vpPredTieDelta}}{{{tie[0][1]:+.1f}}}\n")
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
     fig, ax = plt.subplots(figsize=(3.6, 2.6), dpi=200)
     style = {"fixed": dict(marker="o", color="#c0392b", label="fixed band (enter 200k)"), "rule": dict(marker="s", color="#1f77b4", label="own rule band")}
