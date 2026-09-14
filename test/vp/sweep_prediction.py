@@ -88,6 +88,10 @@ def main() -> int:
         if le: f.write(f"\\newcommand{{\\vpPredLoserEngMin}}{{{min(le):.0f}}}\n\\newcommand{{\\vpPredLoserEngMax}}{{{max(le):.0f}}}\n")
         if we: f.write(f"\\newcommand{{\\vpPredWinnerEngMin}}{{{min(we):.0f}}}\n\\newcommand{{\\vpPredWinnerEngMax}}{{{max(we):.0f}}}\n")
         if up: f.write(f"\\newcommand{{\\vpPredUpstreamOcc}}{{{up/1e3:.0f}}}\n")
+        if up:
+            au = [p for p in fx if p[0] > up]; bu = [p for p in fx if p[0] <= up]
+            f.write(f"\\newcommand{{\\vpPredAboveUpN}}{{{len(au)}}}\n\\newcommand{{\\vpPredAboveUpLost}}{{{sum(1 for p in au if p[1] > 0)}}}\n")
+            f.write(f"\\newcommand{{\\vpPredBelowUpN}}{{{len(bu)}}}\n\\newcommand{{\\vpPredBelowUpWon}}{{{sum(1 for p in bu if p[1] < 0)}}}\n")
         if tie:
             m = ARM_RE.match(tie[0][3]); f.write(f"\\newcommand{{\\vpPredTieArm}}{{{int(m.group(1))}\\%$\\times${int(m.group(2))}\\%}}\n\\newcommand{{\\vpPredTieVstar}}{{{tie[0][0]/1e3:.0f}}}\n\\newcommand{{\\vpPredTieOcc}}{{{tie[0][2]/1e3:.0f}}}\n\\newcommand{{\\vpPredTieDelta}}{{{tie[0][1]:+.1f}}}\n")
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
