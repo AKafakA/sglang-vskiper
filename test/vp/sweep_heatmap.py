@@ -31,7 +31,7 @@ def main():
     ap.add_argument("--title", default=""); ap.add_argument("--metrics", default="E2E mean,E2E p95")
     ap.add_argument("--macro-prefix", default="vpSweep", help="macro name prefix (v1.4 map: vpSweep; the per-arm-band map: vpSweepTwo)")
     a = ap.parse_args()
-    pat = re.compile(r"paired_report\.integrated_randomskip_r(\d+)_d(\d+)\.json$")
+    pat = re.compile(r"paired_report\.integrated_randomskip_r(\d+)_d(\d+)(?:_alwaysroute)?\.json$")  # the ungated (always-route) twins of step 10b share the grid
     grid = {}
     for f in sorted(glob.glob(os.path.join(a.root, "paired_report.*.json"))):
         m = pat.search(f)
