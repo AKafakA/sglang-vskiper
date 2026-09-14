@@ -29,6 +29,7 @@ def main():
     ap.add_argument("root"); ap.add_argument("--dataset", required=True); ap.add_argument("--suite", required=True)
     ap.add_argument("--headline", default=""); ap.add_argument("--png", required=True); ap.add_argument("--macros", required=True)
     ap.add_argument("--title", default=""); ap.add_argument("--metrics", default="E2E mean,E2E p95")
+    ap.add_argument("--macro-prefix", default="vpSweep", help="macro name prefix (v1.4 map: vpSweep; the per-arm-band map: vpSweepTwo)")
     a = ap.parse_args()
     pat = re.compile(r"paired_report\.integrated_randomskip_r(\d+)_d(\d+)\.json$")
     grid = {}
@@ -76,16 +77,16 @@ def main():
         tag = met.replace("E2E ", "EtoE").replace("mean", "Mean").replace("p95", "Pninetyfive")
         for (rt, dp), vals in grid.items():
             v = vals[met][0]
-            if v is not None: macros.append(f"\\newcommand{{\\vpSweep{tag}R{word(rt)}D{word(dp)}}}{{{v:+.1f}}}")
+            if v is not None: macros.append(f"\\newcommand{{\\{a.macro_prefix}{tag}R{word(rt)}D{word(dp)}}}{{{v:+.1f}}}")
         finite = [(grid[k][met][0], k) for k in grid if grid[k][met][0] is not None]
         if finite:
             best = min(finite); worst = max(finite)
-            macros.append(f"\\newcommand{{\\vpSweep{tag}Best}}{{{best[0]:+.1f}}}")
-            macros.append(f"\\newcommand{{\\vpSweep{tag}BestCell}}{{r{best[1][0]}\\,d{best[1][1]}}}")
-            macros.append(f"\\newcommand{{\\vpSweep{tag}Worst}}{{{worst[0]:+.1f}}}")
-            macros.append(f"\\newcommand{{\\vpSweep{tag}WorstCell}}{{r{worst[1][0]}\\,d{worst[1][1]}}}")
+            macros.append(f"\\newcommand{{\\{a.macro_prefix}{tag}Best}}{{{best[0]:+.1f}}}")
+            macros.append(f"\\newcommand{{\\{a.macro_prefix}{tag}BestCell}}{{r{best[1][0]}\\,d{best[1][1]}}}")
+            macros.append(f"\\newcommand{{\\{a.macro_prefix}{tag}Worst}}{{{worst[0]:+.1f}}}")
+            macros.append(f"\\newcommand{{\\{a.macro_prefix}{tag}WorstCell}}{{r{worst[1][0]}\\,d{worst[1][1]}}}")
         if met in served and served[met] is not None:
-            macros.append(f"\\newcommand{{\\vpSweep{tag}Served}}{{{served[met]:+.1f}}}")
+            macros.append(f"\\newcommand{{\\{a.macro_prefix}{tag}Served}}{{{served[met]:+.1f}}}")
     if a.title: fig.suptitle(a.title, fontsize=10)
     fig.tight_layout(); fig.savefig(a.png); print("wrote", a.png)
     open(a.macros, "w").write("\n".join(macros) + "\n"); print("wrote", a.macros, f"({len(macros)} macros)")
