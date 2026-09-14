@@ -19,7 +19,7 @@ import argparse, json, re, sys
 from pathlib import Path
 
 TAU_MS = 2.67; KV_BYTES = 2 * 8 * 128 * 2; ROUTED = 16; BW = {"NVIDIA_A100": 1935e9, "NVIDIA_H100_HBM3": 3350e9, "NVIDIA_H100_NVL": 3350e9}
-ARM_RE = re.compile(r"integrated_randomskip_r(\d+)_d(\d+)$")
+ARM_RE = re.compile(r"integrated_randomskip_r(\d+)_d(\d+)(?:_alwaysroute)?$")
 
 
 def vstar(r: float, d: float, device: str) -> float:
@@ -50,22 +50,27 @@ def main() -> int:
     ap.add_argument("--png", type=Path, required=True); ap.add_argument("--rows", type=Path, required=True); ap.add_argument("--macros", type=Path, required=True)
     a = ap.parse_args()
     sweeps = {k: load_map(Path(v), a.suite) for k, v in (x.split("=", 1) for x in a.sweep)}
+    if "ungated" in sweeps:   # step 10b twins: integrated_randomskip_r{r}_d{d}_alwaysroute -> the grid arm's key
+        sweeps["ungated"] = {k.replace("_alwaysroute", ""): v for k, v in sweeps["ungated"].items()}
     occ = {}
     for k, v in (x.split("=", 1) for x in a.occupancy):
-        occ[k] = next(iter(json.load(open(v)).values()))
+        occ[k] = {kk.replace("_alwaysroute", ""): vv for kk, vv in next(iter(json.load(open(v)).values())).items()}
     if not sweeps.get("fixed"):
         raise SystemExit("no fixed-band sweep rows found")
     lines, macros, points = [], [], {}
     for arm in sorted(sweeps["fixed"], key=lambda n: (sweeps["fixed"][n]["r"], sweeps["fixed"][n]["d"])):
         r, d = sweeps["fixed"][arm]["r"], sweeps["fixed"][arm]["d"]; v = vstar(r, d, a.device); ex, en = band(v)
         cells = []
-        for label in [l for l in ("fixed", "rule") if l in sweeps]:   # columns only for the maps that exist (no empty placeholders)
+        for label in [l for l in ("ungated", "fixed", "rule") if l in sweeps]:   # columns only for the maps that exist (no empty placeholders)
             row = sweeps.get(label, {}).get(arm); o = occ.get(label, {}).get(arm, {}).get(a.suite, {})
             if row is None:
-                cells += ["--", "--", "--"]; continue
+                cells += ["--"] if label == "ungated" else ["--", "--", "--"]; continue
             p90 = o.get("resident_kv_p90_est"); sb = o.get("decode_passes_skipbody"); ar = o.get("decode_passes_allrun")
             eng = (sb / (sb + ar)) if (sb is not None and ar) else None
-            cells += [f"{p90/1e3:.0f}k" if p90 else "--", f"{100*eng:.0f}\\%" if eng is not None else "--", f"{row['delta']:+.1f}"]
+            if label == "ungated":   # every pass routed by construction: one column, the E2E change
+                cells += [f"{row['delta']:+.1f}"]
+            else:
+                cells += [f"{p90/1e3:.0f}k" if p90 else "--", f"{100*eng:.0f}\\%" if eng is not None else "--", f"{row['delta']:+.1f}"]
             points.setdefault(label, []).append((v, row["delta"], p90, arm))
         lines.append(f"{int(r*100)}\\,\\% & {int(d*100)}\\,\\% & {v/1e3:.0f}k & {ex//1000}k/{en//1000}k & " + " & ".join(cells) + r" \\")
     a.rows.write_text("\n".join(lines) + "\n"); a.macros.write_text("\n".join(macros) + "\n")
@@ -96,7 +101,7 @@ def main() -> int:
             m = ARM_RE.match(tie[0][3]); f.write(f"\\newcommand{{\\vpPredTieArm}}{{{int(m.group(1))}\\%$\\times${int(m.group(2))}\\%}}\n\\newcommand{{\\vpPredTieVstar}}{{{tie[0][0]/1e3:.0f}}}\n\\newcommand{{\\vpPredTieOcc}}{{{tie[0][2]/1e3:.0f}}}\n\\newcommand{{\\vpPredTieDelta}}{{{tie[0][1]:+.1f}}}\n")
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
     fig, ax = plt.subplots(figsize=(4.4, 2.35), dpi=200)
-    style = {"fixed": dict(marker="o", color="#c0392b", label="fixed band (enter 200k)"), "rule": dict(marker="s", color="#1f77b4", label="own rule band")}
+    style = {"ungated": dict(marker="^", color="#7f7f7f", label="no band (always route)"), "fixed": dict(marker="o", color="#c0392b", label="fixed band (enter 200k)"), "rule": dict(marker="s", color="#1f77b4", label="own rule band")}
     for label, pts in points.items():
         ax.scatter([p[0] / 1e3 for p in pts], [p[1] for p in pts], s=22, zorder=3, **style[label])
         if label == "fixed":
