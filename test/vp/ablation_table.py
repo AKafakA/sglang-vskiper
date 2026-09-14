@@ -55,6 +55,7 @@ def main() -> int:
     ap.add_argument("--metrics", default="mean_e2e_latency_ms,duration")
     ap.add_argument("--rows", type=Path, required=True)
     ap.add_argument("--macros", type=Path)
+    ap.add_argument("--macro-prefix", default="vpAbl", help="macro name prefix (letters only), e.g. vpAblBbh for a second dataset")
     a = ap.parse_args()
     knees = {k: float(v) for k, v in (x.split("=") for x in a.knee)}
     if a.dataset not in knees:
@@ -78,7 +79,7 @@ def main() -> int:
                 if r is not None and a.macros:
                     mult = multiple(rate, knees[a.dataset])
                     tag = re.sub(r"[^A-Za-z]", "", name.title()) + FIELD.get(f, re.sub(r"[^A-Za-z]", "", f.title())) + WORD.get(mult, "X")
-                    macros.append(f"\\newcommand{{\\vpAbl{tag}}}{{{r['mean_pct']:+.1f}}}")
+                    macros.append(f"\\newcommand{{\\{a.macro_prefix}{tag}}}{{{r['mean_pct']:+.1f}}}")
         lines.append(" & ".join(cells) + r" \\")
     a.rows.write_text("\n".join(lines) + "\n")
     if a.macros:
