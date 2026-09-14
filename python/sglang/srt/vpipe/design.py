@@ -293,6 +293,18 @@ ARMS["vskipper_qwen3_4b_alwaysroute"] = {
     "weights_key": "flexidepth_weights_qwen3_4b", "design_skip_ratio": 0.25,
 }
 
+# [D-778] The SHARED-BAND posture of the Qwen row: the learned arm served under the Llama band
+# (A100 160k/200k) instead of its own rule band (A100 320k/390k declared, 570k/710k from the
+# attested s = 0.138) -- the middle panel of the Qwen triptych (own band / shared band /
+# always-route), mirroring Figure 3's shared-band map. A DECLARED deviation from the D-738 rule:
+# `decode_kv_band_policy: "shared"` is the only reason this arm boots, and the attestation
+# records it. Never a headline arm.
+ARMS["vskipper_qwen3_4b_sharedband"] = {
+    **ARMS["vskipper_qwen3_4b"],
+    "decode_kv_band": dict(SERVED_DECODE_KV_BAND_BY_DEVICE),
+    "decode_kv_band_policy": "shared",
+}
+
 # THE SKIP-RATE x DEPTH SWEEP (plan item 3; owner scope 2026-09-10: gsm8k only, ALL 12 points,
 # one rate, 3 reps, with the upstream anchor interleaved in the same session).
 #
@@ -470,6 +482,9 @@ def design_attestation() -> dict[str, Any]:
                 (active_arm().get("decode_kv_band") or SERVED_DECODE_KV_BAND_BY_DEVICE).items()
             )
         },
+        # [D-778] "rule" (the band above is the roofline rule's for this arm, asserted at boot) or
+        # "shared" (a declared deviation: the global band served under another arm's inputs).
+        "decode_kv_band_policy": active_arm().get("decode_kv_band_policy", "rule"),
         "gate_mode": arm_gate_mode(),
         "fused_router_norm": SERVED_FUSED_ROUTER_NORM,
     }

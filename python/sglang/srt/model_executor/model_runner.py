@@ -2663,12 +2663,24 @@ class ModelRunner(ModelRunnerKVCacheMixin):
 
             _rs = _regime_cfg_fn()
             if _rs is not None and _rs.decode.enabled and _rs.decode.kv_criterion:
-                assert_kv_band_follows_rule(
-                    served_exit_kv_tokens=_rs.decode.exit_kv_tokens,
-                    served_enter_kv_tokens=_rs.decode.enter_kv_tokens,
-                    device_key=_canon(torch.cuda.get_device_name(self.device)),
-                    **arm_kv_rule_inputs(_active_arm()),
-                )
+                _band_policy = _active_arm().get("decode_kv_band_policy", "rule")
+                if _band_policy == "shared":
+                    # [D-778] A DECLARED deviation: the arm serves the global band under its own
+                    # inputs (the Qwen shared-band posture). Attested as decode_kv_band_policy.
+                    logger.warning(
+                        "[D-778] decode_kv_band_policy=shared: serving band (exit=%s, enter=%s) "
+                        "as a declared deviation from the roofline rule for this arm",
+                        _rs.decode.exit_kv_tokens, _rs.decode.enter_kv_tokens,
+                    )
+                elif _band_policy != "rule":
+                    raise ValueError(f"unknown decode_kv_band_policy {_band_policy!r}")
+                else:
+                    assert_kv_band_follows_rule(
+                        served_exit_kv_tokens=_rs.decode.exit_kv_tokens,
+                        served_enter_kv_tokens=_rs.decode.enter_kv_tokens,
+                        device_key=_canon(torch.cuda.get_device_name(self.device)),
+                        **arm_kv_rule_inputs(_active_arm()),
+                    )
             if self.server_args.enable_mixed_chunk:
                 raise ValueError(
                     "FlexiDepth is active (a skipper with weights is deployed) but "
