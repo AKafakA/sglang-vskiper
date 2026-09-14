@@ -29,13 +29,20 @@ def tps(rec):
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("summary"); ap.add_argument("--lmeval", required=True); ap.add_argument("--rows", required=True); ap.add_argument("--macros", required=True)
+    ap.add_argument("--alwaysroute", help="summary.json of the always-route natural lane (knee cells, step 13)")
+    ap.add_argument("--alwaysroute-lmeval", help="its lm-eval scores")
     a = ap.parse_args(); d = json.load(open(a.summary)); rows, macros = [], []
+    ar = json.load(open(a.alwaysroute)) if a.alwaysroute else {}
     lm = {}
-    for cell, rec in json.load(open(a.lmeval)).items():
-        m = re.search(r"harvest-(upstream-)?(gsm8k|bbh_cot|coqa)-(r\d+p\d+)/", cell)
+    src = dict(json.load(open(a.lmeval)))
+    if a.alwaysroute_lmeval:
+        src.update(json.load(open(a.alwaysroute_lmeval)))
+    for cell, rec in src.items():
+        m = re.search(r"harvest-(upstream-|integrated_alwaysskip-)?(gsm8k|bbh_cot|coqa)-(r\d+p\d+)/", cell)
         if not m: continue
         sc = rec["scores"]; q = sc.get("exact_match,flexible-extract", sc.get("exact_match,get-answer", sc.get("f1")))
-        lm[("upstream" if m.group(1) else "vskipper", m.group(2), m.group(3))] = q
+        arm = "alwaysroute" if (m.group(1) or "").startswith("integrated_alwaysskip") else ("upstream" if m.group(1) else "vskipper")
+        lm[(arm, m.group(2), m.group(3))] = q
     def quality(rec, ds, arm, lbl):
         return lm[(arm, ds, lbl)]
     for ds, labels in LABELS.items():
@@ -48,8 +55,18 @@ def main():
                 print(f"  {ds} {lbl}: no lm-eval score for both arms -> cell skipped", file=sys.stderr); continue
             for arm, r in (("upstream", u), ("vskipper", v)):
                 rows.append(f"{NAMES[ds] if arm == 'upstream' else ''} & {rate if arm == 'upstream' else ''} & {STACK[arm]} & {100*quality(r, ds, arm, lbl):.1f} & {r['cap_hits']} & {r['mean_out_tokens']:.0f} & {r['mean_ttft_ms']:.0f} & {r['mean_tpot_ms']:.1f} & {r['mean_e2e_s']:.1f} & {tps(r):.0f} & {r['duration_s']:.0f} \\\\")
+            w = ar.get(ds, {}).get(lbl)
+            if w is not None and ("alwaysroute", ds, lbl) in lm:
+                rows.append(f" & & FlexiDepth always-route & {100*quality(w, ds, 'alwaysroute', lbl):.1f} & {w['cap_hits']} & {w['mean_out_tokens']:.0f} & {w['mean_ttft_ms']:.0f} & {w['mean_tpot_ms']:.1f} & {w['mean_e2e_s']:.1f} & {tps(w):.0f} & {w['duration_s']:.0f} \\\\")
+                tag = MW[ds] + WORD[rate]
+                macros.append(f"\\newcommand{{\\vpNatAll{tag}Qual}}{{{100*quality(w, ds, 'alwaysroute', lbl):.1f}}}")
+                macros.append(f"\\newcommand{{\\vpNatAll{tag}EtoE}}{{{w['mean_e2e_s']:.1f}}}")
+                macros.append(f"\\newcommand{{\\vpNatAll{tag}Cap}}{{{w['cap_hits']}}}")
+                macros.append(f"\\newcommand{{\\vpNatAll{tag}OutTok}}{{{w['mean_out_tokens']:.0f}}}")
             pct = lambda k: 100 * (v[k] - u[k]) / u[k]
             dq = 100 * (quality(v, ds, "vskipper", lbl) - quality(u, ds, "upstream", lbl)); dtps = 100 * (tps(v) - tps(u)) / tps(u)
+            macros.append(f"\\newcommand{{\\vpNatUp{MW[ds] + WORD[rate]}Qual}}{{{100*quality(u, ds, 'upstream', lbl):.1f}}}")
+            macros.append(f"\\newcommand{{\\vpNatHyb{MW[ds] + WORD[rate]}Qual}}{{{100*quality(v, ds, 'vskipper', lbl):.1f}}}")
             rows.append(f" & & \\emph{{stack $\\Delta$}} & {dq:+.1f}~pp & {v['cap_hits']-u['cap_hits']:+d} & {pct('mean_out_tokens'):+.0f}\\% & {pct('mean_ttft_ms'):+.0f}\\% & {pct('mean_tpot_ms'):+.0f}\\% & {pct('mean_e2e_s'):+.0f}\\% & {dtps:+.0f}\\% & {pct('duration_s'):+.0f}\\% \\\\")
             if lbl == labels[-1][0]: rows.append(r"\addlinespace")
             tag = MW[ds] + WORD[rate]
