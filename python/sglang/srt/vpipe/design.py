@@ -144,8 +144,16 @@ SERVED_LAUNCH_EXEMPTIONS: Final[dict[str, dict[str, Any]]] = {
     # campaign shares one numeric format and one K/V budget. Declared HERE, by name, and
     # applied by the driver only under the "paper" launch profile below; under
     # "sglang_default" these two are not exempt and Gate E expects the computed defaults.
-    "dtype": {"value": "float16", "decision": "D-757 add.", "profile": "paper"},
-    "mem_fraction_static": {"value": 0.8, "decision": "D-757 add.", "profile": "paper"},
+    # [D-773, owner 2026-09-14] A second paper profile, `paper_bf16`, serves a checkpoint in
+    # bf16 with the same 0.8 budget: Qwen3-4B is bf16-native and, measured on the same suite
+    # and Triton substrate, fp16 costs its UPSTREAM 3x throughput (4.1 vs 12.3 req/s), which
+    # would make the boundary test a test on a crippled substrate. Llama-3-8B stays fp16
+    # (D-757 add.). A "profiles" rule maps each profile to its declared value; under any
+    # profile it does not name, the field is held to the default.
+    "dtype": {"profiles": {"paper": "float16", "paper_bf16": "bfloat16"},
+              "decision": "D-757 add. / D-773"},
+    "mem_fraction_static": {"profiles": {"paper": 0.8, "paper_bf16": 0.8},
+                            "decision": "D-757 add. / D-773"},
 }
 
 # A LAUNCH PROFILE is the set of launch arguments the driver passes beyond the substrate
@@ -157,6 +165,7 @@ SERVED_LAUNCH_EXEMPTIONS: Final[dict[str, dict[str, Any]]] = {
 # cannot smuggle a value: every non-default it produces must also be listed above.
 SERVED_LAUNCH_PROFILES: Final[dict[str, dict[str, Any]]] = {
     "paper": {"dtype": "float16", "mem_fraction_static": 0.8},
+    "paper_bf16": {"dtype": "bfloat16", "mem_fraction_static": 0.8},   # D-773: Qwen3-4B (native dtype)
     "sglang_default": {},
 }
 SERVED_LAUNCH_PROFILE_DEFAULT: Final[str] = "paper"

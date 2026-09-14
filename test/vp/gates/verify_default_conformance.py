@@ -103,8 +103,23 @@ def load_exemptions(design_tree: Path, profile: str | None,
     active = profile or decl["default_profile"]
     if active not in decl["profiles"]:
         sys.exit(f"unknown launch profile {active!r}; declared: {sorted(decl['profiles'])}")
-    return {field: rule for field, rule in decl["exemptions"].items()
-            if rule.get("profile") in (None, active)}
+    return resolve_exemptions(decl["exemptions"], active)
+
+
+def resolve_exemptions(exemptions: dict[str, dict[str, Any]], active: str) -> dict[str, dict[str, Any]]:
+    """The exemptions in force under `active`, each with ONE resolved value.
+
+    Two rule forms: {"value": v, "profile": p?} applies under p (or everywhere when p is absent);
+    {"profiles": {p1: v1, p2: v2}} applies under p1 with v1, under p2 with v2, and NOT under any
+    other profile (D-773: fp16 under "paper", bf16 under "paper_bf16", the default elsewhere)."""
+    out: dict[str, dict[str, Any]] = {}
+    for field, rule in exemptions.items():
+        if "profiles" in rule:
+            if active in rule["profiles"]:
+                out[field] = {k: v for k, v in rule.items() if k != "profiles"} | {"value": rule["profiles"][active], "profile": active}
+        elif rule.get("profile") in (None, active):
+            out[field] = rule
+    return out
 
 
 def same(served: Any, default: Any) -> bool:
