@@ -361,6 +361,22 @@ ARMS.update({
     for depth in _SWEEP_DEPTH_RATIOS
 })
 
+# [D-776] The UNGATED twins of the nine mock arms: regime switch OFF on both legs, so the routed body
+# serves every pass at every occupancy (no band, like vskipper_qwen3_4b_alwaysroute). One map beside the
+# shared-band map (step 6) and the own-band map (step 10): what engagement control is worth, arm by arm.
+def _mock_arm_ungated(rate: float, depth: float) -> dict[str, Any]:
+    arm = _mock_arm(rate, depth)
+    arm["regime_switch"] = False
+    del arm["decode_kv_band"]
+    return arm
+
+
+ARMS.update({
+    f"integrated_randomskip_r{int(rate * 100)}_d{int(depth * 100)}_alwaysroute": _mock_arm_ungated(rate, depth)
+    for rate in _SWEEP_SKIP_RATES
+    for depth in _SWEEP_DEPTH_RATIOS
+})
+
 # [D-764] The Qwen3-4B applicability-boundary points: the SAME mock on the Qwen family (its
 # routed range, hard-mask bodies, its projector weights, its own rule-derived band). The
 # learned Qwen skipper removes ~0.25 x 1.0 of the routed work; these two remove 0.375 and
