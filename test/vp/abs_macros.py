@@ -13,7 +13,7 @@ pat = re.compile(r"\\newcommand\{\\([A-Za-z]+)\}\{([+-]?[0-9]*\.?[0-9]+)\}")
 n = 0
 for m in pat.finditer(open(src).read()):
     name, val = m.group(1), m.group(2)
-    out.append(f"\\newcommand{{\\{name}Abs}}{{{abs(float(val)):g}}}")
+    out.append(f"\\newcommand{{\\{name}Abs}}{{{val.lstrip(chr(43)).lstrip(chr(45))}}}")   # keep the source's own precision
     n += 1
 open(dst, "w").write("\n".join(out) + "\n")
 print(f"  {n} magnitude macros -> {dst}")

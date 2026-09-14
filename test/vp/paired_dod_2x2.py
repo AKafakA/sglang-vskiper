@@ -111,7 +111,15 @@ def main() -> int:
                         "bbh_cot": "\\texttt{exact\\_match,get-answer}"}[args.dataset]
         m = rep["means"]
         if args.margin is not None:
-            gate = ("pass" if rep["dod_lower_pp"] > -args.margin else "FAIL") + (" (served above ref.)" if rep["dod_lower_pp"] > 0 else "")
+            # A point estimate inside the margin whose interval is not is UNRESOLVED, not a failure:
+            # "FAIL" asserts the served arm is worse by more than the margin, which a wide n=1 interval
+            # does not establish. Only a point estimate beyond the margin is a failure.
+            if rep["dod_lower_pp"] > -args.margin:
+                gate = "pass" + (" (served above ref.)" if rep["dod_lower_pp"] > 0 else "")
+            elif rep["D_minus_C"]["mean_pp"] - rep["B_minus_A"]["mean_pp"] > -args.margin:
+                gate = f"unresolved ($n={rep.get('n_reps', 1)}$)"
+            else:
+                gate = "FAIL"
         else:
             gate = "no resolved diff." if rep["verdict"].startswith("no resolved") else ("served above ref." if z["mean_pp"] > 0 else "served below ref.")
         row = (f"{disp} & {metric_label} & {m['A']/100:.4f} & {m['B']/100:.4f} & {m['C']/100:.4f} & {m['D']/100:.4f} & "
