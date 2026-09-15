@@ -41,11 +41,11 @@ rm -rf "$OUT"; mkdir -p "$OUT"
 # export that fails to reach the server is indistinguishable from one that worked,
 # which is how eighteen hours ran on a rejected design. The arm goes into the
 # durable file the served path reads, and the design comes from the tree.
-python3 - "$ARM" "$TREE" <<'ARMPY'
+PYTHONPATH=$TREE/python "$VP_GATE_PYTHON" - "$ARM" "$TREE" <<'ARMPY'
 import importlib.util, pathlib, sys
 arm, tree = sys.argv[1], pathlib.Path(sys.argv[2])
-# design.py is dependency-free by design; load it BY PATH so this works under bare
-# python3 without dragging in the sglang package chain (orjson et al).
+# design.py is loaded BY PATH, but it is no longer dependency-free: it lazily imports
+# sglang.srt.vpipe.roofline, which needs orjson. Use the serve interpreter, not bare python3.
 spec = importlib.util.spec_from_file_location(
     "vpipe_design", tree / "python" / "sglang" / "srt" / "vpipe" / "design.py")
 d = importlib.util.module_from_spec(spec); spec.loader.exec_module(d)
