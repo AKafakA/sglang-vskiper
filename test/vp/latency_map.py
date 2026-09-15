@@ -22,8 +22,7 @@ def cells(root, arm):
     return out
 
 def load(f):
-    try: return json.load(open(f))
-    except Exception: return None
+    return json.load(open(f))   # an unreadable cell is an error, not a pair silently missing from the map
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("root"); ap.add_argument("--baseline", required=True); ap.add_argument("--treatment", required=True)
@@ -33,7 +32,6 @@ def main():
     rows = []
     for key in sorted(set(B) & set(T)):
         ds, suite, rep = key; b, t = load(B[key]), load(T[key])
-        if b is None or t is None: continue
         bi = dict(zip(b["request_ids"], zip(b["e2e_latencies"], b["output_lens"], b["ttfts"])))
         ti = dict(zip(t["request_ids"], zip(t["e2e_latencies"], t["output_lens"], t["ttfts"])))
         bins = {}

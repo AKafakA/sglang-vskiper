@@ -61,7 +61,10 @@ def apply_filters(task, resps, docs):
 
 
 results = {}
-for cell in [c for pat in a.cells for c in sorted(glob.glob(pat))]:
+cells = [c for pat in a.cells for c in sorted(glob.glob(pat))]
+if not cells:
+    sys.exit(f"FATAL: --cells matched no file: {a.cells}")
+for cell in cells:
     suite, gold, rid_by_index = meta_for(cell)
     rec = json.loads(open(cell).readline())
     ids, texts = rec["request_ids"], rec["generated_texts"]
@@ -170,7 +173,8 @@ for cell in [c for pat in a.cells for c in sorted(glob.glob(pat))]:
             g = gold[i][1]; g = g if isinstance(g, list) else [g]
             per.append(float(coqa_utils.compute_scores(g, texts[i])["f1"]))
         results.setdefault("__per_row__", {})[cell] = {"metric": "f1", "ok": per, "ids": list(ids)}
-    results[cell] = {"suite": suite, "n": n, "scores": scores}
+    # provenance the table generator checks: whether the train-split padding was excluded
+    results[cell] = {"suite": suite, "n": n, "scores": scores, "eval_split_only": bool(a.eval_split_only)}
     print(cell.split("/campaign/")[-1], n, {k: round(v, 4) for k, v in scores.items()}, flush=True)
 json.dump(results, open(a.out, "w"), indent=1)
 print("LMEVAL-SCORE-DONE", len(results))

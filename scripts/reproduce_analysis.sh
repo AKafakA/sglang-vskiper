@@ -98,7 +98,7 @@ fi
 python3 "$VP/f1_macros.py" "$PACK/F1" --macros "$OUT/f1_macros.tex"
 python3 "$VP/cache_share.py" "$PACK/raw-sample/step5_upstreamlen" --macros "$OUT/cache_share_macros.tex"   # rep 1 ships raw; the shares agree across reps
 python3 "$VP/loaded_shares.py" --raw "$PACK/quality-lane-raw" --macros "$OUT/loaded_shares_macros.tex" --json "$OUT/loaded_shares.json"
-python3 "$VP/loaded_quality_table.py" "$LOADED" \
+python3 "$VP/loaded_quality_table.py" "$LOADED" --shares "$OUT/loaded_shares.json" \
   --rows "$OUT/loaded_quality_rows.tex" --sweep-rows "$OUT/loaded_quality_sweep.tex" \
   --macros "$OUT/loaded_quality_macros.tex"
 # Appendix E.3: the two clients of the quality table, compared on the always-route arm's GSM8K documents at

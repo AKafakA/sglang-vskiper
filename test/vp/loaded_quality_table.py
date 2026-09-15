@@ -13,9 +13,11 @@ path is .../harvest-<arm>-<dataset>-<rate_label>/cell/<suite>_qps<rate>_rep1.jso
   --macros      per-cell macros for the prose
 
 Scores come from the harness's own filter per task, the same one the unloaded block names:
-GSM8K flexible-extract exact match, BBH-CoT get-answer exact match, CoQA F1. The scorer must have
-been run with --eval-split-only: GSM8K and CoQA suites carry train-split padding to sustain the
-operating point, and only the held-out rows may be scored.
+GSM8K marker-composite exact match (strict where it parses, flexible otherwise), BBH-CoT get-answer
+exact match, CoQA F1. The scorer must have been run with --eval-split-only: GSM8K and CoQA suites
+carry train-split padding to sustain the operating point, and only the held-out rows may be scored.
+Both are enforced here: a cell scored with the flag off, or whose n is not the held-out size,
+is refused. So is a missing cell -- every arm at every rate is a row of the appendix table.
 
 usage: loaded_quality_table.py scores.json --rows rows.tex --sweep-rows sweep.tex --macros macros.tex
 """
@@ -29,6 +31,8 @@ RATES = {"gsm8k": [("r8p25", "0.75"), ("r10p45", "0.95"), ("r13p75", "1.25")],
 NAMES = {"gsm8k": "GSM8K", "bbh_cot": "BBH-CoT", "coqa": "CoQA"}
 MW = {"gsm8k": "Gsm", "bbh_cot": "Bbh", "coqa": "Coqa"}
 RW = {"0.75": "Low", "0.95": "Mid", "1.25": "High"}
+# the held-out document count per dataset: what n must be once the train-split padding is excluded
+HELD_OUT = {"gsm8k": 1319, "coqa": 500, "bbh_cot": 6511}
 # the harness's own filter per task -- the key score_natural_lane_lmeval.py emits
 # GSM8K uses the marker-aware composite: this checkpoint's confidence epilogue makes
 # flexible-extract alone an arm-dependent reading (the base model never emits the epilogue, the
@@ -81,6 +85,13 @@ def index(scores):
         if key not in rec["scores"]:
             sys.exit(f"FATAL {cell}: expected metric {key!r}, got {sorted(rec['scores'])}. "
                      "The loaded block must use the same filter the unloaded block names.")
+        # The scorer records the flag; a file from before it did carries the same proof in n, which
+        # is 3600/4000 with the padding scored and the held-out count without it.
+        if rec.get("eval_split_only") is False:
+            sys.exit(f"FATAL {cell}: scored without --eval-split-only; the train-split padding is in "
+                     "the score. Rescore.")
+        if rec["n"] != HELD_OUT[ds]:
+            sys.exit(f"FATAL {cell}: n={rec['n']} but {ds} has {HELD_OUT[ds]} held-out documents")
         out[(ds, arm, rate)] = (100.0 * rec["scores"][key], rec["n"])
     return out
 
@@ -92,7 +103,12 @@ def main():
     ap.add_argument("--sweep-rows", default=None, help="all rates, for the appendix")
     ap.add_argument("--macros", required=True)
     ap.add_argument("--macro-prefix", default="vpLq")
+    ap.add_argument("--shares", default=None,
+                    help="loaded_shares.json: the routed decode share of the served arms per cell, read "
+                         "from their attestation; printed beside each sweep row so a cell whose routed "
+                         "body never ran (0.0%%) is visible in the table, not only in an appendix macro")
     a = ap.parse_args()
+    shares = json.load(open(a.shares)) if a.shares else None
 
     raw = json.load(open(a.scores))
     per_row = raw.pop("__per_row__", {})
@@ -109,9 +125,15 @@ def main():
     for ds in ("gsm8k", "coqa", "bbh_cot"):
         for rate_lbl, rate_x in RATES[ds]:
             cells = {arm: idx.get((ds, arm, rate_lbl)) for arm, _ in ARMS}
-            present = {k: v for k, v in cells.items() if v}
-            if not present:
-                continue
+            missing = [arm for arm, v in cells.items() if not v]
+            if missing:
+                sys.exit(f"FATAL {ds}@{rate_x}: no scored cell for {missing}; every arm at every "
+                         "rate is a row of the table, so a missing one is a missing input, not a blank")
+            for arm, _ in ARMS:
+                if not rows_by_key.get((ds, arm, rate_lbl)):
+                    sys.exit(f"FATAL {ds}@{rate_x}: no per-document vector for {arm}; the scores file "
+                             "predates the per-row emitter -- rescore")
+            present = cells
             n = sorted({v[1] for v in present.values()})
             if len(n) > 1:
                 sys.exit(f"FATAL {ds}@{rate_x}: arms scored different row counts {n}; "
@@ -130,7 +152,15 @@ def main():
                 hv, wv = rows_by_key.get((ds, "integrated_it4", rate_lbl)), rows_by_key.get((ds, other, rate_lbl))
                 if not (h and w and hv and wv) or len(hv) != len(wv): return "--"
                 d, ci = paired_ci(hv, wv); return f"${d:+.2f} \\pm {ci:.2f}$"
-            sweep.append(f"{NAMES[ds]} & ${rate_x}\\times Q^*$ & {body} & {paired_col('upstream')} & {paired_col('integrated_alwaysskip')} \\\\")
+            share_col = ""
+            if shares is not None:
+                def share(arm):
+                    rec = shares.get(f"{arm}/{ds}/{rate_lbl}")
+                    if rec is None:
+                        sys.exit(f"FATAL {ds}@{rate_x}: no routed share for {arm} in {a.shares}")
+                    return f"{rec['routed_share_pct']:.0f}"
+                share_col = f" & {share('integrated_it4')} / {share('integrated_alwaysskip')}"
+            sweep.append(f"{NAMES[ds]} & ${rate_x}\\times Q^*$ & {body}{share_col} & {paired_col('upstream')} & {paired_col('integrated_alwaysskip')} \\\\")
             if rate_x == "0.95":
                 knee.append(f"{NAMES[ds]} & {body} \\\\")
             for arm, _ in ARMS:

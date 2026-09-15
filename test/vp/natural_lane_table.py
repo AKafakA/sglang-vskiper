@@ -74,8 +74,10 @@ def main():
                 # the two published GSM8K filters, served minus upstream, for the banks appendix's divergence sentence
                 for key, tag in (("exact_match,flexible-extract", "FlexDelta"), ("exact_match,strict-match", "StrictDelta")):
                     su, sv = scores_for(u, ds, 'upstream', lbl).get(key), scores_for(v, ds, 'vskipper', lbl).get(key)
-                    if su is not None and sv is not None:
-                        macros.append(f"\\newcommand{{\\vpNatGsm{WORD[rate]}{tag}}}{{{100*(sv-su):+.1f}}}")
+                    if su is None or sv is None:
+                        sys.exit(f"FATAL gsm8k {lbl}: filter {key!r} missing from the scores (upstream {su}, vskipper {sv}); "
+                                 "the banks appendix cites both filters")
+                    macros.append(f"\\newcommand{{\\vpNatGsm{WORD[rate]}{tag}}}{{{100*(sv-su):+.1f}}}")
             rows.append(f" & & \\emph{{stack $\\Delta$}} & {v['cap_hits']-u['cap_hits']:+d} & {pct('mean_out_tokens'):+.0f}\\% & {pct('mean_ttft_ms'):+.0f}\\% & {pct('mean_tpot_ms'):+.0f}\\% & {pct('mean_e2e_s'):+.0f}\\% & {dtps:+.0f}\\% & {pct('duration_s'):+.0f}\\% \\\\")
             if lbl == labels[-1][0]: rows.append(r"\addlinespace")
             tag = MW[ds] + WORD[rate]
