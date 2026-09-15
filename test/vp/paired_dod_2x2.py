@@ -145,7 +145,7 @@ def main() -> int:
                 gate = "FAIL"
         else:
             gate = "no resolved diff." if rep["verdict"].startswith("no resolved") else ("served above ref." if z["mean_pp"] > 0 else "served below ref.")
-        row = (f"{disp} & {metric_label} & {m['A']/100:.4f} & {m['B']/100:.4f} & {m['C']/100:.4f} & {m['D']/100:.4f} & "
+        row = (f"{disp} & {metric_label} & {m['A']:.2f} & {m['B']:.2f} & {m['C']:.2f} & {m['D']:.2f} & "
                f"{rep['B_minus_A']['mean_pp']:+.2f} & {rep['D_minus_C']['mean_pp']:+.2f} & "
                f"{z['mean_pp']:+.2f} $\\pm$ {z['ci95_half_pp']:.2f} & {gate} \\\\\n")
         macros = "\n".join([

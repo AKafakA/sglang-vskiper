@@ -11,15 +11,19 @@ usage: latency_map.py ROOT --baseline upstream --treatment integrated_it4 [--bin
 import argparse, glob, json, os, statistics as st
 
 def cells(root, arm):
+    # Paths only. A headline root is 108 cells / 3.3 GB of per-request arrays; loading every cell
+    # at once needs ~20 GB, which the box had and a laptop does not. Each pair is loaded in main().
     out = {}
     for f in glob.glob(os.path.join(root, "rep*", "*", arm, "cells", "*_rep*.jsonl")):
         if "arrival" in f or ".load." in f: continue
         base = os.path.basename(f); ds = f.split(os.sep)[-4]; rep = f.split(os.sep)[-5]
         suite = base.split("_qps")[0]
-        try: d = json.load(open(f))
-        except Exception: continue
-        out[(ds, suite, rep)] = d
+        out[(ds, suite, rep)] = f
     return out
+
+def load(f):
+    try: return json.load(open(f))
+    except Exception: return None
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("root"); ap.add_argument("--baseline", required=True); ap.add_argument("--treatment", required=True)
@@ -28,7 +32,8 @@ def main():
     B = cells(a.root, a.baseline); T = cells(a.root, a.treatment)
     rows = []
     for key in sorted(set(B) & set(T)):
-        ds, suite, rep = key; b, t = B[key], T[key]
+        ds, suite, rep = key; b, t = load(B[key]), load(T[key])
+        if b is None or t is None: continue
         bi = dict(zip(b["request_ids"], zip(b["e2e_latencies"], b["output_lens"], b["ttfts"])))
         ti = dict(zip(t["request_ids"], zip(t["e2e_latencies"], t["output_lens"], t["ttfts"])))
         bins = {}
