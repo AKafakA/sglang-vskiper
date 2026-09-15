@@ -1,6 +1,6 @@
 {
   "_what": "Requests whose EMPTY generation is the CHECKPOINT'S OWN behaviour, each demonstrated under FlexiDepth's own PyTorch code (arm B) -- never a serving artifact. verify_zero_empty reports these by id and does not count them against the zero floor. An entry without a witness is invalid (the gate tests refuse it).",
-  "_rule": "Owner 2026-09-12 (D-728): 'change the empty gates to allow a known white list with this'. An id enters ONLY with arm-B evidence on the exact token sequence the lane serves; a request that empties only sometimes (coqa:train:3249:10, 1 of 5 attempts) is NOT known and still re-measures.",
+  "_rule": "Owner 2026-09-12: 'change the empty gates to allow a known white list with this'. An id enters ONLY with arm-B evidence on the exact token sequence the lane serves; a request that empties only sometimes (coqa:train:3249:10, 1 of 5 attempts) is NOT known and still re-measures.",
   "entries": [
     {
       "request_id": "coqa:train:856:15",
@@ -8,7 +8,7 @@
       "first_token": "<|eot_id|>",
       "first_token_logprob": -1.033,
       "witness": "FlexiDepth-Llama-3-8B-Instruct under its own DDLlamaForCausalLM, fp16, batch 1, same 594 ids the bench client sends (no BOS): greedy first token <|eot_id|> at -1.033, ' Le' at -2.517. vSkipper routed prefill reproduces -1.033. Only empty in the 4,000-row suite scan.",
-      "evidence": "vPipe-doc/codex/artifacts/vast-20260912-coqa-debug/fd_suite_empties.json; DECISION_LOG D-724, D-727",
+      "evidence": "vPipe-doc/codex/artifacts/vast-20260912-coqa-debug/fd_suite_empties.json",
       "decided": "2026-09-12 owner"
     }
   ]

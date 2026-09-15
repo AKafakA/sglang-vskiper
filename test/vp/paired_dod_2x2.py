@@ -64,7 +64,7 @@ def main() -> int:
     ap.add_argument("--macro-prefix", default="vpQ", help="LaTeX macro prefix (vpQ for the Llama 2x2; e.g. vpQwen for the Qwen row)")
     ap.add_argument("--macros", default=None, help="macros file (default: quality_macros.tex beside --latex)")
     ap.add_argument("--margin", type=float, default=None,
-                    help="non-inferiority margin epsilon in pp (owner, D-764: 1.0): the gate passes when the "
+                    help="non-inferiority margin epsilon in pp (owner: 1.0): the gate passes when the "
                          "lower 95%% bound of the paired d-o-d is above -epsilon, i.e. the runtime adds at most "
                          "epsilon on top of the checkpoint's own cost. Without it the old straddle rule is printed.")
     ap.add_argument("--latex", default=None, help="APPEND this dataset's table row and macros (same names as summarize_2x2, plus \\vpQ<Ds>DodCi)")

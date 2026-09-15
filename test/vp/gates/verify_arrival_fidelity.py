@@ -96,7 +96,7 @@ def main() -> int:
         print(f"\nREFUSING: realized arrivals depart from the frozen trace "
               f"(median {med:.3f}s > {a.tolerance_s}s or max {worst:.3f}s > {a.max_tolerance_s}s).\n"
               "This cell measured different traffic from the traffic its artifacts certify, and "
-              "a paired comparison against it is not valid (D-624 #1).")
+              "a paired comparison against it is not valid.")
         return 1
     print("\nOK: realized arrivals track the frozen trace.")
     return 0

@@ -222,7 +222,7 @@ def validate_full_graph_model_configuration(
     _removed_forced = "SGLANG_FD_FULL_GRAPH_FORCED_ALL_RUN_PRODUCTION_ATTENTION"
     if str(values.get(_removed_forced, "")).strip():
         raise ValueError(
-            f"{_removed_forced} is REMOVED (D-248/D-250): it forced routed "
+            f"{_removed_forced} is REMOVED: it forced routed "
             "layers onto the production backend via the deleted per-layer "
             "dispatch. One backend now serves every layer; delete this key."
         )
@@ -230,7 +230,7 @@ def validate_full_graph_model_configuration(
     _removed = "SGLANG_FD_FULL_GRAPH_LAYER_ROUTED_DECODE_ATTENTION"
     if str(values.get(_removed, "")).strip():
         raise ValueError(
-            f"{_removed} is REMOVED (D-248/D-250): it built a hybrid attention "
+            f"{_removed} is REMOVED: it built a hybrid attention "
             "backend out of the stock CLI flags, which made the treated arm's "
             "decode kernel differ from the baseline's. One backend now serves "
             "every layer of every arm, chosen by the official CLI. Delete this "

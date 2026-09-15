@@ -64,7 +64,7 @@ def find_vp_runtime(info: dict[str, Any]) -> dict[str, Any]:
         sys.exit(
             "FATAL: /server_info has no vp_runtime block. Either this is not a vPipe tree, or "
             "the attestation is not wired -- and an unwired attestation is exactly the hole "
-            "this gate exists to close (D-614)."
+            "this gate exists to close."
         )
     return vp
 
@@ -152,7 +152,7 @@ def main() -> int:
     if served is None or served_arm is None:
         problems.append(
             "  the server does not publish vp_runtime.served_design -- it predates the "
-            "resolved-state gate (D-611); redeploy the current tree before any cell"
+            "resolved-state gate; redeploy the current tree before any cell"
         )
     else:
         if served_arm != args.arm:
@@ -165,7 +165,7 @@ def main() -> int:
     if problems:
         print("\nSERVED SYSTEM DOES NOT MATCH THE INTENDED DESIGN:")
         print("\n".join(problems))
-        print("\nREFUSING. Do not run cells against this server (D-609).")
+        print("\nREFUSING. Do not run cells against this server.")
         return 1
     print("\nOK: the live server is serving the deployed design. Campaign may proceed.")
     return 0

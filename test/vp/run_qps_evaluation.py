@@ -747,7 +747,7 @@ def _arm_routes_decode(server_info: Any, *, upstream_baseline: bool = False) -> 
     if served is None:
         raise RuntimeError(
             "live /server_info carries no vp_runtime.served_design: the served tree "
-            "predates the D-609 design attestation, so the resolved arm cannot be "
+            "predates the design attestation, so the resolved arm cannot be "
             "verified. Deploy the current tree, or pass --upstream-baseline if this "
             "cell is deliberately serving genuine upstream SGLang."
         )
@@ -1274,7 +1274,7 @@ def main() -> None:
         "--upstream-baseline",
         action="store_true",
         help="This cell serves GENUINE upstream SGLang (a separate tree with no vpipe/ "
-             "package, per owner order D-587), not ARMS['stock'] which is our fork with "
+             "package, per owner order), not ARMS['stock'] which is our fork with "
              "the skipper off. Inverts the attestation: vp_runtime.served_design must be "
              "ABSENT, and its PRESENCE refuses the cell as a mislaunched fork. Without "
              "this flag an upstream server cannot be measured at all, which is why the "

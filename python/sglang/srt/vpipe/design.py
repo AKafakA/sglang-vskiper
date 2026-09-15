@@ -412,7 +412,7 @@ def resolve_arm(name: str) -> dict[str, Any]:
     except KeyError:
         raise ValueError(
             f"unknown arm {name!r}; canonical arms are {sorted(ARMS)} "
-            "(defined in vpipe/design.py, D-609 -- arms are not configured by environment)"
+            "(defined in vpipe/design.py -- arms are not configured by environment)"
         ) from None
 
 
@@ -434,7 +434,7 @@ def host_config(path: str | None = None) -> dict[str, str]:
         raise ValueError(
             f"{_HOST_CONFIG_ENV} must point at a committed host-config file "
             "(deploy/hosts/<host>.json). Host paths are not supplied as environment "
-            "values (D-609)."
+            "values."
         )
     p = Path(raw)
     if not p.is_file():
@@ -464,7 +464,7 @@ def design_attestation() -> dict[str, Any]:
     # (the family's trained range). The attestation reports the ARM's effective value, so the
     # served-design gate compares what this arm declares against what this process serves.
     return {
-        "source": "vpipe/design.py (constants, D-609)",
+        "source": "vpipe/design.py (constants)",
         "regime_switch": SERVED_REGIME_SWITCH,
         "low_row_policy": SERVED_LOW_ROW_POLICY,
         "routed_layers": list(arm_routed_layers()),
@@ -569,7 +569,7 @@ def active_arm_name() -> str:
             # run for eighteen hours. An unstated arm is an incomplete deployment.
             raise ValueError(
                 f"{_ACTIVE_ARM_FILE} is missing from the deployed tree ({f}). The arm is "
-                f"not defaulted: write one of {sorted(ARMS)} into that file (D-609/D-611)."
+                f"not defaulted: write one of {sorted(ARMS)} into that file."
             )
         name = f.read_text().strip()
         resolve_arm(name)  # fail closed on an unknown name

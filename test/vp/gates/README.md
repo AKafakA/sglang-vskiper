@@ -1,6 +1,6 @@
 # test/vp/gates — the headline execution gates, repo-resident
 
-Until `dev-h-harness-selfcontained` (D-307 Lane H, 2026-08-26) these lived
+Until `dev-h-harness-selfcontained` these lived
 only on the dev box / in `vPipe-doc` artifacts — the split guide's "the
 branch cannot currently reproduce its own headline gate". Logic is the
 **proven 2026-08-24 vintage verbatim** (`box_vpcov_arm_v2.sh` +

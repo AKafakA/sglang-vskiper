@@ -311,7 +311,7 @@ def full_graph_low_row_policy(
     policy = str(values.get(FD_LOW_ROW_POLICY_ENV, "off")).strip().lower()
     if policy != "off" and FD_LOW_ROW_POLICY_ENV in values:
         raise ValueError(
-            f"{FD_LOW_ROW_POLICY_ENV} is not configurable (D-609): the served "
+            f"{FD_LOW_ROW_POLICY_ENV} is not configurable: the served "
             f'design is "off". Got {policy!r}'
         )
     if policy not in _VALID_LOW_ROW_POLICIES:
@@ -1182,7 +1182,7 @@ def regime_switch_config(
         raise ValueError(
             f"{REGIME_SWITCH_ENV} may only be unset (= the served design) or "
             f'"off" (= baseline arm). Configuring the design by environment is '
-            f"forbidden (D-609); it is a constant in vpipe/common.py. Got {raw!r}"
+            f"forbidden; it is a constant in vpipe/common.py. Got {raw!r}"
         )
     # An arm routes only the phases it has. The regime switch carries BOTH
     # admission legs, but a prefill-only arm must not run the decode leg: its stock low
@@ -1245,7 +1245,7 @@ def resolved_design_attestation() -> dict[str, Any]:
 
     switch = regime_switch_config()
     return {
-        "source": "resolvers, at boot (D-611)",
+        "source": "resolvers, at boot ",
         "arm": active_arm_name(),
         # stock serves no skipper; reporting the fallback adapter name there would be a
         # true-looking field that is false -- the shape of defect this file exists to end

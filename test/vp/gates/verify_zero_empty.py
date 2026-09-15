@@ -139,7 +139,7 @@ def main() -> int:
               "returns no text is lost output, not a low score -- it silently deflates quality and "
               "inflates throughput-per-token. First offending ids: " + ", ".join(unknown[:10]))
         print("Check the prompt protocol first: raw few-shot rendering reproduces this at "
-              "42-52% while the chat protocol measures 0.0% on the same tree (D-628).")
+              "42-52% while the chat protocol measures 0.0% on the same tree.")
         return 1
 
     if inherited:

@@ -44,7 +44,7 @@ METRICS = {
 ARMS = {
     "A": "raw base model, PyTorch",
     "B": "released checkpoint, its OWN code",
-    "C": "base model on UPSTREAM SGLang (D-587; was our fork with the skipper off)",
+    "C": "base model on UPSTREAM SGLang ",
     "D": "vSkipper serving the checkpoint",
 }
 
@@ -117,7 +117,7 @@ def _assert_arm_c_is_upstream(root: Path, mapping: dict[str, str]) -> None:
             sys.exit(
                 f"FATAL: {path} predates the upstream_baseline field, so whether arm C was "
                 "genuine upstream is UNKNOWABLE from the artifact. Re-run arm C rather than "
-                "assuming it (D-587)."
+                "assuming it."
             )
         if not record["upstream_baseline"]:
             sys.exit(
@@ -152,7 +152,7 @@ def _load(root: Path, arm: str, dataset: str, mapping: dict[str, str]) -> tuple[
             f"FATAL: arm {arm} task {task} has no '{metric}'. Present: "
             f"{sorted(k for k in row if isinstance(row[k], float))}.\n"
             "       The metric is a ruling (2026-08-17), not a preference -- on gsm8k the "
-            "sign flips between extractors (D-630). Not falling back."
+            "sign flips between extractors. Not falling back."
         )
     return float(row[metric]), float(row.get(stderr_key, 0.0))
 
@@ -247,7 +247,7 @@ def main() -> int:
         print(f"  appended a LaTeX row to {args.latex} and macros to {macro_path}")
     if args.dataset == "bbh_cot":
         print()
-        print("  WARNING (D-641) bbh_cot's `get-answer` filter scores only responses that")
+        print("  WARNING  bbh_cot's `get-answer` filter scores only responses that")
         print("  contain 'the answer is'. Measured marker rates differ sharply by arm")
         print("  (stock 76.5% vs vSkipper 95.5%), so this metric mixes FORMAT COMPLIANCE")
         print("  with correctness. Quote the difference-of-differences, which cancels a")

@@ -50,7 +50,7 @@ def pre(a) -> int:
               "G1b served design == intended design (INTENDED vs RESOLVED)")
     if not ok:
         print("\nG1 FAILED -- refusing to run the cell. A cell measured against the wrong "
-              "configuration cannot be repaired afterwards (D-609).")
+              "configuration cannot be repaired afterwards.")
         return 1
     print("\nG1 PASS -- configuration verified. Cell may run.")
     return 0
@@ -64,7 +64,7 @@ def mark_invalid(cell: Path, why: str) -> None:
     cell.rename(dest)
     (dest / "INVALID_REASON.txt").write_text(
         f"{why}\n\nThis cell's numbers are NOT quotable. Fix the cause and RERUN; do not "
-        f"reinterpret, re-label, or cite with a caveat (D-622).\n", encoding="utf-8"
+        f"reinterpret, re-label, or cite with a caveat.\n", encoding="utf-8"
     )
     print(f"\nmarked INVALID: {dest}")
 

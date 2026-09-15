@@ -82,7 +82,7 @@ def main() -> int:
         type=int,
         default=1,
         help="in-flight requests; >1 exercises PACKED multi-request prefill "
-        "batches (the H4 axis — the D-090 quality lane ran concurrently)",
+        "batches (the H4 axis — the quality lane ran concurrently)",
     )
     parser.add_argument(
         "--stream-timing",

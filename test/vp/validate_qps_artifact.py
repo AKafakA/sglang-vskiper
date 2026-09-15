@@ -415,7 +415,7 @@ def validate_record(
             f"{len(empty_rows)} natural-lane requests returned EMPTY text "
             f"(first rows {empty_rows[:10]}). Lost output, not a datum. Check the prompt "
             "protocol first: raw few-shot rendering reproduces this at 42-52% while the chat "
-            "protocol measures 0.0% on the same tree (D-628)."
+            "protocol measures 0.0% on the same tree."
         )
 
     length_finish_indices = [

@@ -421,7 +421,7 @@ def _build_deterministic_mock(arm: Mapping[str, Any]) -> FullGraphSkipperAdapter
         raise ValueError(
             f"arm {arm.get('name', '<unnamed>')!r} selects the deterministic mock "
             "but omits " + ", ".join(missing)
-            + " (define them in vpipe/design.py ARMS, D-611)"
+            + " (define them in vpipe/design.py ARMS)"
         )
     return _deterministic_mock_adapter(
         float(arm["mock_token_skip_rate"]),

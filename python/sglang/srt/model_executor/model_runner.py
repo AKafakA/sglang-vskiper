@@ -2668,7 +2668,7 @@ class ModelRunner(ModelRunnerKVCacheMixin):
                     # A DECLARED deviation: the arm serves the global band under its own
                     # inputs (the Qwen shared-band posture). Attested as decode_kv_band_policy.
                     logger.warning(
-                        "[D-778] decode_kv_band_policy=shared: serving band (exit=%s, enter=%s) "
+                        "decode_kv_band_policy=shared: serving band (exit=%s, enter=%s) "
                         "as a declared deviation from the roofline rule for this arm",
                         _rs.decode.exit_kv_tokens, _rs.decode.enter_kv_tokens,
                     )

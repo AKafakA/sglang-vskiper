@@ -121,7 +121,7 @@ def main() -> int:
 
     arm_file = a.tree / "deploy" / "active_arm"
     ok &= check("deploy/active_arm present", arm_file.is_file(),
-                arm_file.read_text().strip() if arm_file.is_file() else "MISSING (no default, D-611)")
+                arm_file.read_text().strip() if arm_file.is_file() else "MISSING (no default)")
 
     # THE HOST CONFIG IS NAMED, NOT GUESSED.
     #

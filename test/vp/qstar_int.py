@@ -80,7 +80,7 @@ def check_contiguous(rates: list[float]) -> list[str]:
     non_integer = [r for r in rates if abs(r - round(r)) > 1e-9]
     if non_integer:
         problems.append(
-            f"non-integer rungs {non_integer} — Q* is an INTEGER rate (D-590); a "
+            f"non-integer rungs {non_integer} — Q* is an INTEGER rate; a "
             "non-integer here means a multiplier crept in"
         )
     ints = sorted({int(round(r)) for r in rates})
@@ -229,7 +229,7 @@ _BBH_CURVE = [
 
 
 def self_test() -> int:
-    print("self-test: replaying the recorded BBH curve (D-591), which must return 35\n")
+    print("self-test: replaying the recorded BBH curve, which must return 35\n")
     knee = qstar(_BBH_CURVE)
     print(f"  Q* = {knee:g}")
     ok = knee == 35

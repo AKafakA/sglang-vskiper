@@ -170,7 +170,7 @@ def main() -> int:
                     counted.setdefault(key, []).append(rep)
 
     if refused:
-        print("REFUSED reps (a missing rep and a failed rep must never look alike, D-593):")
+        print("REFUSED reps (a missing rep and a failed rep must never look alike):")
         for line in refused:
             print(f"  ! {line}")
         print()

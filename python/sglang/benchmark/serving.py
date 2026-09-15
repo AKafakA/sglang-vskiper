@@ -725,7 +725,7 @@ async def async_request_sglang_generate(
             raise ValueError(
                 "extra_request_body must not carry prompt-bearing keys "
                 f"{sorted(_prompt_keys)}: the frozen suite prompt is hash-validated and "
-                "cannot be overridden per request (D-624 #2)"
+                "cannot be overridden per request "
             )
         payload = {
             ("text" if isinstance(prompt, str) else "input_ids"): prompt,
@@ -2606,13 +2606,13 @@ def cli_main():
         "--image-format",
         type=str,
         default="jpeg",
-        help=("Format of images for image dataset. " "Supports jpeg and png."),
+        help=("Format of images for image dataset. "  "Supports jpeg and png."),
     )
     parser.add_argument(
         "--image-content",
         type=str,
         default="random",
-        help=("Content for images for image dataset. " "Supports random and blank."),
+        help=("Content for images for image dataset. "  "Supports random and blank."),
     )
     parser.add_argument(
         "--request-rate",

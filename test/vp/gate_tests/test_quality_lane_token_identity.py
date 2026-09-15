@@ -25,7 +25,7 @@ def _code(text: str) -> str:
 def test_served_arms_get_token_ids_not_text():
     code = _code(DRIVER)
     assert "tokenized_requests=True" in code, "lm-eval must tokenize client-side and send ids"
-    assert "tokenized_requests=False" not in code, "the server-side text path re-adds BOS (D-724)"
+    assert "tokenized_requests=False" not in code, "the server-side text path re-adds BOS "
 
 
 def test_hf_arms_do_not_add_bos_either():

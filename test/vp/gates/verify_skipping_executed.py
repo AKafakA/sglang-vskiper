@@ -93,7 +93,7 @@ def skip_and_total(path: Path) -> tuple[int, int, str]:
                 sys.exit(
                     f"FATAL: {path}: this arm routes prefill but regime_switch.counters.prefill "
                     "carries no per-body counts -- the prefill dispatch machinery is not running "
-                    "(D-734). Refusing rather than assuming every pass routed."
+                    ". Refusing rather than assuming every pass routed."
                 )
             p_fd = int(prefill["fd"])
         return (
@@ -169,18 +169,18 @@ def main() -> int:
         print(f"  dense body                 : {d_dense}")
         if d_fd + d_dense != d_passes:
             print(f"\nREFUSING: the prefill body counters account for {d_fd + d_dense} passes but the "
-                  f"scheduler ran {d_passes}. Counters that do not add up are not evidence (D-734).")
+                  f"scheduler ran {d_passes}. Counters that do not add up are not evidence.")
             return 1
         if d_passes > 0 and d_fd == 0:
             print("\nREFUSING: this arm routes prefill but the routed body ran ZERO prefill passes in "
-                  "the window (D-627 in the prefill phase).")
+                  "the window.")
             return 1
         if pa["engagement_min"] is not None:
             d_samples = pa["engagement_samples"] - pb["engagement_samples"]
             print(f"  engagement escape          : ema={pa['engagement_ema']} samples(+{d_samples})")
             if d_samples <= 0 and d_fd > 0:
                 print("\nREFUSING: engagement_min is configured but the escape observed nothing while "
-                      "routed passes ran -- the escape is not executing (D-734).")
+                      "routed passes ran -- the escape is not executing.")
                 return 1
 
     print(f"counter source               : {source}")
@@ -205,7 +205,7 @@ def main() -> int:
     # production body while claiming to describe the skipper.
     if skip == 0:
         print("\nREFUSING: NOTHING ROUTED in either phase. This measurement describes the "
-              "production all-RUN body, not the skipper (D-627).")
+              "production all-RUN body, not the skipper.")
         return 1
     if share < a.min_skip_share:
         print(f"  NOTE: {share:.1%} of routed work went through the skip body, below the "
