@@ -34,7 +34,7 @@ _MOCK_CONFIG_ENVS = (
     FULL_GRAPH_MOCK_SKIPPED_DEPTH_RATIO_ENV,
     FULL_GRAPH_MOCK_SEED_ENV,
 )
-# [D-609] pinned off; parity tracing is a debug facility, not a served feature.
+# pinned off; parity tracing is a debug facility, not a served feature.
 _FD_PARITY_TRACE_ENABLED = False
 FD_EXECUTION_MODE_ENV = "SGLANG_FD_EXECUTION_MODE"
 FD_ACTIVE_PHASES_ENV = "SGLANG_FD_ACTIVE_PHASES"
@@ -48,13 +48,13 @@ FD_COMPACT_PHASES_ENV = "SGLANG_FD_FULL_GRAPH_COMPACT_PHASES"
 # P3 (2026-09-05): binary_cohort branch GEMMs through cuBLAS on EAGER prefill
 # passes (host-known counts); captured passes keep the count-GEMMs.
 FD_PREFILL_CUBLAS_ENV = "SGLANG_FD_FULL_GRAPH_PREFILL_CUBLAS"
-# D-508 (2026-09-06): per-layer break-even fallback on EAGER prefill passes.
+# (2026-09-06): per-layer break-even fallback on EAGER prefill passes.
 # Value = minimum PROJECT share (fraction of valid rows, in (0, 1]) below which
 # a routed layer runs the dense-filtered-project body (production's dense MLP
 # on every row + the projector on the PROJECT rows only) instead of a
 # compaction body; unset = off. The share is read to the host once per routed layer
 # (eager passes only; captured passes keep their captured variant). The
-# default value used in serving is the ladder's measured break-even (D-490:
+# default value used in serving is the ladder's measured break-even (:
 # 22 % PROJECT = parity, 8 % = -4.4 %, ~37 % = -4..-6 %), never a per-dataset
 # tuning.
 FD_PREFILL_FALLBACK_ENV = "SGLANG_FD_FULL_GRAPH_PREFILL_FALLBACK_MIN_PROJECT"
@@ -116,7 +116,7 @@ FD_ROUTED_QKV_CAPACITY_MULTIPLE_ENV = (
 )
 _VALID_LAYER_POLICIES = frozenset(
     (
-        # 2026-09-08 (D-574): every routed layer runs the count-adaptive binary-cohort
+        # 2026-09-08 : every routed layer runs the count-adaptive binary-cohort
         # body. The other policies selected the per-layer adapter capacities and the
         # hand-chosen split at layer 22 -- constants fitted to one dataset's route
         # distribution that a paired A/B showed bought nothing, so their bodies are gone.
@@ -128,8 +128,8 @@ _VALID_LAYER_POLICIES = frozenset(
 _VALID_EXECUTION_MODES = frozenset(
     (FD_EXECUTION_DIRECT_EAGER, FD_EXECUTION_FULL_GRAPH)
 )
-# `native_dense` (lane-2 cut3 item 1, D-358) is the dense-body posture at every
-# occupancy; the bounded `full_dual` variant was deleted with its bound (D-582):
+# `native_dense` (lane-2 cut3 item 1) is the dense-body posture at every
+# occupancy; the bounded `full_dual` variant was deleted with its bound :
 # the model's OWN dense feed-forward for every row plus the projector, selected
 # by the route mask, at every occupancy. It is the serving arm's routed-MLP
 # posture — the count-adaptive and grouped paths stay in the tree for their
@@ -187,7 +187,7 @@ _REMOVED_FEATURE_ENVS = (
     "SGLANG_VP_ADASKIP_MAX_GRAPH_ROWS",
     "SGLANG_VP_ADASKIP_MAX_REQUEST_SLOTS",
     "SGLANG_FD_FULL_GRAPH_REPAIR_GROUP_SIZE",
-    # [lane-2 knob cleanup, D-578] compact output-projection / split-QKV bodies
+    # [lane-2 knob cleanup,] compact output-projection / split-QKV bodies
     # and the mapped-decode worker-row sizing. Never enabled in a served arm;
     # the first two could not have run at all (they passed a `capacity=`
     # keyword to kernel.pack_rows, which does not accept one).
@@ -196,14 +196,14 @@ _REMOVED_FEATURE_ENVS = (
     "SGLANG_FD_FULL_GRAPH_COMPACT_O_PROJ_MIN_ROWS",
     "SGLANG_FD_FULL_GRAPH_COMPACT_Q_PROJ",
     "SGLANG_FD_FULL_GRAPH_MAPPED_DECODE_ATTENTION",
-    # [lane-2 knob cleanup, D-578] compaction capacity constants. The fraction
-    # and the min-row count stopped reaching any computation at D-574 and only
+    # [lane-2 knob cleanup,] compaction capacity constants. The fraction
+    # and the min-row count stopped reaching any computation at and only
     # shaped attestation counters; the rounding multiple is now the module
     # constant COMPACT_CAPACITY_MULTIPLE.
     "SGLANG_FD_FULL_GRAPH_COMPACT_CAPACITY_FRACTION",
     "SGLANG_FD_FULL_GRAPH_COMPACT_CAPACITY_MULTIPLE",
     "SGLANG_FD_FULL_GRAPH_COMPACT_MIN_ROWS",
-    # [D-582] the low-row body swap: a third occupancy threshold outside the two
+    # the low-row body swap: a third occupancy threshold outside the two
     # admission legs, measured as parity on gsm8k when removed.
     "SGLANG_FD_FULL_GRAPH_LOW_ROW_MAX_ROWS",
 )
@@ -224,12 +224,12 @@ _VALUE_TYPED_CONFLICT_ENVS = frozenset(
         "SGLANG_FD_FULL_GRAPH_LOW_ROW_MAX_ROWS",
     )
 )
-# [lane-2 knob cleanup, D-578] Cohort buffer sizes round up to this many rows.
+# [lane-2 knob cleanup,] Cohort buffer sizes round up to this many rows.
 # An allocation granularity (same class as a block size), never a policy knob:
 # it was SGLANG_FD_FULL_GRAPH_COMPACT_CAPACITY_MULTIPLE, always served at 16.
 COMPACT_CAPACITY_MULTIPLE = 16
-# [lane-2 knob cleanup, D-578] Capacity fraction used ONLY by the route-derived
-# compact accounting specs (attestation), never by a served body: after D-574
+# [lane-2 knob cleanup,] Capacity fraction used ONLY by the route-derived
+# compact accounting specs (attestation), never by a served body: after
 # no remaining body has a fixed capacity. It was
 # SGLANG_FD_FULL_GRAPH_COMPACT_CAPACITY_FRACTION, always served at 0.625; kept
 # as a constant so the reported counters stay byte-identical to every cell
@@ -245,7 +245,7 @@ _ROUTE_DECIDE_STATS: dict = {}
 # P3 attestation: eager prefill passes that took the cuBLAS branch, per device
 # (executed evidence, never a flag): device -> (passes, rows).
 _BINARY_COHORT_CUBLAS_PASSES: dict[str, tuple[int, int]] = {}
-# D-508 attestation: per-layer prefill break-even decisions on eager passes,
+# attestation: per-layer prefill break-even decisions on eager passes,
 # per device: device -> (layers_checked, layers_fallen_back_to_the_dense_body).
 # Executed evidence; lives under binary_cohort.realized (identity-stripped).
 _PREFILL_FALLBACK: dict[str, tuple[int, int]] = {}

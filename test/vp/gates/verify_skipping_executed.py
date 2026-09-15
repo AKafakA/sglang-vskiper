@@ -60,7 +60,7 @@ def skip_and_total(path: Path) -> tuple[int, int, str]:
     vp = _vp_runtime(path)
     regime = vp.get("regime_switch") or {}
     if regime.get("enabled"):
-        # [D-697] BOTH PHASES, NOT DECODE ALONE.
+        # BOTH PHASES, NOT DECODE ALONE.
         #
         # This read `counters.decode` only, and refused the 0.75 x Q* cell as "never skipped"
         # while the treatment arm routed 4,925 prefill passes over 6,977,016 prefill tokens.
@@ -71,16 +71,16 @@ def skip_and_total(path: Path) -> tuple[int, int, str]:
         # same cell because it counts switch TRANSITIONS, not routed work. The routed prefill
         # work is in `batch_composition`, which is where this now looks.
         #
-        # D-627 was a gate blind to a mechanism that was OFF. This was the same gate blind to a
+        # was a gate blind to a mechanism that was OFF. This was the same gate blind to a
         # mechanism that was ON -- and the second is worse, because it throws away real results
         # while looking like diligence.
-        # [D-734/D-736] THE D-697 ASSUMPTION ABOVE WAS THE BUG'S HIDING PLACE. `counters.prefill`
+        # [/] THE ASSUMPTION ABOVE WAS THE BUG'S HIDING PLACE. `counters.prefill`
         # read {dense: 0, fd: 0} not because it "counts transitions" but because the runner's
-        # dispatch machinery was gated on an env var D-609 had deleted -- OFF in every cell.
+        # dispatch machinery was gated on an env var had deleted -- OFF in every cell.
         # Taking `batch_composition.prefill_passes` as "all routed" then certified a mechanism
         # that was not running. From now on the per-body counters ARE the prefill evidence,
         # and they must account for every prefill pass the scheduler ran (checked as a delta
-        # in main()); an arm that routes prefill with fd == 0 is refused like D-627.
+        # in main()); an arm that routes prefill with fd == 0 is refused like.
         counters = regime.get("counters") or {}
         decode = counters.get("decode") or {}
         d_skip = int(decode.get("skip", 0))
@@ -159,7 +159,7 @@ def main() -> int:
     total = after_total - before_total
     allrun = total - skip
 
-    # [D-736] Prefill metrics, checked as deltas over the run window.
+    # Prefill metrics, checked as deltas over the run window.
     pb, pa = prefill_evidence(a.before), prefill_evidence(a.after)
     if pa is not None and pb is not None:
         d_fd, d_dense = pa["fd"] - pb["fd"], pa["dense"] - pb["dense"]
@@ -201,7 +201,7 @@ def main() -> int:
     # prefill routes 7 M tokens while decode correctly sits in prod_allrun is a VALID treatment
     # measurement -- the load-aware design behaving as designed below its decode threshold --
     # and refusing it discards a row that reproduces the published table. What must still be
-    # refused is the D-627 case: NOTHING routed anywhere, so the measurement describes the
+    # refused is the case: NOTHING routed anywhere, so the measurement describes the
     # production body while claiming to describe the skipper.
     if skip == 0:
         print("\nREFUSING: NOTHING ROUTED in either phase. This measurement describes the "

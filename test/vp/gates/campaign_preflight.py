@@ -106,7 +106,7 @@ def main() -> int:
                     f"sha {got.hexdigest()[:16]} vs {want['content_sha256'][:16]} "
                     f"(commit {want['commit']})")
 
-    # [Audit D-624 #6] Hashing a DIRECTORY does not bind it to the PROCESS that serves. The
+    # [audit] Hashing a DIRECTORY does not bind it to the PROCESS that serves. The
     # right tree can be staged and verified while a different checkout is launched and labelled
     # "baseline" -- and upstream's /server_info exposes no source identity at all (version
     # "0.0.0.dev0", no commit, no code path), so this cannot be recovered after the fact from
@@ -133,7 +133,7 @@ def main() -> int:
     #
     # The false refusal was the harmless half. Had the first config's paths happened to exist,
     # the preflight would have PASSED -- certifying a host config the run does not use, which
-    # is precisely the shape of D-609 (a value that never reached the server while every gate
+    # is precisely the shape of (a value that never reached the server while every gate
     # went green). A preflight that picks its own subject is not checking the deployment.
     host_arg = a.host_config
     host_path = host_arg if host_arg.is_absolute() else a.tree / host_arg

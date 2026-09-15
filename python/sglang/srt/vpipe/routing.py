@@ -250,7 +250,7 @@ def fd_parity_trace_context(layer_id: int, forward_batch):
     token_position = prefix_lengths[request_index] + normalized_offset
     return row, token_position
 def _fdvp_fused_router_dec_head():
-    # [D-609] OFF: the L2 fused-router switch was never adopted into a served arm.
+    # OFF: the L2 fused-router switch was never adopted into a served arm.
     return False
 def _fdvp_fused_project_input():
     return fdvp_fused_project_input_enabled()

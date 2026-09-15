@@ -155,7 +155,7 @@ def init_fd_layer(layer, config, layer_id, routed_lo, routed_hi, qk_head_norms):
     # (self_attn still writes K/V); reproduces FlexiDepth's quality in the SGLang serving stack.
     layer.fd_router = None
     layer.fd_proj = None
-    # [D-609] weights path from the committed host config, gated on the active arm
+    # weights path from the committed host config, gated on the active arm
     _fdw = flexidepth_weights_path() if skipper_deployed() else ""
     if _fdw and routed_lo <= layer_id <= routed_hi:
         from sglang.srt.vpipe.routing import (
@@ -294,7 +294,7 @@ def attach_vp_model(model, config):
     # carrying checkpoint-specific calibration has to be told, explicitly,
     # which checkpoint is being served.
     _hub_commit = str(getattr(config, "_commit_hash", "") or "").strip()
-    # [D-609] declared revision from the committed host config
+    # declared revision from the committed host config
     _declared = str(served_model_revision() or "").strip()
     if _hub_commit and _declared and _hub_commit != _declared:
         raise ValueError(
@@ -791,7 +791,7 @@ def vp_runtime_attestation(lm) -> dict:
     return {
         "model_family": lm.vp_model_family,
         "flexidepth": flexidepth_state,
-        # [D-609] Publish the DESIGN and the resolved ARM so a launch gate can read back
+        # Publish the DESIGN and the resolved ARM so a launch gate can read back
         # what was served instead of trusting what it set. design_attestation() existed
         # but had zero callers, so the input gate the refactor is FOR did not exist:
         # a campaign could still start against a server serving something else, which is

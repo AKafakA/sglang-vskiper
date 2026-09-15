@@ -33,9 +33,9 @@ from typing import Any, Final, Mapping
 # THE SERVED DESIGN
 # ---------------------------------------------------------------------------
 # Both admission legs. The prefill leg's lower bound stands at 1536 -- raising it to
-# 3072 was tested under the same paired protocol and refuted (D-603: gsm8k TTFT +11.4 %
+# 3072 was tested under the same paired protocol and refuted (: gsm8k TTFT +11.4 %
 # at the knee, +12.9 % in overload). There is deliberately NO ``max_tokens``: the band's
-# upper gate is deleted (D-596), because a hand-set token threshold pre-empted the
+# upper gate is deleted , because a hand-set token threshold pre-empted the
 # engagement gate that makes the same decision from measurement.
 SERVED_REGIME_SWITCH: Final[dict[str, Any]] = {
     "version": 1,
@@ -53,7 +53,7 @@ SERVED_REGIME_SWITCH: Final[dict[str, Any]] = {
         "exit_rows": 144,
         "low_body": "prod_allrun",
         "high_body": "skip",
-        # [D-738] The live criterion. Declared here; asserted at boot against
+        # The live criterion. Declared here; asserted at boot against
         # roofline.derived_kv_band (V* = tau*BW/(s*L_r*b) = 158k on the A100-80GB PCIe ->
         # exit 160k, enter 1.25 V* = 200k). Set from the lane-2 cut1 crossover ladder
         # (131k parity / 262k win) before the rule was written; the rule reproduces it.
@@ -62,10 +62,10 @@ SERVED_REGIME_SWITCH: Final[dict[str, Any]] = {
     },
 }
 
-# Routed-MLP posture. ``off`` is the design (D-589) -- the low-row body swap was a third
+# Routed-MLP posture. ``off`` is the design -- the low-row body swap was a third
 # occupancy threshold outside the two admission legs, and its removal measured as parity
 # on gsm8k. This is the exact setting whose env override silently did nothing.
-# [D-738] The decode K/V band PER DEVICE. Each entry equals roofline.derived_kv_band(key)
+# The decode K/V band PER DEVICE. Each entry equals roofline.derived_kv_band(key)
 # (V* = tau*BW/(s*L_r*b); exit = V*, enter = 1.25 V*, 10k grid) and is asserted against the
 # rule at boot; the A100 entry is the served headline design, the H100 entries are the
 # rule's PREDICTIONS for the transfer row. regime_switch_config() selects the entry for the
@@ -79,7 +79,7 @@ SERVED_DECODE_KV_BAND_BY_DEVICE: Final[dict[str, tuple[int, int]]] = {
 
 SERVED_LOW_ROW_POLICY: Final[str] = "off"
 
-# Every routed layer runs the count-adaptive binary-cohort body (D-574). Llama-3-8B
+# Every routed layer runs the count-adaptive binary-cohort body . Llama-3-8B
 # routes layers 16-31; the per-layer capacities and the hand-chosen split at layer 22
 # were constants fitted to one dataset and a paired A/B showed they bought nothing.
 SERVED_ROUTED_LAYERS: Final[tuple[int, ...]] = tuple(range(16, 32))
@@ -119,7 +119,7 @@ SERVED_GATE_MODE: Final[str] = "released"
 SERVED_FUSED_ROUTER_NORM: Final[bool] = False
 
 # ---------------------------------------------------------------------------
-# LAUNCH ARGUMENTS: SGLang's DEFAULTS, except these, by name (D-184 Gate E; D-757)
+# LAUNCH ARGUMENTS: SGLang's DEFAULTS, except these, by name ( Gate E;)
 # ---------------------------------------------------------------------------
 # Every headline server must resolve to what `ServerArgs(model_path=...)` computes for the
 # model on the device it runs on (`test/vp/gates/verify_default_conformance.py`, at boot,
@@ -127,9 +127,9 @@ SERVED_FUSED_ROUTER_NORM: Final[bool] = False
 # the decision that exempted it. On 2026-09-13 two undeclared non-defaults (`dtype float16`
 # on bf16 checkpoints; `mem_fraction_static 0.8` vs the computed 0.83) were found in every
 # headline cell since v1.3, carried from a Turing dev host -- the cross-arm gate cannot see
-# what both arms share, and the D-184 gate had been lost in the refactor.
+# what both arms share, and the gate had been lost in the refactor.
 SERVED_LAUNCH_EXEMPTIONS: Final[dict[str, dict[str, Any]]] = {
-    # The unified triton substrate (owner, D-187): FlexiDepth's masked/routed attention is
+    # The unified triton substrate (owner): FlexiDepth's masked/routed attention is
     # served by the triton backend in both phases; the baseline runs the SAME substrate so
     # the only cross-arm difference is the treatment.
     "attention_backend": {"value": "triton", "decision": "D-187"},
@@ -139,16 +139,16 @@ SERVED_LAUNCH_EXEMPTIONS: Final[dict[str, dict[str, Any]]] = {
     # (SGLANG_IS_FLASHINFER_AVAILABLE=false in the campaign driver): upstream then defaults
     # its sampler to pytorch. Same on both arms; stated here so it is declared, not hidden.
     "sampling_backend": {"value": "pytorch", "decision": "D-187/D-757"},
-    # The PAPER PROTOCOL (owner, D-757 add., 2026-09-13): fp16 and a static memory fraction
+    # The PAPER PROTOCOL (owner, add., 2026-09-13): fp16 and a static memory fraction
     # of 0.8, fixed rather than left to SGLang's version-dependent defaults so that every
     # campaign shares one numeric format and one K/V budget. Declared HERE, by name, and
     # applied by the driver only under the "paper" launch profile below; under
     # "sglang_default" these two are not exempt and Gate E expects the computed defaults.
-    # [D-773, owner 2026-09-14] A second paper profile, `paper_bf16`, serves a checkpoint in
+    # [, owner 2026-09-14] A second paper profile, `paper_bf16`, serves a checkpoint in
     # bf16 with the same 0.8 budget: Qwen3-4B is bf16-native and, measured on the same suite
     # and Triton substrate, fp16 costs its UPSTREAM 3x throughput (4.1 vs 12.3 req/s), which
     # would make the boundary test a test on a crippled substrate. Llama-3-8B stays fp16
-    # (D-757 add.). A "profiles" rule maps each profile to its declared value; under any
+    # ( add.). A "profiles" rule maps each profile to its declared value; under any
     # profile it does not name, the field is held to the default.
     "dtype": {"profiles": {"paper": "float16", "paper_bf16": "bfloat16"},
               "decision": "D-757 add. / D-773"},
@@ -158,8 +158,8 @@ SERVED_LAUNCH_EXEMPTIONS: Final[dict[str, dict[str, Any]]] = {
 
 # A LAUNCH PROFILE is the set of launch arguments the driver passes beyond the substrate
 # (both arms, every boot). Two exist, both declared, neither an environment variable:
-#   paper           -- the paper's protocol (D-757 add.): fp16, static memory fraction 0.8
-#   sglang_default  -- nothing: SGLang's computed defaults (the CSD3 backup line, D-759)
+#   paper           -- the paper's protocol ( add.): fp16, static memory fraction 0.8
+#   sglang_default  -- nothing: SGLang's computed defaults (the CSD3 backup line)
 # The spec names one (`launch_profile`); absent, the paper profile is used. Gate E verifies
 # the served values against the defaults with the profile's exemptions applied, so a profile
 # cannot smuggle a value: every non-default it produces must also be listed above.
@@ -186,10 +186,10 @@ ARMS: Final[dict[str, dict[str, Any]]] = {
     # THE PAPER'S BASELINE IS NOT THIS ARM. It is a separate freshly-cloned upstream tree at
     # commit 602c8615a1 carrying no vpipe/ package at all, staged and content-verified
     # against deploy/upstream_baseline.json and served by its own PYTHONPATH (owner order
-    # D-587: "it has to be the based directly-freshly cloned sglang without our changes").
+    #: "it has to be the based directly-freshly cloned sglang without our changes").
     #
     # This arm's legitimate role is the CONTROL that measures what our fork costs when it is
-    # not treating anything -- D-597 found +0.06 %/+0.14 % output TPS against fresh upstream,
+    # not treating anything -- found +0.06 %/+0.14 % output TPS against fresh upstream,
     # i.e. nothing. But that was measured at 150 commits past upstream and HEAD is now 193,
     # and an equivalence carried across a design change is what voided the v1.3 table. Serve
     # upstream for the baseline and this becomes a control rather than a load-bearing
@@ -209,11 +209,11 @@ ARMS: Final[dict[str, dict[str, Any]]] = {
     # ALIAS of the same dict below, so campaigns, specs, expectation files and manifests that
     # carry it (the A100 headline on tree 735d451c89) keep resolving to the identical design.
     "vskipper": {"skipper": "flexidepth", "phases": "both", "regime_switch": True},
-    # [D-627] THE QUALITY POSTURE. Identical to integrated_it4 except that admission is OFF,
+    # THE QUALITY POSTURE. Identical to integrated_it4 except that admission is OFF,
     # so every routed pass routes regardless of load.
     #
     # This restores what the deleted arm_env_*.sh scripts did: they exported NO
-    # SGLANG_VP_REGIME_SWITCH, so the mechanism was off and the arm always routed. The D-611
+    # SGLANG_VP_REGIME_SWITCH, so the mechanism was off and the arm always routed. The
     # refactor set regime_switch=True on every routed arm, and Codex flagged it (review 1, P1
     # F4) -- I dismissed it as matching the campaign manifest. It does match the CAMPAIGN. It
     # does not match the QUALITY lane, and the two need opposite postures:
@@ -234,7 +234,7 @@ ARMS: Final[dict[str, dict[str, Any]]] = {
     # the runtime assumes nothing about the policy that produced a route, and carries the
     # skip-rate x depth trade-off study.
     #
-    # [D-619] BOTH phases, and named to say so. It was `vdec_randomskip`, decode-only, but
+    # BOTH phases, and named to say so. It was `vdec_randomskip`, decode-only, but
     # the study overlays FlexiDepth's operating point on this surface and the served system
     # (integrated_it4) routes both phases -- a decode-only mock would confound skip
     # magnitude with phase coverage. The mock itself is phase-agnostic: prepare_batch
@@ -257,13 +257,13 @@ ARMS: Final[dict[str, dict[str, Any]]] = {
 # [owner 2026-09-12] Deprecated name of the served system; identical design object.
 ARMS["integrated_it4"] = ARMS["vskipper"]
 
-# [D-743] v1.4.5 mechanism ablation: the served design with compaction OFF (arm field; every
+# v1.4.5 mechanism ablation: the served design with compaction OFF (arm field; every
 # other field identical to `vskipper`). Never served in a headline cell.
 ARMS["vskipper_nocompact"] = {
     "skipper": "flexidepth", "phases": "both", "regime_switch": True, "compact": False,
 }
 
-# [D-744/D-745] v1.5 feasibility row: FlexiDepth-Qwen3-4B, the alignment-only `ste_hard`
+# [/] v1.5 feasibility row: FlexiDepth-Qwen3-4B, the alignment-only `ste_hard`
 # checkpoint (sealed penalty 1e-5; every other 4B/8B/14B checkpoint of the Aug 27-Sep 3 window
 # is broken and is never served). Arm fields, all of them design, none of them environment:
 #   gate_mode     hard_mask  -- the straight-through gate's forward: hard selection, NO w scaling
@@ -279,7 +279,7 @@ ARMS["vskipper_nocompact"] = {
 #                 (training gate, D-3xx); the K/V-band rule's `s`
 #   decode_kv_band  per device, from the same rule as the Llama band with this arm's inputs
 #                 (L_r = 18, b = 4 KB, s = 0.25, tau scaled by routed-layer count since the tax is
-#                 per routed layer, D-370): A100 V* = 315k -> exit 320k, enter 390k. Asserted at
+#                 per routed layer): A100 V* = 315k -> exit 320k, enter 390k. Asserted at
 #                 boot against the rule; a device without an entry refuses.
 ARMS["vskipper_qwen3_4b"] = {
     "skipper": "flexidepth", "phases": "both", "regime_switch": True,
@@ -293,10 +293,10 @@ ARMS["vskipper_qwen3_4b_alwaysroute"] = {
     "weights_key": "flexidepth_weights_qwen3_4b", "design_skip_ratio": 0.25,
 }
 
-# [D-778] The SHARED-BAND posture of the Qwen row: the learned arm served under the Llama band
+# The SHARED-BAND posture of the Qwen row: the learned arm served under the Llama band
 # (A100 160k/200k) instead of its own rule band (A100 320k/390k declared, 570k/710k from the
 # attested s = 0.138) -- the middle panel of the Qwen triptych (own band / shared band /
-# always-route), mirroring Figure 3's shared-band map. A DECLARED deviation from the D-738 rule:
+# always-route), mirroring Figure 3's shared-band map. A DECLARED deviation from the rule:
 # `decode_kv_band_policy: "shared"` is the only reason this arm boots, and the attestation
 # records it. Never a headline arm.
 ARMS["vskipper_qwen3_4b_sharedband"] = {
@@ -309,14 +309,14 @@ ARMS["vskipper_qwen3_4b_sharedband"] = {
 # one rate, 3 reps, with the upstream anchor interleaved in the same session).
 #
 # Twelve named arms, because that is the only parameterisation the repo supports. There is no
-# sweep loop, no CLI, and no value-taking arm field, and D-609 forbids expressing any of this
+# sweep loop, no CLI, and no value-taking arm field, and forbids expressing any of this
 # as an environment variable -- the design lives in the tree. `resolve_arm` is a dict lookup
 # and no consumer hard-codes the arm list, so naming them is sufficient.
 #
 # Built by comprehension rather than twelve hand-written dicts: the entries differ only in two
 # floats, and twelve near-identical literals are exactly where a transposed digit silently
 # mislabels a sweep point. It is still a module-level constant evaluated at import, which is
-# what D-609 asks for. Each point also publishes its own rate/depth/seed through the
+# what asks for. Each point also publishes its own rate/depth/seed through the
 # attestation (`skipper.py:284-286`), so a mislabelled cell is detectable in `server_info`
 # rather than taken on trust.
 #
@@ -373,7 +373,7 @@ ARMS.update({
     for depth in _SWEEP_DEPTH_RATIOS
 })
 
-# [D-776] The UNGATED twins of the nine mock arms: regime switch OFF on both legs, so the routed body
+# The UNGATED twins of the nine mock arms: regime switch OFF on both legs, so the routed body
 # serves every pass at every occupancy (no band, like vskipper_qwen3_4b_alwaysroute). One map beside the
 # shared-band map (step 6) and the own-band map (step 10): what engagement control is worth, arm by arm.
 def _mock_arm_ungated(rate: float, depth: float) -> dict[str, Any]:
@@ -389,7 +389,7 @@ ARMS.update({
     for depth in _SWEEP_DEPTH_RATIOS
 })
 
-# [D-764] The Qwen3-4B applicability-boundary points: the SAME mock on the Qwen family (its
+# The Qwen3-4B applicability-boundary points: the SAME mock on the Qwen family (its
 # routed range, hard-mask bodies, its projector weights, its own rule-derived band). The
 # learned Qwen skipper removes ~0.25 x 1.0 of the routed work; these two remove 0.375 and
 # 0.5625 -- past the crossover -- so the row can separate "the family does not work" from "the
@@ -482,7 +482,7 @@ def design_attestation() -> dict[str, Any]:
                 (active_arm().get("decode_kv_band") or SERVED_DECODE_KV_BAND_BY_DEVICE).items()
             )
         },
-        # [D-778] "rule" (the band above is the roofline rule's for this arm, asserted at boot) or
+        # "rule" (the band above is the roofline rule's for this arm, asserted at boot) or
         # "shared" (a declared deviation: the global band served under another arm's inputs).
         "decode_kv_band_policy": active_arm().get("decode_kv_band_policy", "rule"),
         "gate_mode": arm_gate_mode(),

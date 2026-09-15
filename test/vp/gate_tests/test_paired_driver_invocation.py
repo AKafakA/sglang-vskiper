@@ -98,7 +98,7 @@ def test_that_flag_does_NOT_weaken_the_per_cell_gates():
     assert "an unchecked pair is a failed pair" in DRIVER
 
 
-# --- sweep support: one anchor, many treatments (plan N1, D-690) -------------------------------
+# --- sweep support: one anchor, many treatments (plan N1) -------------------------------
 
 def _load_driver():
     import importlib.util, sys

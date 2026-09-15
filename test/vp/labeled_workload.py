@@ -23,10 +23,10 @@ DECODE_DATASETS = ("gsm8k", "coqa", "humaneval")
 # contracts stay byte-stable.
 EXTENDED_DECODE_DATASETS = (
     "gsm8k_cot",
-    # Owner ruling 2026-09-05 (D-421): the two long-OUTPUT math rows, served
+    # Owner ruling 2026-09-05 : the two long-OUTPUT math rows, served
     # UNCAPPED in the perf lane (the lm-eval 256-token cap is a quality-lane
     # constant only); the 8-shot gsm8k_cot row is cancelled (short shots gave
-    # 110-token answers, D-420).
+    # 110-token answers).
     "gsm8k_cot_zeroshot",
     "minerva_math",
     # Long-context INSTRUCTION QA (owner 2026-09-05): LongBench v1 QA tasks, window-filtered.
@@ -49,7 +49,7 @@ EXTENDED_DECODE_DATASETS = (
     "scrolls_gov_report",
     "scrolls_summ_screen_fd",
     "scrolls_qmsum",
-    # Balanced long-OUTPUT rows (owner D-519, 2026-09-06): the decode
+    # Balanced long-OUTPUT rows (owner, 2026-09-06): the decode
     # mechanism needs decode-heavy rows; context grows with the generation.
     "longbench_write",
     "lca_libgen",
@@ -57,7 +57,7 @@ EXTENDED_DECODE_DATASETS = (
     "lca_libgen_official",
     "longwriter6k",
     "livecodebench",
-    # Owner D-570 (2026-09-08): BBH chain-of-thought (lm-eval bbh_cot_fewshot,
+    # Owner (2026-09-08): BBH chain-of-thought (lm-eval bbh_cot_fewshot,
     # 3 fixed CoT shots per task, exact match) = the second win-regime row.
     "bbh_cot",
 )
@@ -91,7 +91,7 @@ WORKLOAD_DATASETS = {
     ),
     # Long-context CODING row: lcc + repobench-p (weights ∝ window-fit survivors, set after measurement).
     "longbench_code": ("longbench_lcc", "longbench_repobench-p"),
-    # Balanced long-output rows (D-519): one dataset each, window-filtered.
+    # Balanced long-output rows : one dataset each, window-filtered.
     "longbench_write": ("longbench_write",),
     "lca_libgen": ("lca_libgen",),
     "lca_libgen_noapi": ("lca_libgen_noapi",),
@@ -101,7 +101,7 @@ WORKLOAD_DATASETS = {
     # Quality-line writing row (owner 2026-09-06): the official LongBench-Write
     # test prompts embedded in the LongWriter-6k serving stream, so the test
     # items are served at the row's target QPS inside the real load (a 106-
-    # request burst alone never engages the decode band, D-533). Weights come
+    # request burst alone never engages the decode band). Weights come
     # from the build config (longbench_write small, its pool exhausts -> every
     # window survivor is included exactly once, no replication).
     "writing_row": ("longwriter6k", "longbench_write"),
@@ -257,7 +257,7 @@ DATASET_PROTOCOLS: dict[str, dict[str, Any]] = {
         }
         for task in ("lcc", "repobench-p")
     },
-    # Balanced long-output rows (owner D-519, 2026-09-06). Staged locally
+    # Balanced long-output rows (owner, 2026-09-06). Staged locally
     # (`newrows_local.py`), window-FILTERED, natural (uncapped) generation.
     "longbench_write": {
         # LongWriter (THUDM 2024) LongBench-Write: 120 prompts with a required
@@ -285,7 +285,7 @@ DATASET_PROTOCOLS: dict[str, dict[str, Any]] = {
         "task_reference_max_output_len": None,
     },
     "lca_libgen_noapi": {
-        # D-526: the benchmark's instruction-only setting (no API list) -- the
+        #: the benchmark's instruction-only setting (no API list) -- the
         # full API list drove Llama-3-8B into repetition loops on 55-61 % of
         # prompts in both arms. Same reference, same scorer.
         "id": "lca-libgen-v1:instruction-only-chat",
@@ -295,13 +295,13 @@ DATASET_PROTOCOLS: dict[str, dict[str, Any]] = {
         "task_reference_max_output_len": None,
     },
     "lca_libgen_official": {
-        # Owner ruling D-531 (2026-09-06): the benchmark's OWN protocol
+        # Owner ruling (2026-09-06): the benchmark's OWN protocol
         # (lca-baselines library_based_code_generation/src/models): the
         # no-context prompt template verbatim as the user message, greedy
         # (temperature 0.0) and max_tokens = 2048. The cap is the benchmark's
         # generation limit and is applied ONLY on this row because
         # Llama-3-8B-Instruct runs into repetition loops on 14-15 % of these
-        # prompts in BOTH arms under natural generation (D-530); suites built
+        # prompts in BOTH arms under natural generation ; suites built
         # from this dataset use decode output policy `task_reference_limit`.
         "id": "lca-libgen-v1:official-nocontext-chat:cap2048",
         "source": "JetBrains-Research/lca-library-based-code-generation:test",
@@ -868,7 +868,7 @@ def load_minerva_math(limit: int, include_train_pool: bool = False) -> list[Work
                     # a `\fbox{...}` answer (or a malformed box): lm-eval's own
                     # process_docs asserts on exactly this, so such a row cannot
                     # be in a split the harness evaluates; skip rather than abort
-                    # the whole suite build (Codex review, D-421).
+                    # the whole suite build (Codex review).
                     continue
                 messages = [
                     *shot_messages,
@@ -1539,7 +1539,7 @@ LONGBENCH_QA_TASKS: dict[str, dict[str, Any]] = {
         ),
         "max_gen_toks": 128,
     },
-    # Coding row (owner 2026-09-05, D-440/D-441): LongBench repo-level code completion,
+    # Coding row (owner 2026-09-05,/): LongBench repo-level code completion,
     # lm-eval `longbench_lcc` / `longbench_repobench-p` (doc_to_text verbatim, until [],
     # max_gen_toks 64), quality = LongBench `code_sim_score` (edit similarity, offline).
     "lcc": {

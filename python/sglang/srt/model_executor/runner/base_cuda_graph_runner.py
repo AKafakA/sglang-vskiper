@@ -96,7 +96,7 @@ def get_batch_sizes_to_capture(
     # P5 coverage-as-code (vPipe): with FlexiDepth full_graph serving active, the
     # decode buckets must reach the scheduler admission cap, otherwise every
     # decode batch above the CLI default max_bs falls to the eager path (the
-    # D-414/D-416 T1-vs-T2 gap). Decode runner only (one token per row).
+    #/ T1-vs-T2 gap). Decode runner only (one token per row).
     if requested_tokens_per_bs == 1:
         from sglang.srt.vpipe.common import (
             coverage_capture_bs,

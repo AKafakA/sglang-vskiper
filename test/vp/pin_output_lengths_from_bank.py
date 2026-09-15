@@ -90,7 +90,7 @@ def main() -> int:
         prompt_len = int(meta_row.get("prompt_len") or 0)
         if prompt_len <= 0 or prompt_len != len(row["prompt"]):
             raise SystemExit(f"{request_id}: prompt length metadata mismatch")
-        # D-774: the window is the MODEL's (the suite's per-request `context_length`, 40960 for Qwen3-4B), not a
+        #: the window is the MODEL's (the suite's per-request `context_length`, 40960 for Qwen3-4B), not a
         # default; the flag remains the fallback for suites frozen before the field existed.
         remaining = int(meta_row.get("context_length") or args.context_length) - prompt_len
         if selected > remaining:

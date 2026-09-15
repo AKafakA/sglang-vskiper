@@ -241,7 +241,7 @@ def prepare_full_graph_batch(
     tape_enabled = full_graph_device_route_tape_enabled()
     layer_counters_enabled = full_graph_layer_counters_enabled()
     scheduler_convergence = full_graph_scheduler_convergence_enabled()
-    # Lane-2 cut3 item 4 (D-359): the fused evidence kernel is decode-layout and
+    # Lane-2 cut3 item 4 : the fused evidence kernel is decode-layout and
     # capped at 1024 rows, which is why `validation.py` refused it unless the
     # deployment was decode-only. The shipping arm serves BOTH phases, so decide
     # PER PASS instead of per deployment: fused on a decode pass within the row
@@ -405,7 +405,7 @@ def finalize_full_graph_batch(
             raise RuntimeError("FlexiDepth low-row counters require an active policy")
         # The counter condition must mirror the DISPATCH condition in `mlp.py`
         # exactly, or the attested dispatch count silently disagrees with the
-        # body that ran. [D-582] With the row bound deleted, native_dense
+        # body that ran. With the row bound deleted, native_dense
         # dispatches at EVERY occupancy, so the counter is unconditional here.
         if True:
             logical_rows = (
@@ -460,8 +460,8 @@ def finalize_full_graph_batch(
             layer_counters=layer_route_counters,
             route_digest_counters=route_digest_counters,
             readiness_counters=inline_kv_readiness_counters,
-            # [D-578] compact_active no longer carries a min-row condition:
-            # after D-574 the routed body compacts whenever compaction is on,
+            # compact_active no longer carries a min-row condition:
+            # after the routed body compacts whenever compaction is on,
             # so gating the counter on a row threshold reported a pass as
             # uncompacted that in fact compacted.
             compact_active=forward_batch.fd_full_graph_compact_phase_enabled,

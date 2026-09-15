@@ -7,7 +7,7 @@ gate is driven against a synthetic /server_info for each way it must REFUSE, inc
 
   * the actual defect that cost ~18 h of A100 time (low_row full_dual reaching the server while
     the campaign believed it had set `off`), and
-  * an EXTRA served knob (prefill.max_tokens=6144 -- the one D-596 deleted), which the first
+  * an EXTRA served knob (prefill.max_tokens=6144 -- the one deleted), which the first
     version of the comparator silently ignored (Codex F11).
 
 The intended side is computed by the gate itself from the deployed tree, so each case starts

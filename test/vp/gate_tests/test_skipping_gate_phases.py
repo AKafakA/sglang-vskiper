@@ -120,7 +120,7 @@ def test_the_source_label_is_stable_across_snapshots(tmp_path):
     assert "counter source changed mid-run" not in out, out[-300:]
 
 
-# --- [D-736] the counters are the evidence, and they must add up -------------------------------
+# --- the counters are the evidence, and they must add up -------------------------------
 
 def _snap_pair(tmp, **kw):
     b = snap(tmp, "b.json", decode_skip=0, decode_allrun=20, prefill_passes=3, engagement_samples=0, **kw)

@@ -106,7 +106,7 @@ class FlexiDepthConditionalCudaGraphBackend(FullCudaGraphBackend):
         # Re-planned at replay so the orphaned wrapper carries a live KV plan.
         self._stock_decode_graph_wrappers: dict[Any, list] = {}
         self._conditional_max_rows = full_graph_conditional_max_rows()
-        # [D-609] host path from the committed config
+        # host path from the committed config
         helper_path = conditional_graph_helper_path()
         self._helper = ConditionalGraphHelper(helper_path)
         self._validate_runner()
@@ -196,7 +196,7 @@ class FlexiDepthConditionalCudaGraphBackend(FullCudaGraphBackend):
         # (the sibling "skip" capture at the same bs will overwrite that slot).
         # replay() re-plans this wrapper so the captured decode reads a live KV
         # plan instead of the capture-time seq-len-fill plan.
-        # D-250: the orphaned-wrapper workaround is FLASHINFER-SPECIFIC. FlashInfer
+        #: the orphaned-wrapper workaround is FLASHINFER-SPECIFIC. FlashInfer
         # keeps ONE cuda-graph decode wrapper per batch size in
         # decode_cuda_graph_metadata[bs], so the sibling high-band capture at the
         # same bs orphans the low band's. A Triton decode backend has no wrapper
@@ -297,7 +297,7 @@ class FlexiDepthConditionalCudaGraphBackend(FullCudaGraphBackend):
             )
         decode_wrappers = self._stock_decode_graph_wrappers[shape_key]
         # This call carries TWO responsibilities, and only the first is
-        # FlashInfer-specific (D-250, review finding 1 — my earlier fix dropped
+        # FlashInfer-specific (review finding 1 — my earlier fix dropped
         # the second and turned a loud boot crash into SILENT degenerate output):
         #   (a) repair FlashInfer's orphaned per-bs wrapper (registry aliasing);
         #   (b) PLAN the decode metadata for this replay — universal, and on a

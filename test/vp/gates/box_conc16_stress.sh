@@ -20,7 +20,7 @@ V="${VP_GATE_PYTHON:-$W/sglang-sm75/.venv/bin/python}"
 PORT="${VP_GATE_PORT:-30258}"
 MODEL="${VP_GATE_MODEL:-$W/models/Meta-Llama-3-8B-Instruct-53346005}"
 SUITE="${VP_GATE_SUITE:-$W/suites/gsm8k.first100.requests.jsonl}"
-# [Codex F13] The arm_env_*.sh scripts are deleted (D-609): every canonical invocation of
+# [Codex F13] The arm_env_*.sh scripts are deleted : every canonical invocation of
 # this gate exited 2 before launching a server. The arm is now selected by NAME through the
 # durable file the served path reads, exactly as box_vpcov_arm.sh does.
 TREE="${VP_GATE_TREE:-$(cd "$GATES_DIR/../../.." && pwd)}"

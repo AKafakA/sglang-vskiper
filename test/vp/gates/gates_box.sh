@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The box gate CHAIN — the proven 2026-08-24 gates_box.sh, repo-resident
-# (D-307 Lane H). Gates the tree this script lives in, so a staged archive of
+# ( Lane H). Gates the tree this script lives in, so a staged archive of
 # any branch gates itself: helper build → pytest import gates → ladder default
 # modes → the FOUR-ARM gate → the route-digest output-equality A/B vs the
 # frozen tree. Reachability/attestation/equality only — NEVER performance.

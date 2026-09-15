@@ -66,7 +66,7 @@ def full_graph_request_identity_required(
     values = os.environ if environ is None else environ
     if full_graph_policy_identity_required(values):
         return True
-    # [D-609] design constant, not an environment read
+    # design constant, not an environment read
     digest = "1" if mechanism(SERVED_DEVICE_ROUTE_DIGEST) else "0"
     if digest in {"1", "true", "yes", "on"}:
         return configured_full_graph_skipper_name(values) == (
@@ -80,49 +80,49 @@ def full_graph_eager_semantic_debug_enabled(
 ) -> bool:
     """Return whether the trace-only eager execution gate is enabled."""
 
-    # [D-609] design constant, not an environment read
+    # design constant, not an environment read
     return False  # debug knob, deleted (D-609)
 def full_graph_defer_project_kv_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether PROJECT-row K/V completion runs as graph side work."""
 
-    # [D-609] design constant, not an environment read
+    # design constant, not an environment read
     return mechanism(SERVED_DEFER_PROJECT_KV)
 def full_graph_batched_commit_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether per-layer deferred commits fuse into one launch."""
 
-    # [D-609] design constant, not an environment read
+    # design constant, not an environment read
     return False  # feature dropped (D-578); refused by validation
 def full_graph_commit_overlap_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether the deferred K/V commit overlaps the logits suffix."""
 
-    # [D-609] design constant, not an environment read
+    # design constant, not an environment read
     return False  # feature dropped (D-578); refused by validation
 def full_graph_forced_all_run_fastpath_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Bypass conditional branches in the sealed all-RUN control only."""
 
-    # [D-609] design constant, not an environment read
+    # design constant, not an environment read
     return False  # gate-arm only, never served
 def full_graph_weighted_scatter_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether compact branches fuse route weighting into scatter."""
 
-    # [D-609] design constant, not an environment read
+    # design constant, not an environment read
     return mechanism(SERVED_WEIGHTED_SCATTER)
 def full_graph_layer_policies(
     environ: Optional[Mapping[str, str]] = None,
 ) -> dict[int, tuple[str, Optional[float], Optional[float]]]:
     """Parse explicit FlexiDepth layer policies from deployment state."""
 
-    # [D-609] The design is a constant: every routed layer runs binary_cohort.
+    # The design is a constant: every routed layer runs binary_cohort.
     # This used to come from a 16-entry env string; an arm that failed to export it
     # silently served ZERO routed layers -- the mechanism off, looking configured.
     # [v1.5] The routed range is the checkpoint family's (arm field ``routed_layers``): Llama-3-8B
@@ -137,14 +137,14 @@ def full_graph_prefill_grouped_mlp_enabled(
 ) -> bool:
     """Return whether prefill uses variable-size RUN/PROJECT GEMM cohorts."""
 
-    # [D-609] design constant, not an environment read
+    # design constant, not an environment read
     return mechanism(SERVED_PREFILL_GROUPED_MLP)
 def full_graph_virtual_cohort_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether compact branches use mapped virtual-tensor I/O."""
 
-    # [D-609] design constant, not an environment read
+    # design constant, not an environment read
     return False  # superseded by binary_cohort (D-574)
 def full_graph_compact_config(
     environ: Optional[Mapping[str, str]] = None,
@@ -162,7 +162,7 @@ def full_graph_compact_config(
     granularity, not a policy). Compaction itself stays a single on/off.
     """
 
-    # [D-609] design constant; [v1.5] an arm may switch it off (``compact`` field: the
+    # design constant; [v1.5] an arm may switch it off (``compact`` field: the
     # no-compaction ablation arm, and Qwen3 whose compact K/V repair is not supported yet).
     return mechanism(arm_compact_enabled())
 def full_graph_scheduler_convergence_enabled(
@@ -170,12 +170,12 @@ def full_graph_scheduler_convergence_enabled(
 ) -> bool:
     """Return whether scheduler identity and inline K/V readiness are attested."""
 
-    # [D-609] design constant, not an environment read
+    # design constant, not an environment read
     return mechanism(SERVED_SCHEDULER_CONVERGENCE)
 def full_graph_layer_counters_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
-    # [D-609] design constant
+    # design constant
     value = "1" if mechanism(SERVED_LAYER_COUNTERS) else "0"
     if value in {"1", "true", "yes", "on"}:
         return True
@@ -183,46 +183,46 @@ def full_graph_layer_counters_enabled(
         return False
     raise ValueError(f"{FD_LAYER_COUNTERS_ENV} must be a boolean value")
 
-    # [D-609] design constant, not an environment read
+    # design constant, not an environment read
 def full_graph_route_accounting_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether route and compact-work counters run inside graph replay."""
 
-    # [D-609] design constant, not an environment read
+    # design constant, not an environment read
     return mechanism(SERVED_ROUTE_ACCOUNTING)
 def full_graph_device_route_tape_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether routed actions use one graph-stable device tensor."""
 
-    # [D-609] design constant, not an environment read
+    # design constant, not an environment read
     return mechanism(SERVED_DEVICE_ROUTE_TAPE)
 def full_graph_device_route_digest_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether graph replay accumulates a device-only action digest."""
 
-    # [D-609] design constant, not an environment read
+    # design constant, not an environment read
     return mechanism(SERVED_DEVICE_ROUTE_DIGEST)
 def full_graph_fused_evidence_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether replay evidence is reduced by two fixed-shape kernels."""
 
-    # [D-609] design constant, not an environment read
+    # design constant, not an environment read
     return False  # gate-arm only, never served
 def full_graph_forced_all_run_production_attention_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Use the production decode backend in the sealed all-RUN body."""
 
-    # [D-609] design constant, not an environment read
+    # design constant, not an environment read
     return False  # gate-arm only, never served
 def full_graph_masked_decode_attention_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether Triton decode attention suppresses JUMP-row reads."""
 
-    # [D-609] design constant, not an environment read
+    # design constant, not an environment read
     return mechanism(SERVED_MASKED_DECODE_ATTENTION)

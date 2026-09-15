@@ -119,7 +119,7 @@ def diff(expected: Any, observed: Any, path: str = "") -> list[str]:
             if key not in expected:
                 # [Codex F11] An EXTRA served field is a mismatch, not a courtesy. The
                 # first version skipped unknown keys, so a served prefill.max_tokens=6144
-                # -- the exact knob D-596 deleted -- produced ZERO differences.
+                # -- the exact knob deleted -- produced ZERO differences.
                 out.append(f"  {path}/{key}: SERVED BUT NOT INTENDED = {observed[key]!r}")
                 continue
             if key not in observed:

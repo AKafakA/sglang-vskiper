@@ -199,8 +199,8 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
         # capture BOTH body variants per bucket (dense/base-Llama and routed)
         # and select per pass at replay from the RAW shape — the model-side
         # stamp cannot act on replayed passes (it executes only at capture).
-        # [D-734] The last predicate used to be an environment read of SGLANG_FD_WEIGHTS.
-        # D-609 (2026-09-09) deleted the scripts that exported it, so from then on this
+        # The last predicate used to be an environment read of SGLANG_FD_WEIGHTS.
+        # (2026-09-09) deleted the scripts that exported it, so from then on this
         # condition was FALSE in every served cell: no dual-variant capture, no per-pass
         # dispatch, no prefill counters, no engagement escape -- the captured body was
         # whatever the seam chose for each capture bucket, and CoQA's 0.18-engagement
@@ -223,7 +223,7 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
             PREFILL_BODY_DENSE: 0,
             PREFILL_BODY_FD: 0,
         }
-        # [P8 v2, D-339] Engagement EMA state: PROJECT-row share of the
+        # [P8 v2,] Engagement EMA state: PROJECT-row share of the
         # binary-cohort stats, updated lazily from the device counters'
         # delta after each routed pass (read at the NEXT decision — one
         # small D2H on a >100ms pass). None = no routed pass observed yet

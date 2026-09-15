@@ -123,7 +123,7 @@ class FlexiDepthFullGraphAdapter(FullGraphSkipperAdapter):
     route_digest_requires_stable_request_ids = True
     # Reads the trained per-layer gate, and projects with the checkpoint's own
     # router_proj. Both halves come from the same weights file, which is why they
-    # were one boolean until D-701.
+    # were one boolean until.
     requires_router_weights = True
     projector_kind = FLEXIDEPTH_PROJECTOR
     supported_actions = frozenset(
@@ -217,7 +217,7 @@ class DeterministicMockFullGraphAdapter(FullGraphSkipperAdapter):
     # The policy is a hash of (request_id, token_epoch, seed): NO trained gate is
     # read. It still needs a projector, because a skipped row must leave this
     # layer's output and K/V behind. That asymmetry is the whole point of the
-    # D-701 split -- before it, this adapter was described as *requiring
+    # split -- before it, this adapter was described as *requiring
     # FlexiDepth weights*, which was true of the projector and false of the router.
     requires_router_weights = False
     projector_kind = FLEXIDEPTH_PROJECTOR
@@ -387,11 +387,11 @@ def configured_full_graph_skipper_name(
 ) -> str:
     """Return the normalized configured name without importing policy code."""
 
-    # [D-611] The skipper comes from the ACTIVE ARM, never the environment. This read
+    # The skipper comes from the ACTIVE ARM, never the environment. This read
     # defaulted to `flexidepth`, so `vdec_randomskip` -- whose arm declares
     # deterministic_mock -- served TRAINED FlexiDepth routes while attesting a random
     # mock, and passed the smoke gate doing it. The arm's declaration was decorative:
-    # exactly the declared-vs-served split D-609 exists to prevent.
+    # exactly the declared-vs-served split exists to prevent.
     from sglang.srt.vpipe.design import active_arm
 
     return str(active_arm().get("skipper") or FLEXIDEPTH_FULL_GRAPH_SKIPPER).strip().lower()
@@ -409,7 +409,7 @@ def _build_flexidepth(arm: Mapping[str, Any]) -> FullGraphSkipperAdapter:
 
 
 def _build_deterministic_mock(arm: Mapping[str, Any]) -> FullGraphSkipperAdapter:
-    # [D-611] The mock's parameters come from the ARM definition, like its name.
+    # The mock's parameters come from the ARM definition, like its name.
     # These are the RandomSkip study's independent variables (skip rate x depth),
     # so they must be as durable and attestable as the design itself.
     missing = [

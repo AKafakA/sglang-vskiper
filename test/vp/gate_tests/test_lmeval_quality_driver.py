@@ -71,7 +71,7 @@ def test_chat_arm_uses_chat_endpoint_and_flags():
     )
     assert "--apply_chat_template" in cmd and "--fewshot_as_multiturn" in cmd
     assert "local-chat-completions" in cmd
-    # lm-eval's chat template cannot be served over /v1/completions (D-233).
+    # lm-eval's chat template cannot be served over /v1/completions .
     assert any("/v1/chat/completions" in part for part in cmd)
 
 

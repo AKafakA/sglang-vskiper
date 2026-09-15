@@ -55,7 +55,7 @@ def expectation(arm: str) -> dict:
     """What `/server_info` must report for this arm, derived from the design."""
     if arm == "upstream":
         # Genuine upstream SGLang has no vpipe package, so there is no attestation block at
-        # all. Its ABSENCE is the assertion (D-587/D-646).
+        # all. Its ABSENCE is the assertion (/).
         return {"attestation": "absent"}
     spec = ARMS[arm]
     return {

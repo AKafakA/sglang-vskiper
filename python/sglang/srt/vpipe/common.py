@@ -257,7 +257,7 @@ def full_graph_fused_router_norm_enabled(
     Fails closed on a non-boolean value.
     """
 
-    # [D-609] design constant. OFF keeps routing bit-identical to the released
+    # design constant. OFF keeps routing bit-identical to the released
     # checkpoint; the fused kernel moves rows within epsilon of the 0.5 threshold.
     raw = "1" if SERVED_FUSED_ROUTER_NORM else "0"
     true_values = {"1", "true", "yes", "on"}
@@ -277,7 +277,7 @@ def full_graph_gate_mode(environ: Optional[Mapping[str, str]] = None) -> str:
     deployment is unchanged, and fails closed on any other value.
     """
 
-    # [D-609] design constant -- a property of the CHECKPOINT, never a tuning knob.
+    # design constant -- a property of the CHECKPOINT, never a tuning knob.
     # [v1.5] Carried as an ARM field (``gate_mode``): a Qwen3 ste_hard checkpoint declares
     # ``hard_mask``; every arm that declares nothing gets the served design's ``released``.
     mode = arm_gate_mode()
@@ -305,7 +305,7 @@ def full_graph_low_row_policy(
     reference arms, and it is unbounded by construction.
     """
 
-    # [D-609] "off" IS the design (D-589). The environment may not change it;
+    # "off" IS the design . The environment may not change it;
     # an override here is what silently ran full_dual for eighteen hours.
     values = os.environ if environ is None else environ
     policy = str(values.get(FD_LOW_ROW_POLICY_ENV, "off")).strip().lower()
@@ -325,7 +325,7 @@ def full_graph_compact_phases(
 ) -> frozenset[str]:
     """Return request phases allowed to use a calibrated compact policy."""
 
-    # [D-609] The served design compacts in BOTH phases. This defaulted to
+    # The served design compacts in BOTH phases. This defaulted to
     # "decode", so a clean deployment silently differed from every measured cell.
     values = os.environ if environ is None else environ
     value = str(values.get(FD_COMPACT_PHASES_ENV, "both") or "both")
@@ -649,7 +649,7 @@ def vp_decode_coverage_target(model_runner) -> Optional[int]:
         return None
     if flexidepth_execution_mode() != FD_EXECUTION_FULL_GRAPH:
         return None
-    # [D-609] the skipper is deployed iff the active arm names one; host path
+    # the skipper is deployed iff the active arm names one; host path
     # comes from the committed host config, never from a shell export.
     if not skipper_deployed():
         return None
@@ -844,7 +844,7 @@ def flexidepth_execution_mode(
 ) -> str:
     """Return the explicit execution mode and reject misspelled modes."""
 
-    # [D-609] The design applies to arms that SERVE A SKIPPER. The stock arm serves
+    # The design applies to arms that SERVE A SKIPPER. The stock arm serves
     # none, so it must not demand the full-graph body (which requires weights). The
     # ARM decides whether the mechanism runs at all; the design decides how it runs.
     mode = SERVED_EXECUTION_MODE if skipper_deployed() else FD_EXECUTION_DIRECT_EAGER
@@ -904,17 +904,17 @@ class RegimeSwitchPrefillConfig(
     min_tokens: int
     row_correction_alpha: float
     include_mixed: bool
-    # [D-596] `max_tokens` (the upper token gate) is DELETED. Its 2026-08-20
+    # `max_tokens` (the upper token gate) is DELETED. Its 2026-08-20
     # premise -- the routed body loses on large packed passes -- was falsified by
     # the rebuilt body and by the per-token profile, which INVERTS it (cost falls
-    # with pass size). Measured removal (D-579): +9.5 % of gsm8k overload passes
+    # with pass size). Measured removal : +9.5 % of gsm8k overload passes
     # move dense->routed for TTFT -6.1 % / E2E -2.8 %, and it is provably inert on
     # coqa (byte-identical prefill counters, both arms). The engagement escape
     # below is the mechanism that decides this properly, from measured routing
     # share rather than a token bracket. Setting the key is now refused by
     # forbid_unknown_fields, so a stale config fails the boot instead of silently
     # reinstating the gate.
-    # [P8 v2, D-339] Engagement-keyed escape: token thresholds cannot
+    # [P8 v2,] Engagement-keyed escape: token thresholds cannot
     # separate engaged large packs (gsm8k 2-4K: routed WINS) from
     # low-engagement ones (mmlu_pro 2.5K: routed loses). When set, the
     # dispatch decision uses a running engagement estimate (EMA of the
@@ -956,9 +956,9 @@ class RegimeSwitchDecodeConfig(
     exit_rows: int
     low_body: str
     high_body: str
-    # c2 (D-156): require this many CONSECUTIVE sub-exit_rows decode passes before
+    # c2 : require this many CONSECUTIVE sub-exit_rows decode passes before
     # flipping skip->dense, so a transient occupancy dip does not withhold skip
-    # (the D-138 switch tax). Default 1 == byte-identical to the un-smoothed band.
+    # (the switch tax). Default 1 == byte-identical to the un-smoothed band.
     exit_dwell: int = 1
     # Lane-2 cut1 (2026-09-02): KV-volume criterion. When enter_kv_tokens > 0
     # the band is keyed on the decode batch's resident KV tokens
@@ -1053,7 +1053,7 @@ class RegimeSwitchConfig(
         self.prefill.validate()
         self.decode.validate()
 def fdvp_fused_project_input_enabled():
-    # [D-609] design constant, not an environment read
+    # design constant, not an environment read
     return mechanism(SERVED_FUSED_PROJECT_INPUT)
 def fdvp_fused_project_input_shared_storage_enabled():
     return False  # [D-609] design constant, not an environment read
@@ -1070,7 +1070,7 @@ def resolve_full_graph_skipper(
 
     values = os.environ if environ is None else environ
     name = full_graph_skipper_name(values)
-    # reading env here only to REFUSE a stale export (D-609): the values come from the arm
+    # reading env here only to REFUSE a stale export : the values come from the arm
     mock_config_present = any(
         str(values.get(key, "")).strip() for key in _MOCK_CONFIG_ENVS
     )
@@ -1080,9 +1080,9 @@ def resolve_full_graph_skipper(
             f"{FULL_GRAPH_SKIPPER_ENV}={DETERMINISTIC_MOCK_FULL_GRAPH_SKIPPER}"
         )
     # One registry lookup for every policy. A parameterised policy reads its own
-    # values out of the arm inside its factory (D-611), so the resolver no longer
+    # values out of the arm inside its factory , so the resolver no longer
     # carries a branch per skipper -- which is what made a third skipper an edit
-    # in two places of library code (D-701).
+    # in two places of library code .
     arm = dict(active_arm())
     arm.setdefault("name", active_arm_name())
     return build_skipper(name, arm)
@@ -1097,8 +1097,8 @@ def flexidepth_active_phases(
     """
 
     values = os.environ if environ is None else environ
-    # [D-609] phases come from the ACTIVE ARM, not the environment.
-    # [D-611] An arm serving NO skipper routes no phases. Reporting "both" there was a
+    # phases come from the ACTIVE ARM, not the environment.
+    # An arm serving NO skipper routes no phases. Reporting "both" there was a
     # true-looking field that is false, and the launch gate cannot catch it: intended and
     # resolved would both state the same wrong thing.
     if not skipper_deployed():
@@ -1154,7 +1154,7 @@ def full_graph_skipper_name(
             f"{FULL_GRAPH_SKIPPER_ENV} must be one of {choices}; got {name!r}"
         )
     return name
-# [D-609] The served design lives in vpipe/design.py -- ONE definition, imported
+# The served design lives in vpipe/design.py -- ONE definition, imported
 # here rather than duplicated, so it cannot drift between modules.
 
 
@@ -1170,7 +1170,7 @@ def regime_switch_config(
     -- the reverse of the old behaviour, and the point of the change.
     """
 
-    # [D-609] The ARM decides whether the mechanism engages: the stock arm carries
+    # The ARM decides whether the mechanism engages: the stock arm carries
     # regime_switch=False and gets the byte-identical baseline path.
     if not active_arm().get("regime_switch", True):
         return None
@@ -1184,7 +1184,7 @@ def regime_switch_config(
             f'"off" (= baseline arm). Configuring the design by environment is '
             f"forbidden (D-609); it is a constant in vpipe/common.py. Got {raw!r}"
         )
-    # [D-611] An arm routes only the phases it has. The regime switch carries BOTH
+    # An arm routes only the phases it has. The regime switch carries BOTH
     # admission legs, but a prefill-only arm must not run the decode leg: its stock low
     # band is dispatched through the FlexiDepth conditional decode backend, which does
     # not exist without a decode phase (decode_cuda_graph_runner asserts exactly that).
@@ -1195,7 +1195,7 @@ def regime_switch_config(
     for leg in ("prefill", "decode"):
         if leg not in phases:
             design[leg] = {**design[leg], "enabled": False}
-    # [D-738] The K/V band is declared per device (design.SERVED_DECODE_KV_BAND_BY_DEVICE) and
+    # The K/V band is declared per device (design.SERVED_DECODE_KV_BAND_BY_DEVICE) and
     # asserted against the roofline rule at boot (model_runner). On the A100 the entry equals
     # the base declaration, so the served config is byte-identical to before this line.
     if design["decode"].get("enter_kv_tokens", 0) > 0 and torch.cuda.is_available():

@@ -714,7 +714,7 @@ async def async_request_sglang_generate(
             )
         sampling_params.update(sampling_overrides)
         sampling_params["max_new_tokens"] = request_func_input.output_len
-        # [Audit D-624 #2] `**request_body` is splatted LAST below, so any prompt-bearing key in
+        # [audit] `**request_body` is splatted LAST below, so any prompt-bearing key in
         # the extra request body silently REPLACES the frozen prompt -- while validation has
         # already hashed the frozen one. The artifact would certify prompt [1,2] while the
         # server received [9,8], and server-reported input usage would agree with the payload,
@@ -1620,7 +1620,7 @@ async def benchmark(
         )
         pbar_total *= args.mooncake_num_rounds
     else:
-        # [Audit D-624 #1] `use_trace_timestamps` is a parameter of this function and was
+        # [audit] `use_trace_timestamps` is a parameter of this function and was
         # NEVER FORWARDED, so get_request() fell back to Poisson draws with relative sleeps --
         # while the run's own summary reports "trace" (see the request_rate fields below) and
         # the frozen arrival file is hashed into the artifacts. Every cell would certify a

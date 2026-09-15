@@ -133,7 +133,7 @@ def assert_band_follows_rule(
 ) -> None:
     """Refuse to serve a band that is not what the rule produces for this device.
 
-    **Asserted, not computed — and that is deliberate.** D-609 puts the served design in the
+    **Asserted, not computed — and that is deliberate.** puts the served design in the
     TREE as constants, so an arm must still DECLARE its band; a band computed at boot would
     silently differ per host, which is the declared-vs-served split D-609 exists to prevent.
     This keeps both properties: the design is declared, and the runtime refuses to boot if the
@@ -159,7 +159,7 @@ def assert_band_follows_rule(
 
 
 # ---------------------------------------------------------------------------------------
-# The K/V-VOLUME band (the criterion the served design actually switches on, D-738/D-739).
+# The K/V-VOLUME band (the criterion the served design actually switches on,/).
 # ---------------------------------------------------------------------------------------
 # Below the ridge a decode step is weight-bandwidth-bound: the weights are streamed whether
 # or not a row skips, so what a skipped row saves at a routed layer is that layer's attention
@@ -173,12 +173,12 @@ def assert_band_follows_rule(
 # On the A100-80GB PCIe (BW 1935 GB/s): 2.67 ms * 1.935 TB/s / (0.5 * 16 * 4 KB) = 158k tokens.
 # The served band (exit 160k, enter 200k = 1.25 V*) was set from the two-body crossover
 # ladder (lane-2 cut1: 131k parity, 262k win) BEFORE this derivation, which reproduces it
-# without fitting. tau is D-368's one profile on the 2026-09-04 body: a cheaper body moves V*
+# without fitting. tau is's one profile on the 2026-09-04 body: a cheaper body moves V*
 # down, so the served constants can only engage LATER than optimal, never in the wrong
 # direction. No optimum is claimed. For another device the same rule with its bandwidth is a
 # PREDICTION (H100 HBM3: 270k/340k; H100 NVL: 320k/400k), checked by that device's ladder.
 
-#: Routed decode body's fixed per-step cost, ms (D-368: ~12 extra kernels per routed layer,
+#: Routed decode body's fixed per-step cost, ms (: ~12 extra kernels per routed layer,
 #: 320 launches per 20 steps; measured once on the A100 testbed, disclosed as such).
 DECODE_BODY_TAX_MS = 2.67
 #: Fraction of routed-layer decisions that PROJECT, as attested on served decode passes

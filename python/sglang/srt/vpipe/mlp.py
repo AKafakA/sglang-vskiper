@@ -331,7 +331,7 @@ def _binary_cohort_mlp(
     # (stats accumulation moved into build_route_maps_from_mask — Block 1B-1)
     config_gate_up = select_config(tuned, "gateup", int(rows))
     config_down = select_config(tuned, "down", int(rows))
-    # Lane-2 Block 1B-2 (D-419): the projector GEMMs (K=4096->N=2*bottleneck,
+    # Lane-2 Block 1B-2 : the projector GEMMs (K=4096->N=2*bottleneck,
     # K=bottleneck->N=4096) get their OWN tuned configs instead of reusing the
     # gate_up/down tiles, which at N=1792 left ~28 active CTAs on an A100.
     # Fail-closed: an artifact without the per-op keys is a configuration error.
@@ -455,7 +455,7 @@ def fd_conditional_mlp_full_graph(
         # decode is weight-bound, so the dense MLP on all rows costs exactly
         # production's MLP; same output (active rows w*MLP, others zero).
         lr_policy = full_graph_low_row_policy()
-        # `native_dense` (D-358) must be honoured here too. This test named only
+        # `native_dense` must be honoured here too. This test named only
         # `full_dual` because it predates that policy, and when native_dense was
         # added the MAIN dispatch below was widened while this branch was not --
         # so the shipped posture fell through to the fused-MoE path the ruling
@@ -487,13 +487,13 @@ def fd_conditional_mlp_full_graph(
             valid_rows,
         )
 
-    # `native_dense` (D-358) resolves BEFORE every routed-MLP dispatch,
+    # `native_dense` resolves BEFORE every routed-MLP dispatch,
     # binary_cohort included: the routed MLP becomes the model's own dense feed
     # forward at every occupancy, plus the projector, selected by the route
     # mask. Invalid (padded) rows are zeroed exactly as the binary-cohort path
     # does.
     #
-    # [D-582] The `full_dual` variant of this branch, which applied the same
+    # The `full_dual` variant of this branch, which applied the same
     # body only BELOW a 128-row bound, is deleted with that bound. It was the
     # third occupancy threshold in the design, outside the two admission legs,
     # and the CSD3 duo A/B measured its removal as parity on gsm8k at both the
@@ -514,9 +514,9 @@ def fd_conditional_mlp_full_graph(
             )
         return output
 
-    # D-508 (2026-09-06): per-layer break-even fallback on EAGER prefill
+    # (2026-09-06): per-layer break-even fallback on EAGER prefill
     # passes. The compaction bodies only pay off when enough rows PROJECT
-    # (ladder D-490 / cells D-491, D-496, D-507: 8 % PROJECT costs -4.4 %,
+    # (ladder / cells,: 8 % PROJECT costs -4.4 %,
     # 22 % is parity, ~37 % gains 4-6 %); below the break-even the routing
     # and count-GEMM machinery is a pure TTFT tax. With the mask known, read
     # this layer's PROJECT share to the host once (eager passes tolerate the
@@ -602,7 +602,7 @@ def fd_conditional_mlp_full_graph(
             valid_rows,
         )
 
-    # Layer bodies (2026-09-08, D-574 simplification): every routed layer runs the
+    # Layer bodies (2026-09-08, simplification): every routed layer runs the
     # count-adaptive binary-cohort body, dispatched above. The per-layer policy string
     # (seven adapter capacities + a hand-chosen split at layer 22) and the compact /
     # fixed-capacity / fused-MoE-overflow bodies it selected are DELETED: an A/B against

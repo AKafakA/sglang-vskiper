@@ -670,12 +670,12 @@ class FlashInferAttnBackend(AttentionBackend):
             # eager layer between captured segments, so they need the
             # just-refreshed decode wrappers active even if a preceding prefill
             # left forward_metadata pointing at PrefillMetadata.
-            # D-251 (Codex [high] / audit F4): upstream leaves forward_metadata
+            # (Codex [high] / audit F4): upstream leaves forward_metadata
             # alone on this path — the reassignment is a VP addition serving
             # only VP breakable graphs, so it is gated on the boot-cached VP
             # predicate. Stock FlashInfer replay semantics are restored
             # verbatim for no-VP serving, which is exactly the configuration of
-            # the true-production baseline row (D-249) this backend will serve.
+            # the true-production baseline row this backend will serve.
             if vp_runtime_enabled() and (
                 not isinstance(self.forward_metadata, DecodeMetadata)
                 or self.forward_metadata.decode_wrappers is not decode_wrappers

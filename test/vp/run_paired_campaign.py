@@ -194,11 +194,11 @@ def campaign_preflight_gate(spec: dict[str, Any],
                "--tree", spec["tree"], "--upstream", spec["upstream_tree"],
                # The STAGING ROOT, which holds models/ beside suites/. Passing suites_dir
                # made the gate look for models/ inside it and report "served model weights
-               # 0 shards" on a box with the model staged one level up (D-664).
+               # 0 shards" on a box with the model staged one level up .
                "--workdir", spec["staging_root"],
                # The campaign's own host config, NAMED. The gate used to pick the
                # alphabetically first deploy/hosts/*.json for itself and validated CSD3
-               # paths on a Vast box (D-664).
+               # paths on a Vast box .
                "--host-config", spec["host_config"],
                "--serving-pythonpath", str(serving)]
     if arm_is_upstream(spec, arm):
@@ -215,10 +215,10 @@ class Server:
         self.process: subprocess.Popen[bytes] | None = None
 
     def command(self) -> list[str]:
-        # Beyond the D-187 substrate, ONLY the launch profile's arguments are passed
+        # Beyond the substrate, ONLY the launch profile's arguments are passed
         # (design.SERVED_LAUNCH_PROFILES, declared by name; the spec picks one). `--dtype=float16`
         # and `--mem-fraction-static 0.8` used to be hard-coded here, carried from a Turing dev
-        # host and undeclared in every headline cell since v1.3 (D-757); they are now the
+        # host and undeclared in every headline cell since v1.3 ; they are now the
         # "paper" profile, declared in SERVED_LAUNCH_EXEMPTIONS and checked by Gate E at boot.
         profile_args: list[str] = []
         for key, value in launch_profile(self.spec).items():
@@ -246,7 +246,7 @@ class Server:
             for key in ("SGLANG_VP_HOST_CONFIG", "SGLANG_FD_WEIGHTS"):
                 environment.pop(key, None)
         else:
-            # The arm is selected IN THE TREE, never through the environment (D-609).
+            # The arm is selected IN THE TREE, never through the environment .
             (tree / "deploy/active_arm").write_text(self.arm + "\n")
             environment["PYTHONPATH"] = str(tree / "python")
             environment["SGLANG_VP_HOST_CONFIG"] = str(tree / self.spec["host_config"])
@@ -386,13 +386,13 @@ def run_arm_cells(spec: dict[str, Any], dataset: str, rates: dict[str, float],
             {"workloads": {suite_name(dataset, label): [rate] for label, rate in rates.items()}}
         ) + "\n")
 
-        # DURATION AND MIN-PROMPTS ARE THE RUNNER'S, NOT OURS (owner rule 2 / D-651).
+        # DURATION AND MIN-PROMPTS ARE THE RUNNER'S, NOT OURS (owner rule 2 /).
         #
         # This block used to compute `rows // slowest` and pass --min-prompts/--duration-s.
         # Two things were wrong with it. The runner now REFUSES those flags outright unless
         # --partial-suite-diagnostic is given, so every cell died one minute in with
         #   "--duration-s / --min-prompts are DIAGNOSTIC overrides"
-        # -- the same defect that killed the ladder driver (D-661), in a second caller.
+        # -- the same defect that killed the ladder driver , in a second caller.
         # And the arithmetic was itself the banned pattern: one duration derived from the
         # SLOWEST rate, applied to every rate in the cell, makes the faster rates submit
         # fewer than their whole suite. The runner derives duration = rows/qps per cell,
@@ -612,9 +612,9 @@ def main() -> int:
     # G1a — campaign_preflight, whose ONLY caller was the dead cell_gates.py. It is the gate
     # whose literal job is "upstream baseline staged and genuinely stock", and it had never
     # been run against a genuine upstream tree: its manifest claimed 2319 files when the
-    # commit yields 2079, so no correct tree could pass it (D-646). Run once per arm here,
+    # commit yields 2079, so no correct tree could pass it . Run once per arm here,
     # binding the PYTHONPATH about to be exported to the tree just content-verified --
-    # hashing a directory does not bind it to the process that serves (audit D-624 #6).
+    # hashing a directory does not bind it to the process that serves (audit).
     if "upstream_tree" in spec:
         for role, arm in campaign_arms(spec):
             serving = serving_pythonpath(spec, arm)
@@ -683,7 +683,7 @@ def main() -> int:
 
     log(f"--- campaign done: {len(index)} arm-runs, {failures} with a non-zero rc ---")
 
-    # PAIRED ANALYSIS IS PART OF THE RUN, NOT A TOOL SOMEONE REMEMBERS (D-624 #5).
+    # PAIRED ANALYSIS IS PART OF THE RUN, NOT A TOOL SOMEONE REMEMBERS .
     #
     # The plan asks for this explicitly, and it was not true: this driver wrote 54 cells and
     # computed no delta -- "the paired unit is a within-rep delta" existed only in a docstring.

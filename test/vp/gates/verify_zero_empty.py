@@ -122,7 +122,7 @@ def main() -> int:
         sys.exit("FATAL: zero responses examined -- an empty cell is not a passing cell")
 
     share = 100.0 * len(empties) / total
-    # [D-728] Known (checkpoint-inherited) empties are named, counted, and not refused.
+    # Known (checkpoint-inherited) empties are named, counted, and not refused.
     # lm-eval ids have the form samples_<task>...jsonl:<doc_id> and are never listed, so the
     # quality lane is unaffected unless an entry is added for it with its own witness.
     known = load_known_empties() if args.artifact else {}

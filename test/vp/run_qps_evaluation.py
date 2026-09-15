@@ -1235,10 +1235,10 @@ def main() -> None:
     parser.add_argument("--rep-start", type=int, default=1)
     parser.add_argument("--campaign-total-reps", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
-    # NOT caller-supplied for a measurement cell, and NO default. Owner rule 2 (D-651):
+    # NOT caller-supplied for a measurement cell, and NO default. Owner rule 2 :
     # "no fixed duration allowed". A cell's duration is a FUNCTION of its suite and its rate
     # -- duration = rows/qps -- so the runner derives both itself and a wrong value cannot be
-    # expressed. They stayed as parameters after D-651 with `--duration-s` defaulting to
+    # expressed. They stayed as parameters after with `--duration-s` defaulting to
     # 180.0, i.e. the rule was enforced by a post-hoc refusal while a fixed duration remained
     # the DEFAULT: omit the flag and you got exactly the value the rule exists to forbid.
     # They are now overrides usable ONLY with --partial-suite-diagnostic, for smokes.

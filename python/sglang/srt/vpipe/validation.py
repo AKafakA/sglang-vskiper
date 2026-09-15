@@ -185,7 +185,7 @@ def assert_regime_switch_skipper_capability(adapter: Any) -> None:
     # What the regime switch actually needs is a PROJECTOR: below the row
     # threshold it runs the dense body, above it routes, and a routed row must
     # still leave this layer's output and its own K/V behind. It never reads the
-    # policy's gate. Until D-701 this was written as "requires FlexiDepth
+    # policy's gate. Until this was written as "requires FlexiDepth
     # router/projector weights", which refused any policy that brings its own
     # gate -- including, on its own terms, the deterministic mock, which only
     # passed because it inherited the FlexiDepth default it does not satisfy.
@@ -206,14 +206,14 @@ def validate_full_graph_model_configuration(
 
     values = os.environ if environ is None else environ
 
-    # D-250 (review finding 5): REJECT the removed layer-routed mechanism rather
+    # (review finding 5): REJECT the removed layer-routed mechanism rather
     # than ignoring it. It reused the stock --prefill/--decode-attention-backend
     # flags as role selectors, giving the treated arm a different decode kernel
-    # than the baseline (D-248), and it is gone. ~20 sealed system_configs still
+    # than the baseline , and it is gone. ~20 sealed system_configs still
     # set it to "1"; without this they would boot into a DIFFERENT backend
     # topology than their name and provenance imply, with no fail-closed signal.
     # A hard error makes the removal self-attesting.
-    # Same fate for the forced-all-RUN PRODUCTION-ATTENTION variant (D-250
+    # Same fate for the forced-all-RUN PRODUCTION-ATTENTION variant (
     # review finding 4): its ONLY reader was _backend_for_layer on the deleted
     # class, yet the attestation would still have reported
     # "production_flashinfer_full_exact" — a mechanism attested but not
@@ -501,7 +501,7 @@ def validate_full_graph_model_configuration(
     fused_evidence = full_graph_fused_evidence_enabled(values)
     masked_decode_attention = full_graph_masked_decode_attention_enabled(values)
     if full_graph_prefill_fallback_min_project(values) is not None:
-        # D-508 fails closed: the per-layer fallback decides between a
+        # fails closed: the per-layer fallback decides between a
         # compaction body and the dense full-dual body on prefill passes, so
         # it needs compaction on prefill and prefill among the active phases;
         # otherwise the value could never execute.
@@ -715,7 +715,7 @@ def validate_full_graph_model_configuration(
             raise ValueError(
                 f"{FD_FUSED_EVIDENCE_ENV}=1 requires " + ", ".join(missing)
             )
-        # Lane-2 cut3 item 4 (D-359): the decode-only restriction existed because
+        # Lane-2 cut3 item 4 : the decode-only restriction existed because
         # the fused kernel is decode-layout and capped at 1024 rows. The decision
         # is now made PER PASS in `prepare_full_graph_batch` (fused on a decode
         # pass within the cap, the existing accumulators otherwise), so a
@@ -726,7 +726,7 @@ def validate_full_graph_model_configuration(
                 f"{FD_FUSED_EVIDENCE_ENV}=1 requires decode in "
                 f"{FD_ACTIVE_PHASES_ENV}"
             )
-    # [lane-2 knob cleanup, D-578] The compact output-projection body, the
+    # [lane-2 knob cleanup,] The compact output-projection body, the
     # split-QKV body and the mapped-decode worker-row sizing are deleted. Their
     # env vars are registered in _REMOVED_FEATURE_ENVS and refused by the
     # removed-feature check below, so nothing is silently ignored here.

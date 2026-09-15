@@ -377,9 +377,9 @@ def validate_record(
             "failed/filtered finish reasons present (a request that did not finish is a "
             f"failed request, not a datum): {counts}"
         )
-    # [D-628] ZERO-EMPTY HARD GATE (owner order, 2026-09-10). A request that returns no text
+    # ZERO-EMPTY HARD GATE (owner order, 2026-09-10). A request that returns no text
     # is LOST OUTPUT, not a low score: it silently deflates quality and inflates
-    # throughput-per-token, and it survived from D-066 (2026-08-09) to now because nothing
+    # throughput-per-token, and it survived from (2026-08-09) to now because nothing
     # asserted it. finish_reason cannot catch it -- `stop`/`matched: 128009` (<|eot_id|>) is
     # also the NORMAL healthy ending, 82% of a clean run -- so the body must be checked.
     #
@@ -398,7 +398,7 @@ def validate_record(
             or expected_output_policies[index] != "production_max_equal_work"
         )
     ]
-    # [D-728, owner 2026-09-12] The same known list the zero-empty gate uses (one source of
+    # [, owner 2026-09-12] The same known list the zero-empty gate uses (one source of
     # truth, test/vp/gates/known_empties.json): an empty the CHECKPOINT ITSELF produces under
     # its own code on the served tokens is inherited, not lost output. It is recorded by id in
     # the audit and does not fail accounting; any other empty still does.

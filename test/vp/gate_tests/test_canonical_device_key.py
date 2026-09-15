@@ -111,7 +111,7 @@ def test_h100_form_factors_do_not_merge_and_have_roofline_entries():
     assert keys["NVIDIA H100 PCIe"] not in table, "PCIe must fail closed until its datasheet is read"
 
 
-# --- the K/V-volume band rule (D-738): served A100 constants reproduced, H100 predicted -------
+# --- the K/V-volume band rule : served A100 constants reproduced, H100 predicted -------
 def test_kv_band_rule_reproduces_the_served_a100_band_and_predicts_h100():
     from sglang.srt.vpipe.design import SERVED_REGIME_SWITCH
     from sglang.srt.vpipe.roofline import (

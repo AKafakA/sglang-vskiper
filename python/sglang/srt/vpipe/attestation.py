@@ -135,7 +135,7 @@ def regime_switch_attestation(
                 "min_tokens": config.prefill.min_tokens,
                 "row_correction_alpha": config.prefill.row_correction_alpha,
                 "include_mixed": config.prefill.include_mixed,
-                # [D-609] The engagement gate was CONFIGURED but never ATTESTED, so
+                # The engagement gate was CONFIGURED but never ATTESTED, so
                 # /server_info could not confirm it and the launch gate could not check
                 # it. A design parameter that cannot be read back is the exact hole that
                 # let a rejected configuration run for eighteen hours.
@@ -290,8 +290,8 @@ def scheduler_runtime_attestation(scheduler: Any) -> dict[str, Any]:
         if prefill_counts is not None:
             for body, count in prefill_counts.items():
                 regime_counters["prefill"][body] += count
-    # [D-726 -> D-734] These counters read {dense: 0, fd: 0} in every campaign cell
-    # because the runner's variant machinery was gated on an env var D-609 had
+    # [ ->] These counters read {dense: 0, fd: 0} in every campaign cell
+    # because the runner's variant machinery was gated on an env var had
     # deleted (see prefill_cuda_graph_runner.__init__). With the gate on the design
     # predicate the runner overlay above carries the real per-body pass counts, so
     # the block is reported again -- and a zero here on a routed arm is a defect.
@@ -324,7 +324,7 @@ def scheduler_runtime_attestation(scheduler: Any) -> dict[str, Any]:
             "decode_passes": int(scheduler.vp_bc_decode_passes),
         },
         "model": model_state,
-        # [D-611, Codex F7/F8] TOP-LEVEL and RESOLVED. The first attempt put these inside
+        # [, Codex F7/F8] TOP-LEVEL and RESOLVED. The first attempt put these inside
         # the seam's dict, which lands under "model" -- so the gate looked one level too
         # shallow and would have rejected every correct server. And it published the
         # DECLARED constants, which the gate then compared against the same constants: a
@@ -471,7 +471,7 @@ def binary_cohort_attestation() -> dict:
             "project_rows": project_rows,
             "engagement": (project_rows / total) if total else None,
         }
-    # D-508: per-layer prefill break-even decisions (eager passes) are realized
+    #: per-layer prefill break-even decisions (eager passes) are realized
     # counters too, so they live under `realized` (stripped from the identity).
     for device, (checked, fallen) in _PREFILL_FALLBACK.items():
         block = realized.setdefault(
@@ -661,7 +661,7 @@ def model_runner_runtime_attestation(
     prefill_backend = getattr(
         prefill_config.backend, "value", str(prefill_config.backend)
     )
-    # [D-609] host path from the committed config
+    # host path from the committed config
     external_moe_config = bool(moe_config_dir().strip())
     skipper_adapter = resolve_full_graph_skipper()
     skipper_attestation = skipper_adapter.attestation()
@@ -851,7 +851,7 @@ def model_runner_runtime_attestation(
                 if fused_evidence
                 else "per_layer_valid_row_matrix"
             ),
-            # Lane-2 cut3 item 4 (D-359): the fused kernel is decode-layout and
+            # Lane-2 cut3 item 4 : the fused kernel is decode-layout and
             # row-capped, so the mode is chosen PER PASS. A both-phase
             # deployment therefore carries BOTH evidence definitions — fused on
             # decode passes within the cap, the per-pass accumulators on prefill
@@ -1018,7 +1018,7 @@ def model_runner_runtime_attestation(
         "bounded_compact": {
             "enabled": compact_enabled,
             "active_phases": compact_phases,
-            # [D-578] These three were env knobs; they are now fixed
+            # These three were env knobs; they are now fixed
             # constants (accounting/allocation, never policy).
             "capacity_fraction": COMPACT_ACCOUNTING_CAPACITY_FRACTION,
             "capacity_multiple": COMPACT_CAPACITY_MULTIPLE,

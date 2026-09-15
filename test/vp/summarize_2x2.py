@@ -32,7 +32,7 @@ from pathlib import Path
 # The metric each dataset is scored on, and its stderr key. Declared, not discovered.
 METRICS = {
     "gsm8k": ("exact_match,flexible-extract", "exact_match_stderr,flexible-extract"),
-    # lm-eval emits `get-answer` for bbh_cot_fewshot, not flexible-extract. D-641: this
+    # lm-eval emits `get-answer` for bbh_cot_fewshot, not flexible-extract.: this
     # filter only scores a response containing "the answer is", and the arms differ sharply
     # on that -- stock 76.5% vs vSkipper 95.5% marker rate -- so it measures format
     # compliance and correctness together. (D - C) alone is NOT quotable for BBH; only the
@@ -223,7 +223,7 @@ def main() -> int:
         # `\pm` is the 95% half-width, so a reader can apply the straddle rule themselves.
         disp = {"gsm8k": "GSM8K", "coqa": "CoQA", "bbh_cot": "BBH"}[args.dataset]
         # The lm-eval key itself, escaped -- never a prettier name invented here, because the
-        # filter IS the measurement (D-641: gsm8k strict-match flips the sign of (B-A)).
+        # filter IS the measurement (: gsm8k strict-match flips the sign of (B-A)).
         metric_label = "\\texttt{" + metric.replace("_", r"\_") + "}"
         macro = {"gsm8k": "Gsm", "coqa": "Coqa", "bbh_cot": "Bbh"}[args.dataset]
         row = (f"{disp} & {metric_label} & "

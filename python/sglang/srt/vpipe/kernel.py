@@ -305,7 +305,7 @@ def _grid_kernel():
         INVERT_W: tl.constexpr,
         SCALE_W: tl.constexpr,
     ):
-        # Capacity-sized 2-D grid with early exit (D-302/D-303). Lane-2
+        # Capacity-sized 2-D grid with early exit (/). Lane-2
         # tax-removal track / F4 (2026-09-07): the optional GATHER_A reads
         # row ``idx[m]`` of the FULL activation instead of a pre-packed row
         # (folds ``pack_rows``), and the optional SCATTER_C writes tile row m
@@ -342,7 +342,7 @@ def _grid_kernel():
                 if EVEN_N:
                     w_tile = tl.load(w_ptrs)
                 else:
-                    # v1.5 (D-747): N is not a multiple of BN -- Qwen3-4B's fused
+                    # v1.5 : N is not a multiple of BN -- Qwen3-4B's fused
                     # projector width 1216 at BN=128 -- so the last n-tile must
                     # not read past the weight's end (every Llama-3-8B N is a
                     # multiple of every tuned BN, which is why the unmasked load

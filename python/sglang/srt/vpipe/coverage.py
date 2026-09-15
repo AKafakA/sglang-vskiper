@@ -123,7 +123,7 @@ def fd_skip_decode_deployed() -> bool:
 
     global _fd_skip_decode_deployed_cache
     if _fd_skip_decode_deployed_cache is None:
-        # [D-609] arm + design, not environment
+        # arm + design, not environment
         _fd_skip_decode_deployed_cache = bool(
             skipper_deployed() and SERVED_EXECUTION_MODE == "full_graph"
         )

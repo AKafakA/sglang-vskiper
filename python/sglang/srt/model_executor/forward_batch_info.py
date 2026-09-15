@@ -781,7 +781,7 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
             encoder_lens_cpu=batch.encoder_lens_cpu,
             lora_ids=[req.lora_id for req in batch.reqs],
             rids=[req.rid for req in batch.reqs],
-            # D-251 (Codex [high] / audit F2): VP per-request metadata is built
+            # (Codex [high] / audit F2): VP per-request metadata is built
             # ONLY when VP/FD is active. Unconditional, these five O(batch)
             # scans ran on every forward of every arm — including the no-skip
             # baseline, where nothing consumes them (every consumer lives under

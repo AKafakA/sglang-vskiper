@@ -121,7 +121,7 @@ def read_cells(cells: Path) -> tuple[list[tuple[float, float]], list[str]]:
         submitted = last.get("num_prompts") or last.get("completed")
         completed = last.get("completed")
         if submitted is not None and completed is not None and submitted != completed:
-            # D-591 defect 2: the harness refused this cell; its artifacts are still here.
+            # defect 2: the harness refused this cell; its artifacts are still here.
             skipped.append(
                 f"{label}: completed {completed} != submitted {submitted} — "
                 "accounting short, not a measurement"
@@ -219,7 +219,7 @@ def report(curve: list[tuple[float, float]], skipped: list[str]) -> int:
     return 0
 
 
-# The recorded BBH curve (D-591). Its answer is known: 35. Rung 22 ties rung 21, which is
+# The recorded BBH curve . Its answer is known: 35. Rung 22 ties rung 21, which is
 # exactly the shape that made an earlier version return 21.
 _BBH_CURVE = [
     (12, 2000.0), (20, 2600.0), (21, 2690.0), (22, 2692.1), (23, 2750.0), (24, 2800.0),

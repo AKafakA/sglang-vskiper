@@ -45,7 +45,7 @@ GATES = ROOT / "test/vp/gates"
 
 # Our workload name -> the lm-eval task that defines its protocol.
 # bbh uses `bbh_cot_fewshot`, NOT `bbh_fewshot`: the latter scores 0.0 through a
-# leading-space artifact and is unusable as a control (D-616 + amendment).
+# leading-space artifact and is unusable as a control ( + amendment).
 TASKS = {
     "gsm8k": "gsm8k",
     "coqa": "coqa",
@@ -95,7 +95,7 @@ def _prompt_kind(suite_dir: Path, suite_name: str) -> str:
 def _lmeval_command(args: argparse.Namespace, task: str, kind: str) -> list[str]:
     command = [args.lmeval_python, "-m", "lm_eval"]
     if args.base_url:
-        # lm-eval's chat template cannot be served over /v1/completions (D-233), so a
+        # lm-eval's chat template cannot be served over /v1/completions , so a
         # chat protocol must go to /v1/chat/completions.
         endpoint = "chat/completions" if kind == "chat_messages" else "completions"
         model = "local-chat-completions" if kind == "chat_messages" else "local-completions"
@@ -103,7 +103,7 @@ def _lmeval_command(args: argparse.Namespace, task: str, kind: str) -> list[str]
             f"base_url={args.base_url.rstrip('/')}/v1/{endpoint},"
             f"model=served,tokenizer_backend=huggingface,"
             f"tokenizer={args.tokenizer},num_concurrent={args.num_concurrent},"
-            # [D-724/D-725] lm-eval tokenizes CLIENT-SIDE and sends ids: its API backend
+            # [/] lm-eval tokenizes CLIENT-SIDE and sends ids: its API backend
             # encodes with add_special_tokens=False exactly like its HF backend, so arms
             # C/D see the token sequence arms A/B see -- and the perf lane's frozen suites
             # (raw_completion = encode(add_special_tokens=False)). With
@@ -236,7 +236,7 @@ def main() -> int:
     ).returncode != 0:
         failed.append("zero_empty")
 
-    # A served flag is not an active treatment (D-627): a whole night's quality numbers
+    # A served flag is not an active treatment : a whole night's quality numbers
     # described the production all-RUN body while every input gate passed.
     if routes_decode:
         if subprocess.run(
@@ -254,7 +254,7 @@ def main() -> int:
         "prompt_kind": kind,
         "arm": args.arm,
         # Whether this cell was served by GENUINE upstream SGLang. Arm C of the 2x2 is
-        # gated on "no quality collapse vs UPSTREAM sglang" (D-587), and for months arm C
+        # gated on "no quality collapse vs UPSTREAM sglang" , and for months arm C
         # was ARMS["stock"] -- this fork with the skipper off. The manifest recorded the
         # arm LABEL, which is what made that invisible to every downstream reader. Record
         # the fact, so the summariser can refuse a (D - C) computed against the wrong C.

@@ -20,7 +20,7 @@ Method, unchanged from that tool because the method was never the problem:
   * a CI containing zero is a STRADDLE, reported as parity, never as a win.
 
 Gating is inherited and non-negotiable: a rep counts only with a GR-1a work-identity PASS.
-**A rep that is MISSING and a rep that FAILED must never look alike** (D-593), so an ungated
+**A rep that is MISSING and a rep that FAILED must never look alike** , so an ungated
 rep is refused loudly rather than quietly dropped into the mean.
 
 Usage:  paired_analysis.py <out-dir> [--reps 1,2,3] [--json OUT]
@@ -35,7 +35,7 @@ import statistics as st
 import sys
 from pathlib import Path
 
-# D-605: the headline is TTFT / TPOT / E2E at p50, mean and p99. Output TPS is ONE line and is
+#: the headline is TTFT / TPOT / E2E at p50, mean and p99. Output TPS is ONE line and is
 # reported, never headlined — in the equal-work lane it is algebraically the drain time, because
 # identical tokens make TPS = tokens/duration with tokens fixed.
 LATENCY_METRICS = [
@@ -43,7 +43,7 @@ LATENCY_METRICS = [
     ("TPOT p50", "median_tpot_ms"), ("TPOT mean", "mean_tpot_ms"), ("TPOT p95", "p95_tpot_ms"), ("TPOT p99", "p99_tpot_ms"),
     ("E2E p50", "median_e2e_latency_ms"), ("E2E mean", "mean_e2e_latency_ms"), ("E2E p95", "p95_e2e_latency_ms"),
     ("E2E p99", "p99_e2e_latency_ms"),
-    # [D-756, owner 09-13] makespan = the cell's wall time to complete its FIXED work, drain included
+    # [, owner 09-13] makespan = the cell's wall time to complete its FIXED work, drain included
     # (the benchmark's `duration`). Negative = better, like every latency. With the work pinned,
     # output TPS is exactly tokens/makespan, so TPS is reported as a derived line and never called
     # a throughput in the paper: the drain of the few longest requests decides it.
@@ -134,7 +134,7 @@ def main() -> int:
             # A MISSING ARM IS REPORTED, NOT SKIPPED. This tool runs at the END of a
             # campaign, where an absent arm directory means that dataset never completed --
             # and a silent skip would make "it never ran" indistinguishable from "it was not
-            # in the spec", which is D-593's rule (a missing rep and a failed rep must not
+            # in the spec", which is's rule (a missing rep and a failed rep must not
             # look alike) broken one level up. Found by running this against the live
             # headline's partial output instead of only against fixtures.
             absent = [a for a in (args.baseline, args.treatment)

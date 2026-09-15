@@ -191,18 +191,18 @@ def prefill_regime_decision(
     threshold = cfg.prefill.min_tokens - cfg.prefill.row_correction_alpha * (
         batch_size
     )
-    # [D-596] The prefill band's UPPER token gate is GONE. It demoted every pass
+    # The prefill band's UPPER token gate is GONE. It demoted every pass
     # above 6144 tokens to the dense body on the premise (2026-08-20) that the
     # routed body loses on large packed passes. Three things falsified that:
-    #   * the engagement escape (D-339) was added afterwards to make exactly this
+    #   * the engagement escape was added afterwards to make exactly this
     #     decision from measured routing share, and token brackets applied FIRST
     #     as hard bounds, pre-empting it;
-    #   * the routed body was rebuilt (count-GEMM, on-device compaction, D-574
+    #   * the routed body was rebuilt (count-GEMM, on-device compaction,
     #     layer-policy deletion) -- the "thin projector lanes" it was calibrated
     #     against are not what runs;
     #   * the per-token profile INVERTS its premise: cost falls with pass size,
     #     98 us/tok below 1536 down to 72.7 at 6-8k, against dense ~78-85.
-    # Measured directly (D-579, CSD3 duo, single variable, GR-1a PASS on all four
+    # Measured directly (CSD3 duo, single variable, GR-1a PASS on all four
     # cells): removing it converts +9.5 % of gsm8k overload passes from dense to
     # routed and buys TTFT -6.1 % / E2E -2.8 % there, while being PROVABLY INERT
     # on coqa -- both arms recorded byte-identical prefill counters (1413 dense /

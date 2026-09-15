@@ -400,7 +400,7 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
         # prepare_full_graph_batch reads it whenever full_graph_decode_enabled(),
         # which keys on the EXECUTION MODE alone. Gate on exactly that condition,
         # never on a proxy — twice now a proxy has been wrong here:
-        #   D-251 review F1: gating on the regime dispatch missed V-dec
+        # review F1: gating on the regime dispatch missed V-dec
         #     (full-graph FlexiDepth, no regime switch).
         #   Codex review:    gating on fd_skip_decode_deployed() missed WEIGHTLESS
         #     full-graph skippers — an adapter with
@@ -1084,7 +1084,7 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
 
         raw_bs = forward_batch.batch_size
         raw_num_token = raw_bs * self.num_tokens_per_bs
-        # D-251 (Codex [high] + audit F5, corrected by review F1): this fill_ is
+        # (Codex [high] + audit F5, corrected by review F1): this fill_ is
         # a VP ADDITION to the stock REPLAY path — upstream writes the buffer
         # only during capture. Unconditional, it launched an extra uncaptured
         # kernel on every decode replay of every arm including the baseline.

@@ -145,7 +145,7 @@ def fd_execute_prepared_layer_route_full_graph(
         forward_batch.fd_full_graph_attention_row_count = None
         forward_batch.fd_full_graph_attention_row_map_layer = None
         forward_batch.fd_full_graph_attention_worker_rows = None
-        # [lane-2 knob cleanup, D-578] The mapped-decode worker-row sizing that
+        # [lane-2 knob cleanup,] The mapped-decode worker-row sizing that
         # stood here derived its capacity from the compact-o_proj layer
         # fractions, which are deleted with that body. The feature is off in
         # every arm we have ever served, and its only consumer (the triton

@@ -104,8 +104,8 @@ def render_messages(dataset: str, record: dict[str, Any]) -> list[dict[str, str]
     return [{"role": "user", "content": render_prompt(dataset, record)}]
 # The benchmark's own generation limit (lca-baselines src/models/*_model.py:
 # `max_tokens=2048`, `temperature=0.0`). Applied as the per-request cap ONLY on
-# `lca_libgen_official` (owner D-531: the only capped long-output row, because
-# Llama-3-8B-Instruct loops on 14-15 % of these prompts in both arms, D-530).
+# `lca_libgen_official` (owner: the only capped long-output row, because
+# Llama-3-8B-Instruct loops on 14-15 % of these prompts in both arms).
 LCA_OFFICIAL_MAX_TOKENS = 2048
 # Verbatim from lca-baselines src/models/example_generation_model.py
 # (`get_prompt`), the benchmark's no-context setting.
@@ -113,7 +113,7 @@ LCA_OFFICIAL_PROMPT = (
     "Generate Python code based on the following instruction. Output ONLY code. "
     "DO NOT include explanations or other textual content.\nInstruction: {instruction}"
 )
-# Measured on the staged prompts with the Llama-3 tokenizer (D-520 survey):
+# Measured on the staged prompts with the Llama-3 tokenizer ( survey):
 # ~1.35 tokens per English word. Used ONLY for the window filter budget of
 # LongBench-Write rows; the served generation is natural (uncapped).
 LONGWRITE_TOKENS_PER_WORD = 1.35
@@ -187,7 +187,7 @@ def render_prompt(dataset: str, record: dict[str, Any]) -> str:
         return LCA_OFFICIAL_PROMPT.format(instruction=str(record["instruction"]))
     if dataset == "lca_libgen_noapi":
         # Declared protocol `lca-libgen-v1:instruction-only-chat` (our own
-        # instruction-only wording; D-526). Superseded by `lca_libgen_official`.
+        # instruction-only wording;). Superseded by `lca_libgen_official`.
         return (
             f"{str(record['instruction']).strip()}\n\n"
             "Write the complete Python program. Output only the code."

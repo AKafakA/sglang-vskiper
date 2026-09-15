@@ -101,7 +101,7 @@ def post(a) -> int:
           f"({len(statuses)} record(s))")
 
     # ---- G2: cross-arm work identity (GR-1a) ----------------------------------------
-    # [Audit D-624 #3] G2 was initialised True, so omitting --arm exited ZERO: the gate
+    # [audit] G2 was initialised True, so omitting --arm exited ZERO: the gate
     # printed "SKIPPED" and then declared an UNCHECKED PAIR quotable. Reproduced by the audit.
     # An unchecked gate is a FAILED gate; opting out has to be explicit and recorded.
     ok_g2 = bool(a.allow_unpaired)

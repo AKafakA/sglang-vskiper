@@ -936,7 +936,7 @@ def capture_llama_flexidepth_conditional_graph(
         if defer_project_kv
         else ()
     )
-    # HBM D-299+1: allocate the per-layer repair families as SINGLE
+    # HBM+1: allocate the per-layer repair families as SINGLE
     # layer-contiguous backings (aligned per-layer stride) and hand out
     # per-layer views. Stabilizes the caching-allocator layout across
     # defer/inline arms (the measured GEMM tile-selection coupling) and
@@ -1365,7 +1365,7 @@ def capture_llama_flexidepth_conditional_graph(
                 )
 
             if batched_commit:
-                # HBM proposal 2 (D-299+1): one cross-layer kernel launch
+                # HBM proposal 2 (+1): one cross-layer kernel launch
                 # per step over the layer-contiguous repair/mask backings
                 # replaces the per-layer masked pool writes. The plan
                 # builder fail-closes on any layout it cannot prove

@@ -2606,7 +2606,7 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         )
 
         # Fail-closed FlexiDepth backend assertion (owner ruling, 2026-08-18;
-        # D-186/D-197/D-248 lineage): only the triton attention kernels read
+        #// lineage): only the triton attention kernels read
         # the FlexiDepth run mask. With FD weights active, any other resolved
         # backend would silently ignore routing (masked attention becomes a
         # real contribution) — refuse to boot instead. This asserts; it never
@@ -2622,7 +2622,7 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         from sglang.srt.vpipe.design import flexidepth_weights_path, skipper_deployed
         from sglang.srt.vpipe.env import FD_EXECUTION_FULL_GRAPH
 
-        # [D-734] Was keyed on SGLANG_FD_WEIGHTS, which D-609 stopped exporting -- both
+        # Was keyed on SGLANG_FD_WEIGHTS, which stopped exporting -- both
         # assertions below were inert in every served cell since 2026-09-09. The design
         # (arm + host config) is the only source of "a skipper with weights is deployed".
         if (
@@ -2653,7 +2653,7 @@ class ModelRunner(ModelRunnerKVCacheMixin):
             # "prefill", so its decode rows would be routed under prefill
             # semantics (or silently run dense when prefill is inactive).
             # Either way the route contract breaks — refuse to boot.
-            # [D-738] The decode band the arm DECLARES must be the band the roofline rule
+            # The decode band the arm DECLARES must be the band the roofline rule
             # gives for THIS device; otherwise refuse to boot (a re-tuned band would
             # otherwise serve silently on a second card).
             from sglang.srt.vpipe.common import regime_switch_config as _regime_cfg_fn
@@ -2665,7 +2665,7 @@ class ModelRunner(ModelRunnerKVCacheMixin):
             if _rs is not None and _rs.decode.enabled and _rs.decode.kv_criterion:
                 _band_policy = _active_arm().get("decode_kv_band_policy", "rule")
                 if _band_policy == "shared":
-                    # [D-778] A DECLARED deviation: the arm serves the global band under its own
+                    # A DECLARED deviation: the arm serves the global band under its own
                     # inputs (the Qwen shared-band posture). Attested as decode_kv_band_policy.
                     logger.warning(
                         "[D-778] decode_kv_band_policy=shared: serving band (exit=%s, enter=%s) "
@@ -2710,7 +2710,7 @@ class ModelRunner(ModelRunnerKVCacheMixin):
             self.decode_attention_backend_str,
         ) = self.server_args.get_attention_backends()
 
-        # D-248/D-249 (owner 2026-08-14): the VP layer-routed attention override is
+        #/ (owner 2026-08-14): the VP layer-routed attention override is
         # REMOVED. It built a hybrid backend from the STOCK --prefill/--decode-
         # attention-backend flags, reusing them as role selectors, which (a) gave the
         # treated arm flashinfer on decode layers 0-15 while the baseline ran triton on
@@ -2720,9 +2720,9 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         # Backend selection is now STOCK sglang: one backend, chosen by the official
         # CLI, applied uniformly to every layer of every arm. VP must never again
         # reinterpret a stock flag; if per-layer dispatch returns for Stage-2 prefill
-        # routing it must be driven by dedicated VP config keys (D-246).
+        # routing it must be driven by dedicated VP config keys .
 
-        # U9 / U1 guard — now the ONLY backend constraint (D-250: the layer-routed
+        # U9 / U1 guard — now the ONLY backend constraint (: the layer-routed
         # override that used to precede it is gone). A config with MASKED=1 reaching
         # no raise anywhere would boot on the flashinfer default and run with the mask
         # INERT — flashinfer has

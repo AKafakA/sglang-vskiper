@@ -45,7 +45,7 @@ def _run(before: Path, after: Path, *extra: str):
     )
 
 
-# --- admission-gated arm: the D-627 catch must survive ---
+# --- admission-gated arm: the catch must survive ---
 
 
 def test_d627_case_is_still_refused(tmp_path):
@@ -54,7 +54,7 @@ def test_d627_case_is_still_refused(tmp_path):
     a = _snapshot(tmp_path / "a.json", regime={"skip": 0, "prod_allrun": 16720})
     r = _run(b, a)
     assert r.returncode == 1
-    # message updated by D-697: the check now spans both phases, so "never skipped" became
+    # message updated by: the check now spans both phases, so "never skipped" became
     # "nothing routed in either phase"
     assert "NOTHING ROUTED" in r.stdout
 
@@ -109,7 +109,7 @@ def test_always_route_arm_that_did_not_skip_is_refused(tmp_path):
                   c3={"fd_tokens_skip_body": 0, "fd_tokens_prod_allrun_band": 5000})
     r = _run(b, a)
     assert r.returncode == 1
-    # message updated by D-697: the check now spans both phases, so "never skipped" became
+    # message updated by: the check now spans both phases, so "never skipped" became
     # "nothing routed in either phase"
     assert "NOTHING ROUTED" in r.stdout
 

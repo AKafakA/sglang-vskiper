@@ -3,7 +3,7 @@
 # Reachability/attestation only -- NEVER a performance number.
 #
 # This is the PROVEN 2026-08-24 v2 driver (box_vpcov_arm_v2.sh) verbatim in
-# logic, repo-resident since dev-h-harness-selfcontained (D-307 Lane H) with
+# logic, repo-resident since dev-h-harness-selfcontained ( Lane H) with
 # path resolution parameterized. v2's shape, kept exactly: TREE is a parameter
 # and sets PYTHONPATH (namespace-package srt override, the proven CSD3 A/B
 # pattern); the probe client comes from the tree under test; server_info is
@@ -18,7 +18,7 @@
 set -uo pipefail
 ARM="${1:?usage: box_vpcov_arm.sh <arm> [tree-dir] [out-root]}"
 GATES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# [D-609] Harness paths come from the committed host config, like everything else.
+# Harness paths come from the committed host config, like everything else.
 # These are plumbing (where to write, which interpreter), not design -- but there is
 # no reason for a second mechanism, and a hardcoded dev-box path is how this script
 # failed on the A100.
@@ -37,7 +37,7 @@ MODEL="${VP_GATE_MODEL:-$W/models/Meta-Llama-3-8B-Instruct-53346005}"
 SUITE="${VP_GATE_SUITE:-$W/suites/gsm8k.first100.requests.jsonl}"
 OUT=$OUTROOT/$ARM
 rm -rf "$OUT"; mkdir -p "$OUT"
-# [D-609] Arms are NAMED, not exported. The arm_env_*.sh scripts are deleted: an
+# Arms are NAMED, not exported. The arm_env_*.sh scripts are deleted: an
 # export that fails to reach the server is indistinguishable from one that worked,
 # which is how eighteen hours ran on a rejected design. The arm goes into the
 # durable file the served path reads, and the design comes from the tree.
