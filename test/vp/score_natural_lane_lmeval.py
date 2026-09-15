@@ -105,9 +105,19 @@ for cell in [c for pat in a.cells for c in sorted(glob.glob(pat))]:
         # while the base model often omits the marker under a chat template and strict-match
         # penalises it for that. Reported as a sensitivity check beside the authors' filter.
         if {"strict-match", "flexible-extract"} <= set(per_filter):
+            # Key on whether strict-match PARSED, not on whether the text contains "####".
+            # strict-match's pattern is `#### (\-?[0-9\.\,]+)`, so a marker followed by anything
+            # outside that class -- "#### $21" is the common one -- fails to match and yields
+            # [invalid] even though the marker is present. That failure is strongly arm-dependent
+            # (measured at 1.25xQ*: upstream 62 of 1109 marker rows, hybrid 3 of 1200, always-route
+            # 0 of 1199), so the naive "has ####" rule discards baseline rows that flexible
+            # extraction scores correctly and biases the comparison toward the served arms.
+            sm_raw = filtered["strict-match"]
             acc = 0.0
             for i in range(n):
-                acc += per_filter["strict-match"][i] if "####" in texts[i] else per_filter["flexible-extract"][i]
+                v = sm_raw[i][0] if isinstance(sm_raw[i], list) else sm_raw[i]
+                parsed = str(v).strip() not in ("", "[invalid]")
+                acc += per_filter["strict-match"][i] if parsed else per_filter["flexible-extract"][i]
             scores["exact_match,marker-composite"] = acc / n
     elif ds == "bbh_cot":
         docs = [{"input": "", "target": gold[i][1]} for i in range(n)]

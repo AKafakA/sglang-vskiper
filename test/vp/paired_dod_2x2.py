@@ -20,8 +20,14 @@ import sys
 from collections import defaultdict
 
 #: (samples-file task prefix, filter, metric key) per dataset -- declared, as in summarize_2x2.
+# GSM8K uses BOTH of lm-eval's published filters under one rule (see load_arm): strict-match where
+# it parses, flexible extraction where it does not. Neither alone can compare these arms -- strict
+# cannot parse ~20 % of the BASE model's generations (no marker, or "#### $21" whose $ is outside
+# its [0-9.,] class) while flexible extraction's last-number rule is fooled by the confidence
+# epilogue the CHECKPOINT appends (~3 %, and never on the base model). The failures fall on
+# opposite arms, so either filter alone biases the comparison.
 SPEC = {
-    "gsm8k": ("samples_gsm8k_", "flexible-extract", "exact_match"),
+    "gsm8k": ("samples_gsm8k_", "__composite__", "exact_match"),
     "bbh_cot": ("samples_bbh_cot_fewshot_", "get-answer", "exact_match"),
     "coqa": ("samples_coqa_", "none", "f1"),
 }
@@ -46,6 +52,23 @@ def load_arm(root: str, dataset: str) -> dict[tuple[str, int], float]:
         task = os.path.basename(f)[len("samples_"):].rsplit("_20", 1)[0]
         newest[task] = f
     out: dict[tuple[str, int], float] = {}
+    if flt == "__composite__":
+        # collect every filter's verdict AND its extracted value per document, then combine
+        rows: dict[tuple[str, int], dict[str, dict]] = {}
+        for task, f in newest.items():
+            with open(f) as fh:
+                for line in fh:
+                    r = json.loads(line)
+                    fr = r.get("filtered_resps") or []
+                    val = fr[0] if isinstance(fr, list) and fr else fr
+                    rows.setdefault((task, int(r["doc_id"])), {})[r.get("filter", "none")] = {
+                        "ok": float(r[metric]), "val": str(val).strip()}
+        for key, per in rows.items():
+            if not {"strict-match", "flexible-extract"} <= set(per):
+                sys.exit(f"FATAL: {key} lacks both GSM8K filters; cannot apply the composite rule")
+            parsed = per["strict-match"]["val"] not in ("", "[invalid]")
+            out[key] = per["strict-match"]["ok"] if parsed else per["flexible-extract"]["ok"]
+        return out
     for task, f in newest.items():
         with open(f) as fh:
             for line in fh:
@@ -107,7 +130,7 @@ def main() -> int:
     if args.latex:
         disp = {"gsm8k": "GSM8K", "coqa": "CoQA", "bbh_cot": "BBH"}[args.dataset]
         macro = {"gsm8k": "Gsm", "coqa": "Coqa", "bbh_cot": "Bbh"}[args.dataset]
-        metric_label = {"gsm8k": "\\texttt{exact\\_match,flexible-extract}", "coqa": "\\texttt{f1,none}",
+        metric_label = {"gsm8k": "\\texttt{exact\\_match,strict$\\vert$flexible}", "coqa": "\\texttt{f1,none}",
                         "bbh_cot": "\\texttt{exact\\_match,get-answer}"}[args.dataset]
         m = rep["means"]
         if args.margin is not None:
