@@ -90,7 +90,7 @@ def test_preflight_refuses_a_missing_suite_without_booting(tmp_path: Path):
         "tree": str(ROOT), "upstream_tree": str(tmp_path / "upstream"),
         "python": sys.executable, "model_path": str(tmp_path / "model"),
         "suites_dir": str(tmp_path / "suites"), "staging_root": str(tmp_path),
-        "host_config": "deploy/hosts/vast-a100.json",
+        "host_config": "deploy/hosts/a100.json",
         "quality_suites": {"gsm8k": "gsm8k.NOPE"},
     }
     (tmp_path / "suites").mkdir()

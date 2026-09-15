@@ -13,7 +13,7 @@ set -uo pipefail
 ARM="${1:?usage: box_conc16_stress.sh <arm> [boots] [tree-dir] [out-root]}"
 BOOTS="${2:-3}"
 GATES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-W="${VP_GATE_WORKDIR:-/local/scratch/tmp/wd312}"
+W="${VP_GATE_WORKDIR:-/local/scratch/tmp/operator}"
 TREE="${3:-$(cd "$GATES_DIR/../../.." && pwd)}"
 OUTROOT="${4:-$W/conc16-stress-out}"
 V="${VP_GATE_PYTHON:-$W/sglang-sm75/.venv/bin/python}"
@@ -25,7 +25,7 @@ SUITE="${VP_GATE_SUITE:-$W/suites/gsm8k.first100.requests.jsonl}"
 # durable file the served path reads, exactly as box_vpcov_arm.sh does.
 TREE="${VP_GATE_TREE:-$(cd "$GATES_DIR/../../.." && pwd)}"
 printf '%s\n' "$ARM" > "$TREE/deploy/active_arm"
-export SGLANG_VP_HOST_CONFIG="${SGLANG_VP_HOST_CONFIG:-$TREE/deploy/hosts/vast-a100.json}"
+export SGLANG_VP_HOST_CONFIG="${SGLANG_VP_HOST_CONFIG:-$TREE/deploy/hosts/a100.json}"
 CRASHES=0
 for BOOT in $(seq 1 "$BOOTS"); do
   # Scrub the treatment namespace EVERY iteration (the r2 env-leak lesson).

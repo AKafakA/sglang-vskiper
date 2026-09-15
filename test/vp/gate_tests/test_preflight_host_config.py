@@ -57,14 +57,14 @@ def test_it_checks_the_NAMED_config_not_the_alphabetically_first(tmp_path):
     real = tmp_path / "staged"
     real.mkdir()
     tree = _tree(tmp_path, {
-        "hpc": {"flexidepth_weights": "/rds/user/wd312/nope/router.pt",
-                 "conditional_graph_helper": "/rds/user/wd312/nope/helper.so",
-                 "moe_config_dir": "/rds/user/wd312/nope/moe"},
+        "hpc": {"flexidepth_weights": "/data/nonexistent/nope/router.pt",
+                 "conditional_graph_helper": "/data/nonexistent/nope/helper.so",
+                 "moe_config_dir": "/data/nonexistent/nope/moe"},
         "a100": {"flexidepth_weights": str(real), "conditional_graph_helper": str(real),
                       "moe_config_dir": str(real)},
     })
     done = _run(tree, tmp_path, "deploy/hosts/a100.json")
-    assert "/rds/user/wd312" not in done.stdout, (
+    assert "/data/nonexistent" not in done.stdout, (
         "the gate validated the HPC cluster's config on a host that is not the HPC cluster:\n" + done.stdout
     )
     assert "a100.json" in done.stdout

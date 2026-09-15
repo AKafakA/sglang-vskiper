@@ -1,9 +1,9 @@
 """SCROLLS long-context summarisation, loaded from LOCALLY STAGED jsonl.
 
-Why local rather than a hub fetch: CSD3 has no outbound SSL, so the archived
+Why local rather than a hub fetch: the HPC cluster has no outbound SSL, so the archived
 ``longbench_eval.load_records`` pattern (``hf_hub_download`` + ``zipfile``)
 cannot run there. And ``tau/scrolls`` is a script-based dataset, which
-``datasets`` >= 3.0 refuses outright -- CSD3's lm-eval venv has 3.6.0 and the
+``datasets`` >= 3.0 refuses outright -- the HPC cluster's lm-eval venv has 3.6.0 and the
 box has 4.8.4. The staging step therefore runs on the box under a venv pinned
 to ``datasets<3``, writes one jsonl per task, and the serving harness reads
 those files with nothing but the stdlib.
@@ -73,7 +73,7 @@ def stage_dir() -> Path:
     """Resolve the staged-jsonl directory, failing closed if unset or missing.
 
     Deliberately NOT defaulted to a hub fetch: a silent fallback to the network
-    would work on the box and fail on CSD3, i.e. it would break exactly where it
+    would work on the box and fail on the HPC cluster, i.e. it would break exactly where it
     matters and pass exactly where it does not.
     """
 
@@ -81,7 +81,7 @@ def stage_dir() -> Path:
     if not raw:
         raise RuntimeError(
             f"{_STAGE_DIR_ENV} is unset. SCROLLS rows are read from locally "
-            "staged jsonl (CSD3 has no outbound SSL and `datasets`>=3 refuses "
+            "staged jsonl (the HPC cluster has no outbound SSL and `datasets`>=3 refuses "
             "the script-based tau/scrolls loader). Stage with "
             "`stage_scrolls.py <dir>` under a `datasets<3` venv, then point "
             f"{_STAGE_DIR_ENV} at that directory."

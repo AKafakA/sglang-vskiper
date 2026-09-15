@@ -159,7 +159,7 @@ SERVED_LAUNCH_EXEMPTIONS: Final[dict[str, dict[str, Any]]] = {
 # A LAUNCH PROFILE is the set of launch arguments the driver passes beyond the substrate
 # (both arms, every boot). Two exist, both declared, neither an environment variable:
 #   paper           -- the paper's protocol ( add.): fp16, static memory fraction 0.8
-#   sglang_default  -- nothing: SGLang's computed defaults (the CSD3 backup line)
+#   sglang_default  -- nothing: SGLang's computed defaults (the the HPC cluster backup line)
 # The spec names one (`launch_profile`); absent, the paper profile is used. Gate E verifies
 # the served values against the defaults with the profile's exemptions applied, so a profile
 # cannot smuggle a value: every non-default it produces must also be listed above.

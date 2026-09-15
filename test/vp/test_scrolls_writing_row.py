@@ -1,5 +1,6 @@
+import pathlib
 import sys
-sys.path.insert(0, "/home/wd312/Code/llm/vPipe/vpipe-lane2-cut2/test/vp")
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from transformers import AutoTokenizer
 import labeled_workload as L
 

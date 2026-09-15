@@ -496,7 +496,7 @@ def fd_conditional_mlp_full_graph(
     # The `full_dual` variant of this branch, which applied the same
     # body only BELOW a 128-row bound, is deleted with that bound. It was the
     # third occupancy threshold in the design, outside the two admission legs,
-    # and the CSD3 duo A/B measured its removal as parity on gsm8k at both the
+    # and the the HPC cluster duo A/B measured its removal as parity on gsm8k at both the
     # knee and overload. What justified it -- the count-adaptive machinery
     # costing ~+8.5 ms/step at 1-16 rows -- is real but confined to ramp-up and
     # drain, where the knee's p90 occupancy (~178 rows) never sits.

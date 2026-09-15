@@ -47,7 +47,7 @@ evidence, and the CUDA helper build that stage 1 needs.
 
 ### Host-specific or superseded drivers
 
-- `test/vp/csd3_debug_cell.sh`
+- `test/vp/hpc_debug_cell.sh`
 - `test/vp/run_production_calibration.sh`
 - `test/vp/run_qps_development.sh`
 - `test/vp/vast_a100_ladder.sh`
@@ -66,11 +66,11 @@ evidence, and the CUDA helper build that stage 1 needs.
 
 - `test/vp/refactor_ab/README.md`
 - `test/vp/refactor_ab/box_perf_ab.sh`
-- `test/vp/refactor_ab/csd3_ab_arm.sh`
-- `test/vp/refactor_ab/csd3_ab_chain.sh`
-- `test/vp/refactor_ab/csd3_ab_compare.py`
-- `test/vp/refactor_ab/csd3_ab_run.sh`
-- `test/vp/refactor_ab/csd3_preflight.sh`
+- `test/vp/refactor_ab/hpc_ab_arm.sh`
+- `test/vp/refactor_ab/hpc_ab_chain.sh`
+- `test/vp/refactor_ab/hpc_ab_compare.py`
+- `test/vp/refactor_ab/hpc_ab_run.sh`
+- `test/vp/refactor_ab/hpc_preflight.sh`
 - `test/vp/refactor_ab/perf_client.py`
 - `test/vp/refactor_ab/prove_endpoint_owner.py`
 
