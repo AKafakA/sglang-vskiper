@@ -4,7 +4,7 @@
 # No GPU, no serving host, no network. Reads $PACK (the analysis bundle) and this repo's
 # test/vp generators; writes LaTeX fragments to $OUT and images to $OUT/figures.
 #
-#   PACK=~/vskipper-data OUT=generated bash scripts/reproduce_analysis.sh
+#   PACK=~/vskipper-data OUT=generated bash scripts/reproduce_analysis.sh [--rescore]
 #
 # Fails closed: a missing input stops the run rather than leaving a half-regenerated set, which is
 # how a paper ends up with one stale row.
@@ -12,6 +12,8 @@ set -euo pipefail
 
 PACK=${PACK:?set PACK to the unpacked analysis bundle}
 OUT=${OUT:-generated}
+# --rescore: rebuild quality/loaded_all.json from the raw served responses (needs stock lm-eval 0.4.9.1)
+RESCORE=0; for arg in "$@"; do case "$arg" in --rescore) RESCORE=1;; *) echo "unknown argument: $arg" >&2; exit 2;; esac; done
 VP=${VP:-$(cd "$(dirname "$0")/../test/vp" && pwd)}
 KNEES=(--knee gsm8k=11 --knee bbh_cot=25 --knee coqa=27)
 mkdir -p "$OUT/figures"
@@ -76,11 +78,11 @@ python3 "$VP/natural_lane_table.py" "$PACK/natural-lane/summary.json" --lmeval "
   --rows "$OUT/natural_lane_rows.tex" --macros "$OUT/natural_lane_macros.tex"
 # The served configuration scored at each load point (Table 2 block (b) + the appendix grid): the summarized
 # lm-eval scores with per-document vectors, built off the serving path by score_natural_lane_lmeval.py.
-# RESCORE=1 rebuilds that summary from the raw served responses shipped under quality-lane-raw/ (27 cells:
+# `--rescore` rebuilds that summary from the raw served responses shipped under quality-lane-raw/ (27 cells:
 # upstream / hybrid / always-route x GSM8K / BBH-CoT / CoQA x three rates) against the frozen .qual suites
 # in suites/; it needs lm-eval 0.4.9.1 importable (stock, unpatched) and takes a few minutes.
 LOADED=$PACK/quality/loaded_all.json
-if [ "${RESCORE:-0}" = 1 ]; then
+if [ "$RESCORE" = 1 ]; then
   python3 "$VP/score_natural_lane_lmeval.py" --suites "$PACK/suites" --eval-split-only \
     --cells "$PACK"/quality-lane-raw/harvest-*/cell/*.qual_*_rep1.jsonl --out "$OUT/loaded_all.rescored.json"
   LOADED=$OUT/loaded_all.rescored.json
@@ -163,7 +165,7 @@ if [ -d "$PAPER/generated" ]; then
   [ "$diff_n" = 0 ] && echo "REPRODUCED: every regenerated fragment matches $PAPER/generated"
   # Appendix M's promise, checked the other way round: every result literal typed in main.tex must be
   # backed by a generated fragment. Hand-typed literals are listed for verification against their artifact.
-  python3 "$VP/check_paper_numbers.py" "$PAPER/main.tex" "$OUT" || true
+  python3 "$VP/check_paper_numbers.py" "$PAPER/main.tex" "$OUT"
 else
   echo "Compare against the shipped set:  diff -r $OUT <paper>/generated"
 fi

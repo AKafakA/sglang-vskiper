@@ -19,7 +19,9 @@ operating point, and only the held-out rows may be scored.
 
 usage: loaded_quality_table.py scores.json --rows rows.tex --sweep-rows sweep.tex --macros macros.tex
 """
-import argparse, json, math, re, sys
+import argparse, json, math, os, re, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from paired_dod_2x2 import t_crit   # Student t, the same critical values the 2x2 uses
 
 RATES = {"gsm8k": [("r8p25", "0.75"), ("r10p45", "0.95"), ("r13p75", "1.25")],
          "bbh_cot": [("r18p75", "0.75"), ("r23p75", "0.95"), ("r31p25", "1.25")],
@@ -50,13 +52,15 @@ def paired_ci(a, b):
     order. It quantifies DOCUMENT SAMPLING and nothing else -- run-to-run variation is not in it,
     and the caption must say so.
     """
+    if len(a) != len(b):
+        sys.exit(f"FATAL: paired vectors differ in length ({len(a)} vs {len(b)})")
     d = [x - y for x, y in zip(a, b)]
     n = len(d)
     if n < 2:
-        return None
+        sys.exit("FATAL: a paired interval needs at least two documents")
     m = sum(d) / n
     var = sum((x - m) ** 2 for x in d) / (n - 1)
-    return 100.0 * m, 100.0 * 1.96 * math.sqrt(var / n)
+    return 100.0 * m, 100.0 * t_crit(n - 1) * math.sqrt(var / n)
 
 
 def index(scores):
@@ -94,11 +98,12 @@ def main():
     per_row = raw.pop("__per_row__", {})
     idx = index(raw)
     # cell key -> per-document score vector, for the paired intervals below
-    rows_by_key = {}
+    rows_by_key, ids_by_key = {}, {}
     for cell, rec in per_row.items():
         m = CELL.search(cell)
         if m:
             rows_by_key[(m["ds"], m["arm"], m["rate"])] = rec["ok"]
+            ids_by_key[(m["ds"], m["arm"], m["rate"])] = rec.get("ids")
     macros, knee, sweep = [], [], []
 
     for ds in ("gsm8k", "coqa", "bbh_cot"):
@@ -136,7 +141,14 @@ def main():
                               f"{{{h[0] - w[0]:+.2f}}}")
                 hv = rows_by_key.get((ds, "integrated_it4", rate_lbl))
                 wv = rows_by_key.get((ds, other, rate_lbl))
-                if hv and wv and len(hv) == len(wv):
+                if hv and wv:
+                    # The pairing is by document. When the scorer recorded ids, require them equal;
+                    # the length check alone cannot tell two orderings apart.
+                    hi, wi = ids_by_key.get((ds, "integrated_it4", rate_lbl)), ids_by_key.get((ds, other, rate_lbl))
+                    if hi is not None and wi is not None and hi != wi:
+                        sys.exit(f"FATAL {ds} {rate_lbl}: document ids differ between integrated_it4 and {other}")
+                    if len(hv) != len(wv):
+                        sys.exit(f"FATAL {ds} {rate_lbl}: {len(hv)} vs {len(wv)} scored documents for integrated_it4 vs {other}")
                     d, ci = paired_ci(hv, wv)
                     macros.append(f"\\newcommand{{\\{a.macro_prefix}{MW[ds]}{RW[rate_x]}{tag}Ci}}"
                                   f"{{{ci:.2f}}}")

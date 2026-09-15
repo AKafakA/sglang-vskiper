@@ -1,8 +1,21 @@
 import json
-import os, sys
-D = os.environ.get("EQ_DEV", "/dev/shm/ab/out-dev/vskipper/probe/labels.jsonl")   # the dev tree\'s probe output
-R = os.environ.get("EQ_REF", "/dev/shm/ab/out-ref/vskipper/probe/labels.jsonl")   # the ref tree\'s probe output
+if len(sys.argv) != 3: sys.exit(f"usage: {sys.argv[0]} <dev probe path> <ref probe path>   (each: .../probe or .../probe/labels.jsonl)")
+D = sys.argv[1]   # the dev tree's probe output
+R = sys.argv[2]   # the ref tree's probe output
 dl=[json.loads(l) for l in open(D)]; rl=[json.loads(l) for l in open(R)]
+
+def _same_requests(a, b, key=("request_id", "suite_pos")):
+    """Refuse a comparison whose two sides are not the same requests in the same order: zip() would
+    silently truncate to the shorter side and report equality on a prefix."""
+    if len(a) != len(b):
+        sys.exit(f"REFUSED: {len(a)} vs {len(b)} rows -- not the same request set")
+    for i, (x, y) in enumerate(zip(a, b)):
+        for k in key:
+            if k in x or k in y:
+                if x.get(k) != y.get(k):
+                    sys.exit(f"REFUSED: row {i} is {x.get(k)!r} on one side and {y.get(k)!r} on the other")
+_same_requests(dl, rl)
+
 SEMANTIC=("text","completion_tokens","finish_reason","finish_empty","prompt_tokens","request_id","suite_pos")
 bad={}
 for k in SEMANTIC:

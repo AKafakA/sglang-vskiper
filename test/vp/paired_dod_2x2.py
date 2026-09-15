@@ -59,8 +59,11 @@ def load_arm(root: str, dataset: str) -> dict[tuple[str, int], float]:
             with open(f) as fh:
                 for line in fh:
                     r = json.loads(line)
-                    fr = r.get("filtered_resps") or []
-                    val = fr[0] if isinstance(fr, list) and fr else fr
+                    fr = r.get("filtered_resps")
+                    # fail closed: a row without an extraction is malformed, never "parsed"
+                    if fr is None or (isinstance(fr, list) and not fr):
+                        sys.exit(f"FATAL {f}: doc {r.get('doc_id')} filter {r.get('filter')!r} has no filtered_resps")
+                    val = fr[0] if isinstance(fr, list) else fr
                     rows.setdefault((task, int(r["doc_id"])), {})[r.get("filter", "none")] = {
                         "ok": float(r[metric]), "val": str(val).strip()}
         for key, per in rows.items():
@@ -134,15 +137,17 @@ def main() -> int:
                         "bbh_cot": "\\texttt{exact\\_match,get-answer}"}[args.dataset]
         m = rep["means"]
         if args.margin is not None:
-            # A point estimate inside the margin whose interval is not is UNRESOLVED, not a failure:
-            # "FAIL" asserts the served arm is worse by more than the margin, which a wide n=1 interval
-            # does not establish. Only a point estimate beyond the margin is a failure.
+            # The standard three-outcome reading of a non-inferiority interval: PASS when the whole
+            # interval lies above -margin; FAIL only when the whole interval lies below it (inferiority
+            # shown); otherwise UNRESOLVED -- the interval crosses the margin and neither is shown.
+            # A point estimate alone never decides (external review, 2026-09-15).
+            upper = rep["dod"]["mean_pp"] + rep["dod"]["ci95_half_pp"]
             if rep["dod_lower_pp"] > -args.margin:
                 gate = "pass" + (" (served above ref.)" if rep["dod_lower_pp"] > 0 else "")
-            elif rep["D_minus_C"]["mean_pp"] - rep["B_minus_A"]["mean_pp"] > -args.margin:
-                gate = f"unresolved ($n={rep.get('n_reps', 1)}$)"
-            else:
+            elif upper < -args.margin:
                 gate = "FAIL"
+            else:
+                gate = f"unresolved ($n={rep.get('n_reps', 1)}$)"
         else:
             gate = "no resolved diff." if rep["verdict"].startswith("no resolved") else ("served above ref." if z["mean_pp"] > 0 else "served below ref.")
         row = (f"{disp} & {metric_label} & {m['A']:.2f} & {m['B']:.2f} & {m['C']:.2f} & {m['D']:.2f} & "

@@ -1,7 +1,7 @@
 import json, hashlib, os, sys
-import os, sys
-D = os.environ.get("EQ_DEV", "/dev/shm/ab/out-dev/vskipper/probe")   # the dev tree\'s probe output
-R = os.environ.get("EQ_REF", "/dev/shm/ab/out-ref/vskipper/probe")   # the ref tree\'s probe output
+if len(sys.argv) != 3: sys.exit(f"usage: {sys.argv[0]} <dev probe path> <ref probe path>   (each: .../probe or .../probe/labels.jsonl)")
+D = sys.argv[1]   # the dev tree's probe output
+R = sys.argv[2]   # the ref tree's probe output
 
 def sha(p):
     if not os.path.exists(p):
@@ -20,6 +20,11 @@ try:
     rl = [json.loads(l) for l in open(R + "/labels.jsonl")]
     print("  rows dev=%d ref=%d" % (len(dl), len(rl)))
     print("  fields: %s" % sorted(dl[0].keys()))
+    if len(dl) != len(rl):
+        sys.exit("REFUSED: the two sides are not the same number of requests -- zip() would compare a prefix")
+    ids_d = [(x.get("request_id"), x.get("suite_pos")) for x in dl]; ids_r = [(x.get("request_id"), x.get("suite_pos")) for x in rl]
+    if ids_d != ids_r:
+        sys.exit("REFUSED: request ids / positions differ between the two sides -- not the same requests in the same order")
     diff = [i for i, (a, b) in enumerate(zip(dl, rl)) if a != b]
     if diff:
         print("  rows differing: %d -> %s" % (len(diff), diff[:5]))
@@ -50,6 +55,9 @@ b = flat(json.load(open(R + "/server_info.json")))
 SKIP = ("digest_sum_u64", "uptime", "pid", "port", "start_time", "timestamp",
         "elapsed", "_ms", "host", "path", "dir", "version_hash", "_id", "seed_time")
 inter = [k for k in a if k in b and not any(t in k for t in SKIP)]
+only = sorted(k for k in set(a) ^ set(b) if not any(t in k for t in SKIP))   # a key on one side only IS a difference
+if only:
+    print("  keys present on ONE side only (%d): %s" % (len(only), only[:8]))
 tags = ("digest", "route", "skip", "cohort", "project", "run_rows", "engagement", "coverage", "compact")
 routeish = [k for k in inter if any(t in k.lower() for t in tags)]
 dd = [k for k in routeish if a[k] != b[k]]

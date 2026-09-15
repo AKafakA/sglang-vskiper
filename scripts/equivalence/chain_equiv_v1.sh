@@ -69,4 +69,9 @@ for arm, r in sorted(d["arms"].items()):
     for path in r["differing"][:12]:
         print(f"        {path}")
 PY
+# The chain's exit status is the gate's: a missing report or a differing arm is a failure, not a DONE.
+[ -s "$OUT/tree_equivalence.json" ] || { LOG "EQUIV-CHAIN-FAILED: no report"; exit 1; }
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if all(r["identical"] for r in d["arms"].values()) else 1)' "$OUT/tree_equivalence.json" \
+  || { LOG "EQUIV-CHAIN-FAILED: an arm differs (rc=$rc)"; exit 1; }
+[ "$rc" = 0 ] || { LOG "EQUIV-CHAIN-FAILED: gate rc=$rc"; exit 1; }
 LOG EQUIV-CHAIN-DONE

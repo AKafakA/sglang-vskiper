@@ -77,7 +77,7 @@ PYTHONPATH=$TREE/test/vp $LMEVAL "$TREE/test/vp/run_lmeval_quality.py" \
   --workload "$WL" --arm "$ARM" --suite-dir "$SUITES" --suite-name "$SUITE" \
   --output-dir "$OUT/lmeval" --base-url "http://127.0.0.1:$PORT" \
   --tokenizer "$MODEL" --num-concurrent 16 --lmeval-python "$LMEVAL" \
-  >> "$OUT/gate.log" 2>&1 || LOG "client A returned $?"
+  >> "$OUT/gate.log" 2>&1 || { LOG "client A FAILED rc=$?"; exit 1; }
 
 # --- client B: the sglang bench at negligible offered rate ----------------------
 LOG "client B -- sglang bench at rate 0.5 (unloaded)"
@@ -86,13 +86,14 @@ PYTHONPATH=$TREE/test/vp $SERVE "$TREE/test/vp/run_qps_evaluation.py" \
   --metadata "$SUITES/$SUITE.metadata.jsonl" \
   --base-url "http://127.0.0.1:$PORT" --request-rate 0.5 \
   --output-dir "$OUT/bench" \
-  >> "$OUT/gate.log" 2>&1 || LOG "client B returned $?"
+  >> "$OUT/gate.log" 2>&1 || { LOG "client B FAILED rc=$?"; exit 1; }
 
 # --- score client B with lm-eval's own filters, eval-split rows ONLY ------------
 LOG "scoring client B with lm-eval filters (source_split rows only, D-797)"
 PYTHONPATH=$TREE/test/vp $LMEVAL "$TREE/test/vp/score_natural_lane_lmeval.py" \
-  --suites "$SUITES" --cells "$OUT/bench"/*.jsonl --out "$OUT/bench_scores.json" \
-  >> "$OUT/gate.log" 2>&1 || LOG "scorer returned $?"
+  --suites "$SUITES" --eval-split-only --cells "$OUT/bench"/*.jsonl --out "$OUT/bench_scores.json" \
+  >> "$OUT/gate.log" 2>&1 || { LOG "scorer FAILED rc=$?"; exit 1; }
+[ -s "$OUT/bench_scores.json" ] || { LOG "no bench scores written"; exit 1; }
 
 LOG "=== GATE INPUTS COLLECTED -- compare $OUT/lmeval vs $OUT/bench_scores.json ==="
 LOG "bar: the bench must reproduce lm-eval's score for this arm on the same documents"

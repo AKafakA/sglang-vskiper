@@ -45,11 +45,14 @@ def main():
     generated = ""
     for f in sorted(glob.glob(os.path.join(gen_dir, "*.tex"))):
         generated += open(f).read()
+    # the set of whole numeric tokens the fragments carry (a literal 2.34 is NOT backed by 12.34)
+    gen_tokens = set(re.findall(r"(?<![\d.])[-+]?\d+(?:[.,]\d+)*(?![\d.])", generated))
+    gen_unsigned = {t.lstrip("+-") for t in gen_tokens}
 
     hand, ok = [], 0
     for ln, v, ctx in literals(tex):
-        # a literal is backed if it appears in any generated fragment, with or without a sign
-        if v in generated or v.lstrip("+-") in generated:
+        # a literal is backed if a fragment carries the same whole token, with or without a sign
+        if v in gen_tokens or v.lstrip("+-") in gen_unsigned:
             ok += 1
         else:
             hand.append((ln, v, ctx))
@@ -68,4 +71,4 @@ def main():
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

@@ -70,8 +70,15 @@ for cell in [c for pat in a.cells for c in sorted(glob.glob(pat))]:
         # filtering makes the suite indices sparse, so subset the responses to the scored rows
         # and renumber densely. The position->request_id correspondence is VERIFIED, not assumed:
         # a mismatch would silently score one document's answer against another's gold.
+        if len(texts) < max(gold) + 1 or len(ids) != len(texts):
+            raise SystemExit(f"FATAL {cell}: {len(texts)} responses / {len(ids)} ids for a suite whose "
+                             f"last scored index is {max(gold)}; refusing to score a truncated cell")
         keep = [i for i in range(len(texts)) if i in gold]
-        bad = [i for i in keep if rid_by_index.get(i) not in (None, ids[i])]
+        missing = [i for i in keep if rid_by_index.get(i) is None]
+        if missing:
+            raise SystemExit(f"FATAL {cell}: the suite metadata carries no request id at {len(missing)} scored "
+                             f"positions (first={missing[0]}); identity cannot be verified, refusing")
+        bad = [i for i in keep if rid_by_index[i] != ids[i]]
         if bad:
             raise SystemExit(
                 f"FATAL {cell}: cell request_ids do not match the suite at {len(bad)} scored "
@@ -148,7 +155,7 @@ for cell in [c for pat in a.cells for c in sorted(glob.glob(pat))]:
                 r = gsm.process_results(docs[i], [src_f[i][0] if isinstance(src_f[i], list) else src_f[i]])
                 per.append(float(r["exact_match"]))
             results.setdefault("__per_row__", {})[cell] = {"metric": "exact_match,marker-composite",
-                                                          "ok": per}
+                                                          "ok": per, "ids": list(ids)}
     elif ds == "bbh_cot":
         fr = filtered.get("get-answer")
         if fr:
@@ -156,13 +163,13 @@ for cell in [c for pat in a.cells for c in sorted(glob.glob(pat))]:
                         [fr[i][0] if isinstance(fr[i], list) else fr[i]])["exact_match"])
                    for i in range(n)]
             results.setdefault("__per_row__", {})[cell] = {"metric": "exact_match,get-answer",
-                                                          "ok": per}
+                                                          "ok": per, "ids": list(ids)}
     elif ds == "coqa":
         per = []
         for i in range(n):
             g = gold[i][1]; g = g if isinstance(g, list) else [g]
             per.append(float(coqa_utils.compute_scores(g, texts[i])["f1"]))
-        results.setdefault("__per_row__", {})[cell] = {"metric": "f1", "ok": per}
+        results.setdefault("__per_row__", {})[cell] = {"metric": "f1", "ok": per, "ids": list(ids)}
     results[cell] = {"suite": suite, "n": n, "scores": scores}
     print(cell.split("/campaign/")[-1], n, {k: round(v, 4) for k, v in scores.items()}, flush=True)
 json.dump(results, open(a.out, "w"), indent=1)
