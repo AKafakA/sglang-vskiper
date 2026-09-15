@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Semantic reference for the binary-cohort kernel (D-302, ladder rung 1).
+"""Semantic reference for the binary-cohort kernel (ladder rung 1).
 
 The contract the triton kernel must match (within fp tolerance):
 given hidden [N, H] and a boolean RUN mask, RUN rows go through the

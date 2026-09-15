@@ -233,7 +233,7 @@ def _production_lengths(
                 )
             if not isinstance(finish_reason, str) or not finish_reason:
                 raise ValueError(f"{artifact} has no finish reason for {request_id}")
-            # [Audit D-624 #7] Any non-empty string passed, so a generation that ABORTED or
+            # [Audit] Any non-empty string passed, so a generation that ABORTED or
             # ERRORED was harvested as if it were a natural length -- and every other arm is
             # then pinned to that truncated budget, making the whole cell's equal-work
             # reference wrong while G2 still passes. This is the sibling of the finish-reason
@@ -242,7 +242,7 @@ def _production_lengths(
                 raise ValueError(
                     f"{artifact}: {request_id} finished with {finish_reason!r}; only 'stop' "
                     "(EOS) and 'length' (budget reached) are real generations. A failed "
-                    "request must never calibrate an equal-work bank (D-624 #7)"
+                    "request must never calibrate an equal-work bank"
                 )
             lengths[request_id].append(raw_len)
             finish_reasons[request_id].append(finish_reason)

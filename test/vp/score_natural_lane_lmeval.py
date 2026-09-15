@@ -15,6 +15,12 @@ from lm_eval.tasks import TaskManager
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--suites", required=True); ap.add_argument("--cells", nargs="+", required=True); ap.add_argument("--out", required=True)
+# Quality-lane suites carry TRAIN-split padding purely to sustain the operating point; only the
+# held-out rows may be scored. Keyed on source_split, NEVER on quality_eligible, which is True on
+# every row of every suite and would silently admit the padding. Opt-in: without it this scorer
+# behaves exactly as before.
+ap.add_argument("--eval-split-only", action="store_true",
+                help="score only rows whose source_split is test/validation")
 a = ap.parse_args()
 tm = TaskManager()
 gsm = tm.load_task_or_group("gsm8k")["gsm8k"]
@@ -30,9 +36,18 @@ def meta_for(cell):
     if not m:
         raise SystemExit(f"no metadata for {cell} (suite {suite})")
     gold = {}
+    rid_by_index = {}
+    skipped = 0
     for line in open(m[0]):
-        r = json.loads(line); gold[r["index"]] = (r["dataset"], r["gold"])
-    return suite, gold
+        r = json.loads(line)
+        if a.eval_split_only and r.get("source_split") not in ("test", "validation"):
+            skipped += 1
+            continue
+        gold[r["index"]] = (r["dataset"], r["gold"])
+        rid_by_index[r["index"]] = r.get("request_id")
+    if a.eval_split_only:
+        print(f"  {suite}: scoring {len(gold)} eval-split rows, skipped {skipped} train-split", flush=True)
+    return suite, gold, rid_by_index
 
 
 def apply_filters(task, resps, docs):
@@ -47,9 +62,24 @@ def apply_filters(task, resps, docs):
 
 results = {}
 for cell in [c for pat in a.cells for c in sorted(glob.glob(pat))]:
-    suite, gold = meta_for(cell)
+    suite, gold, rid_by_index = meta_for(cell)
     rec = json.loads(open(cell).readline())
     ids, texts = rec["request_ids"], rec["generated_texts"]
+    if a.eval_split_only:
+        # eval-split reindex. The scoring loop below pairs response position i with gold[i];
+        # filtering makes the suite indices sparse, so subset the responses to the scored rows
+        # and renumber densely. The position->request_id correspondence is VERIFIED, not assumed:
+        # a mismatch would silently score one document's answer against another's gold.
+        keep = [i for i in range(len(texts)) if i in gold]
+        bad = [i for i in keep if rid_by_index.get(i) not in (None, ids[i])]
+        if bad:
+            raise SystemExit(
+                f"FATAL {cell}: cell request_ids do not match the suite at {len(bad)} scored "
+                f"positions (first={bad[0]}: cell={ids[bad[0]]!r} suite={rid_by_index[bad[0]]!r}). "
+                "Refusing to score one document's answer against another's gold.")
+        texts = [texts[i] for i in keep]
+        ids = [ids[i] for i in keep]
+        gold = {new_i: gold[old_i] for new_i, old_i in enumerate(keep)}
     idx = [int(i.split(":")[-1]) if False else None for i in ids]
     # request ids look like gsm8k:test:684 -> the suite index is the row order; use the suite's own index via position
     n = len(ids); ds = gold[0][0]
