@@ -43,6 +43,14 @@ def main() -> int:
         n += 1
     if not n:
         raise SystemExit(f"no arms matched in {args.json}")
+    # the fixed per-step tax tau the rule scales by routed depth: one value per routed-layer count
+    taus = sorted({(rec["Lr"], round(rec["tau_ms"], 2)) for rec in d["arms"].values()})
+    for lr, tau in taus:
+        lines.append(f"\\newcommand{{\\vpVstarTauMsL{lr}}}{{{tau:.2f}}}".replace(f"L{lr}", "L" + {16: "Sixteen", 18: "Eighteen"}.get(lr, str(lr))))
+    peaks = d.get("device_peaks_A100")
+    if peaks:
+        lines.append(f"\\newcommand{{\\vpVstarPeakTflops}}{{{peaks[0]:.0f}}}")
+        lines.append(f"\\newcommand{{\\vpVstarPeakTbps}}{{{peaks[1] / 1000:.2f}}}")
     open(args.out, "w").write("\n".join(lines) + "\n")
     print(f"  {n} V* macros -> {args.out}")
     return 0

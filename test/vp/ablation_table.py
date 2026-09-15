@@ -80,6 +80,14 @@ def main() -> int:
                     mult = multiple(rate, knees[a.dataset])
                     tag = re.sub(r"[^A-Za-z]", "", name.title()) + FIELD.get(f, re.sub(r"[^A-Za-z]", "", f.title())) + WORD.get(mult, "X")
                     macros.append(f"\\newcommand{{\\{a.macro_prefix}{tag}}}{{{r['mean_pct']:+.1f}}}")
+                    # the same cell as a difference from the headline arm, in points of the
+                    # percent change: what the arm "gives up" (positive) or gains (negative)
+                    h = head.get((a.dataset, suite, f))
+                    if h is not None:
+                        macros.append(f"\\newcommand{{\\{a.macro_prefix}{tag}VsHead}}"
+                                      f"{{{r['mean_pct'] - h['mean_pct']:+.1f}}}")
+                        macros.append(f"\\newcommand{{\\{a.macro_prefix}{tag}VsHeadAbs}}"
+                                      f"{{{abs(r['mean_pct'] - h['mean_pct']):.1f}}}")
         lines.append(" & ".join(cells) + r" \\")
     a.rows.write_text("\n".join(lines) + "\n")
     if a.macros:
