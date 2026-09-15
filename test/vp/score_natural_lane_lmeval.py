@@ -134,6 +134,35 @@ for cell in [c for pat in a.cells for c in sorted(glob.glob(pat))]:
             g = gold[i][1]; g = g if isinstance(g, list) else [g]
             s = coqa_utils.compute_scores(g, texts[i]); em += s["em"]; f1 += s["f1"]
         scores["em"] = em / n; scores["f1"] = f1 / n
+    # Per-document score for the headline metric, so a downstream table can compute a PAIRED
+    # interval across arms: every arm scores the same documents in the same order, which is the only
+    # reason a single-repetition cell can carry an interval at all. It quantifies document sampling,
+    # NOT run-to-run variance -- the consumer must say so. Emitted for all three workloads.
+    if ds == "gsm8k" and "exact_match,marker-composite" in scores:
+        sm = filtered.get("strict-match"); fx = filtered.get("flexible-extract")
+        if sm and fx:
+            per = []
+            for i in range(n):
+                v = sm[i][0] if isinstance(sm[i], list) else sm[i]
+                src_f = sm if str(v).strip() not in ("", "[invalid]") else fx
+                r = gsm.process_results(docs[i], [src_f[i][0] if isinstance(src_f[i], list) else src_f[i]])
+                per.append(float(r["exact_match"]))
+            results.setdefault("__per_row__", {})[cell] = {"metric": "exact_match,marker-composite",
+                                                          "ok": per}
+    elif ds == "bbh_cot":
+        fr = filtered.get("get-answer")
+        if fr:
+            per = [float(bbh.process_results(docs[i],
+                        [fr[i][0] if isinstance(fr[i], list) else fr[i]])["exact_match"])
+                   for i in range(n)]
+            results.setdefault("__per_row__", {})[cell] = {"metric": "exact_match,get-answer",
+                                                          "ok": per}
+    elif ds == "coqa":
+        per = []
+        for i in range(n):
+            g = gold[i][1]; g = g if isinstance(g, list) else [g]
+            per.append(float(coqa_utils.compute_scores(g, texts[i])["f1"]))
+        results.setdefault("__per_row__", {})[cell] = {"metric": "f1", "ok": per}
     results[cell] = {"suite": suite, "n": n, "scores": scores}
     print(cell.split("/campaign/")[-1], n, {k: round(v, 4) for k, v in scores.items()}, flush=True)
 json.dump(results, open(a.out, "w"), indent=1)

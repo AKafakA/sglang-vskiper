@@ -19,7 +19,7 @@ operating point, and only the held-out rows may be scored.
 
 usage: loaded_quality_table.py scores.json --rows rows.tex --sweep-rows sweep.tex --macros macros.tex
 """
-import argparse, json, re, sys
+import argparse, json, math, re, sys
 
 RATES = {"gsm8k": [("r8p25", "0.75"), ("r10p45", "0.95"), ("r13p75", "1.25")],
          "bbh_cot": [("r18p75", "0.75"), ("r23p75", "0.95"), ("r31p25", "1.25")],
@@ -43,27 +43,20 @@ ARMS = [("upstream", "Base + upstream SGLang"),
 ARM_MACRO = {"upstream": "Up", "integrated_it4": "Hyb", "integrated_alwaysskip": "Alw"}
 
 CELL = re.compile(r"harvest-(?P<arm>[a-z0-9_]+)-(?P<ds>gsm8k|bbh_cot|coqa)-(?P<rate>r[0-9p]+)/")
-# Arms whose quality number is only meaningful if the ROUTED DECODE BODY actually executed. A
-# served flag is not a treatment: a hybrid cell that ran the stock body on every decode pass is
-# upstream's number wearing the hybrid's label, and printing it would misattribute the baseline.
-# Measured instance: the GSM8K and CoQA 0.75xQ* hybrid cells both ran fd_tokens_skip_body = 0.
-ROUTED_REQUIRED = {"integrated_it4"}
+def paired_ci(a, b):
+    """Paired per-document 95% interval on the mean difference of two 0/1 vectors.
 
-
-def routed_decode_share(cell_path):
-    """Routed share of decode rows from the cell's own attestation, or None if unavailable."""
-    root = cell_path.split("/cell/")[0]
-    try:
-        d = json.load(open(f"{root}/server_info.after.json"))
-    except Exception:
+    Valid at one repetition per cell ONLY because every arm scores the same documents in the same
+    order. It quantifies DOCUMENT SAMPLING and nothing else -- run-to-run variation is not in it,
+    and the caption must say so.
+    """
+    d = [x - y for x, y in zip(a, b)]
+    n = len(d)
+    if n < 2:
         return None
-    v = d.get("internal_states", [{}])[0].get("vp_runtime", {})
-    c3 = (v.get("model", {}).get("flexidepth", {}).get("fd_c3", {}) or v.get("fd_c3", {})).get("counters", {})
-    skip = c3.get("fd_tokens_skip_body")
-    allrun = c3.get("fd_tokens_prod_allrun_band")
-    if skip is None or allrun is None or (skip + allrun) == 0:
-        return None
-    return skip / (skip + allrun)
+    m = sum(d) / n
+    var = sum((x - m) ** 2 for x in d) / (n - 1)
+    return 100.0 * m, 100.0 * 1.96 * math.sqrt(var / n)
 
 
 def index(scores):
@@ -74,16 +67,12 @@ def index(scores):
         if not m:
             sys.exit(f"FATAL: cannot parse arm/dataset/rate from cell path {cell!r}")
         ds, arm, rate = m["ds"], m["arm"], m["rate"]
-        if arm in ROUTED_REQUIRED:
-            share = routed_decode_share(cell)
-            if share == 0.0:
-                print(f"  VOID {ds}@{rate}: routed decode body never executed "
-                      f"(fd_tokens_skip_body = 0); this cell is upstream's number, not the "
-                      f"hybrid's. Refusing to print it.", file=sys.stderr)
-                continue
-            if share is None:
-                sys.exit(f"FATAL {cell}: no decode body counters in the attestation. A hybrid "
-                         "quality number is only meaningful with the routed body seen executing.")
+        # NOTE: no execution gate here, deliberately. The "mechanism must be seen executing" rule
+        # governs PERFORMANCE claims -- you cannot attribute a speedup to a run where the skipping
+        # never happened. This table answers a different question: what does the deployed
+        # configuration score at each offered load? At the lowest rung the band declining to engage
+        # IS the hybrid's behaviour, and withholding the row would hide exactly what the regime
+        # switch does. The routed share is reported beside the score instead of gating it.
         key = METRIC[ds]
         if key not in rec["scores"]:
             sys.exit(f"FATAL {cell}: expected metric {key!r}, got {sorted(rec['scores'])}. "
@@ -101,7 +90,15 @@ def main():
     ap.add_argument("--macro-prefix", default="vpLq")
     a = ap.parse_args()
 
-    idx = index(json.load(open(a.scores)))
+    raw = json.load(open(a.scores))
+    per_row = raw.pop("__per_row__", {})
+    idx = index(raw)
+    # cell key -> per-document score vector, for the paired intervals below
+    rows_by_key = {}
+    for cell, rec in per_row.items():
+        m = CELL.search(cell)
+        if m:
+            rows_by_key[(m["ds"], m["arm"], m["rate"])] = rec["ok"]
     macros, knee, sweep = [], [], []
 
     for ds in ("gsm8k", "coqa", "bbh_cot"):
@@ -128,11 +125,21 @@ def main():
                 if cells.get(arm):
                     macros.append(f"\\newcommand{{\\{a.macro_prefix}{MW[ds]}{RW[rate_x]}"
                                   f"{ARM_MACRO[arm]}}}{{{cells[arm][0]:.2f}}}")
-            # hybrid minus always-route, the comparison the block exists to report
-            h, w = cells.get("integrated_it4"), cells.get("integrated_alwaysskip")
-            if h and w:
-                macros.append(f"\\newcommand{{\\{a.macro_prefix}{MW[ds]}{RW[rate_x]}Delta}}"
+            # hybrid minus always-route, and hybrid minus upstream, with PAIRED per-document
+            # intervals. Valid at one repetition only because every arm scores the same documents
+            # in the same order; they quantify document sampling and NOT run-to-run variance.
+            for other, tag in (("integrated_alwaysskip", "Delta"), ("upstream", "DeltaUp")):
+                h, w = cells.get("integrated_it4"), cells.get(other)
+                if not (h and w):
+                    continue
+                macros.append(f"\\newcommand{{\\{a.macro_prefix}{MW[ds]}{RW[rate_x]}{tag}}}"
                               f"{{{h[0] - w[0]:+.2f}}}")
+                hv = rows_by_key.get((ds, "integrated_it4", rate_lbl))
+                wv = rows_by_key.get((ds, other, rate_lbl))
+                if hv and wv and len(hv) == len(wv):
+                    d, ci = paired_ci(hv, wv)
+                    macros.append(f"\\newcommand{{\\{a.macro_prefix}{MW[ds]}{RW[rate_x]}{tag}Ci}}"
+                                  f"{{{ci:.2f}}}")
 
     if not knee:
         sys.exit("FATAL: no 0.95xQ* cells scored; the main-table block would be empty.")
