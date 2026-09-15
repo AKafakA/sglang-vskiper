@@ -53,6 +53,8 @@ def main() -> int:
     ap.add_argument("--dataset", default="gsm8k")
     ap.add_argument("--knee", action="append", default=[], help="dataset=Q*")
     ap.add_argument("--metrics", default="mean_e2e_latency_ms,duration")
+    ap.add_argument("--macro-only-metrics", default="mean_tpot_ms,mean_ttft_ms",
+                    help="fields emitted as macros but not as table columns (the prose cites an arm's TPOT/TTFT)")
     ap.add_argument("--rows", type=Path, required=True)
     ap.add_argument("--macros", type=Path)
     ap.add_argument("--macro-prefix", default="vpAbl", help="macro name prefix (letters only), e.g. vpAblBbh for a second dataset")
@@ -88,6 +90,13 @@ def main() -> int:
                                       f"{{{r['mean_pct'] - h['mean_pct']:+.1f}}}")
                         macros.append(f"\\newcommand{{\\{a.macro_prefix}{tag}VsHeadAbs}}"
                                       f"{{{abs(r['mean_pct'] - h['mean_pct']):.1f}}}")
+        for name, rep in arms:
+            for f in [x for x in a.macro_only_metrics.split(",") if x]:
+                r = rep.get((a.dataset, suite, f))
+                if r is not None and a.macros:
+                    mult = multiple(rate, knees[a.dataset])
+                    tag = re.sub(r"[^A-Za-z]", "", name.title()) + FIELD.get(f, re.sub(r"[^A-Za-z]", "", f.title())) + WORD.get(mult, "X")
+                    macros.append(f"\\newcommand{{\\{a.macro_prefix}{tag}}}{{{r['mean_pct']:+.1f}}}")
         lines.append(" & ".join(cells) + r" \\")
     a.rows.write_text("\n".join(lines) + "\n")
     if a.macros:

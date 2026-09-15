@@ -28,7 +28,7 @@ from paired_dod_2x2 import t_crit   # Student t, the same critical values the 2x
 RATES = {"gsm8k": [("r8p25", "0.75"), ("r10p45", "0.95"), ("r13p75", "1.25")],
          "bbh_cot": [("r18p75", "0.75"), ("r23p75", "0.95"), ("r31p25", "1.25")],
          "coqa": [("r20p25", "0.75"), ("r25p65", "0.95"), ("r33p75", "1.25")]}
-NAMES = {"gsm8k": "GSM8K", "bbh_cot": "BBH-CoT", "coqa": "CoQA"}
+NAMES = {"gsm8k": "GSM8K", "bbh_cot": "BBH", "coqa": "CoQA"}   # one name per workload across every table; BBH is its CoT split, said once in the paper
 MW = {"gsm8k": "Gsm", "bbh_cot": "Bbh", "coqa": "Coqa"}
 RW = {"0.75": "Low", "0.95": "Mid", "1.25": "High"}
 # the held-out document count per dataset: what n must be once the train-split padding is excluded

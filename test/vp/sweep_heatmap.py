@@ -74,7 +74,9 @@ def main():
             cb.ax.axhline(served[met], color="#1f5fbf", lw=2)
             cb.ax.text(1.3, served[met], f"vSkipper\n{served[met]:+.1f}%", color="#1f5fbf", fontsize=7, va="center",
                        transform=cb.ax.get_yaxis_transform(), bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#1f5fbf", lw=0.6))
-        tag = met.replace("E2E ", "EtoE").replace("mean", "Mean").replace("p95", "Pninetyfive")
+        tag = (met.replace("E2E ", "EtoE").replace("TTFT ", "Ttft").replace("TPOT ", "Tpot")
+               .replace("mean", "Mean").replace("p95", "Pninetyfive"))
+        if not tag.isalpha(): sys.exit(f"FATAL: metric {met!r} has no macro-safe name")
         for (rt, dp), vals in grid.items():
             v = vals[met][0]
             if v is not None: macros.append(f"\\newcommand{{\\{a.macro_prefix}{tag}R{word(rt)}D{word(dp)}}}{{{v:+.1f}}}")
