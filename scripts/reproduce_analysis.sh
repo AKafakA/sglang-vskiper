@@ -76,7 +76,16 @@ python3 "$VP/natural_lane_table.py" "$PACK/natural-lane/summary.json" --lmeval "
   --rows "$OUT/natural_lane_rows.tex" --macros "$OUT/natural_lane_macros.tex"
 # The served configuration scored at each load point (Table 2 block (b) + the appendix grid): the summarized
 # lm-eval scores with per-document vectors, built off the serving path by score_natural_lane_lmeval.py.
-python3 "$VP/loaded_quality_table.py" "$PACK/quality/loaded_all.json" \
+# RESCORE=1 rebuilds that summary from the raw served responses shipped under quality-lane-raw/ (27 cells:
+# upstream / hybrid / always-route x GSM8K / BBH-CoT / CoQA x three rates) against the frozen .qual suites
+# in suites/; it needs lm-eval 0.4.9.1 importable (stock, unpatched) and takes a few minutes.
+LOADED=$PACK/quality/loaded_all.json
+if [ "${RESCORE:-0}" = 1 ]; then
+  python3 "$VP/score_natural_lane_lmeval.py" --suites "$PACK/suites" --eval-split-only \
+    --cells "$PACK"/quality-lane-raw/harvest-*/cell/*.qual_*_rep1.jsonl --out "$OUT/loaded_all.rescored.json"
+  LOADED=$OUT/loaded_all.rescored.json
+fi
+python3 "$VP/loaded_quality_table.py" "$LOADED" \
   --rows "$OUT/loaded_quality_rows.tex" --sweep-rows "$OUT/loaded_quality_sweep.tex" \
   --macros "$OUT/loaded_quality_macros.tex"
 LAD=$PACK/ladders/upstream
@@ -154,7 +163,7 @@ if [ -d "$PAPER/generated" ]; then
   [ "$diff_n" = 0 ] && echo "REPRODUCED: every regenerated fragment matches $PAPER/generated"
   # Appendix M's promise, checked the other way round: every result literal typed in main.tex must be
   # backed by a generated fragment. Hand-typed literals are listed for verification against their artifact.
-  python3 "$VP/check_paper_numbers.py" "$PAPER/main.tex" "$OUT" | head -3
+  python3 "$VP/check_paper_numbers.py" "$PAPER/main.tex" "$OUT" || true
 else
   echo "Compare against the shipped set:  diff -r $OUT <paper>/generated"
 fi
