@@ -131,4 +131,22 @@ done
 
 echo
 echo "Done. $(ls "$OUT"/*.tex | wc -l) LaTeX fragments in $OUT."
-echo "Compare against the shipped set:  diff -r $OUT versions/1.5.7/generated"
+# The committed generated/ is what the PDF is typeset from, so it cannot drift from the paper.
+# A frozen versions/<x.y>/ snapshot can, and did: it went stale the moment a number was corrected.
+PAPER=${PAPER:-../paper/vskipper}
+if [ -d "$PAPER/generated" ]; then
+  echo
+  # Compare the LaTeX fragments only. bank_policy.tex is one line from a shell variable; the
+  # figures are images; the .json files are inputs and superseded analyses, not artifacts.
+  same=0; diff_n=0; missing=0
+  for f in "$OUT"/*.tex; do
+    b=$(basename "$f"); [ "$b" = bank_policy.tex ] && continue
+    if [ ! -f "$PAPER/generated/$b" ]; then echo "  NOT IN PAPER: $b"; missing=$((missing+1))
+    elif cmp -s "$f" "$PAPER/generated/$b"; then same=$((same+1))
+    else echo "  DIFFERS: $b"; diff_n=$((diff_n+1)); fi
+  done
+  echo "  byte-identical $same | differing $diff_n | not in paper $missing"
+  [ "$diff_n" = 0 ] && echo "REPRODUCED: every regenerated fragment matches $PAPER/generated"
+else
+  echo "Compare against the shipped set:  diff -r $OUT <paper>/generated"
+fi
