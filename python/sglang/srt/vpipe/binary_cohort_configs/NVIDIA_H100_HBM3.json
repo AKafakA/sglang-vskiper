@@ -25,7 +25,7 @@
   ],
   "prev_ms": 0.2399,
   "identical_to_prev": true,
-  "tuner": "tune_count_gemm_v2 (realized counts, BK fixed, torch.equal gate)"
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
  },
  "gateup@512": {
   "cublas_ms": 0.309,
@@ -53,7 +53,7 @@
   ],
   "prev_ms": 0.3897,
   "identical_to_prev": true,
-  "tuner": "tune_count_gemm_v2 (realized counts, BK fixed, torch.equal gate)"
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
  },
  "gateup@1024": {
   "cublas_ms": 0.5587,
@@ -81,7 +81,7 @@
   ],
   "prev_ms": 0.681,
   "identical_to_prev": true,
-  "tuner": "tune_count_gemm_v2 (realized counts, BK fixed, torch.equal gate)"
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
  },
  "gateup@2048": {
   "cublas_ms": 2.3071,
@@ -133,7 +133,7 @@
   ],
   "prev_ms": 0.2273,
   "identical_to_prev": true,
-  "tuner": "tune_count_gemm_v2 (realized counts, BK fixed, torch.equal gate)"
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
  },
  "down@512": {
   "cublas_ms": 0.1691,
@@ -161,7 +161,7 @@
   ],
   "prev_ms": 0.4317,
   "identical_to_prev": true,
-  "tuner": "tune_count_gemm_v2 (realized counts, BK fixed, torch.equal gate)"
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
  },
  "down@1024": {
   "cublas_ms": 0.3209,
@@ -189,7 +189,7 @@
   ],
   "prev_ms": 0.4994,
   "identical_to_prev": true,
-  "tuner": "tune_count_gemm_v2 (realized counts, BK fixed, torch.equal gate)"
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
  },
  "down@2048": {
   "cublas_ms": 1.06,
@@ -361,7 +361,7 @@
   ],
   "prev_ms": 0.0555,
   "identical_to_prev": true,
-  "tuner": "tune_count_gemm_v2 (realized counts, BK fixed, torch.equal gate)"
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
  },
  "projgd@512": {
   "cublas_ms": 0.0374,
@@ -389,7 +389,7 @@
   ],
   "prev_ms": 0.0908,
   "identical_to_prev": true,
-  "tuner": "tune_count_gemm_v2 (realized counts, BK fixed, torch.equal gate)"
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
  },
  "projgd@1024": {
   "cublas_ms": 0.0633,
@@ -417,7 +417,7 @@
   ],
   "prev_ms": 0.1191,
   "identical_to_prev": true,
-  "tuner": "tune_count_gemm_v2 (realized counts, BK fixed, torch.equal gate)"
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
  },
  "projgd@2048": {
   "cublas_ms": 0.1,
@@ -443,7 +443,7 @@
   ],
   "prev_ms": 0.1544,
   "identical_to_prev": true,
-  "tuner": "tune_count_gemm_v2 (realized counts, BK fixed, torch.equal gate)"
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
  },
  "projgd@4096": {
   "cublas_ms": 0.1531,
@@ -469,7 +469,7 @@
   ],
   "prev_ms": 0.2491,
   "identical_to_prev": true,
-  "tuner": "tune_count_gemm_v2 (realized counts, BK fixed, torch.equal gate)"
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
  },
  "projgd@4608": {
   "cublas_ms": 0.176,
@@ -495,7 +495,7 @@
   ],
   "prev_ms": 0.2629,
   "identical_to_prev": true,
-  "tuner": "tune_count_gemm_v2 (realized counts, BK fixed, torch.equal gate)"
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
  },
  "projgd@5120": {
   "cublas_ms": 0.1936,
@@ -521,7 +521,7 @@
   ],
   "prev_ms": 0.2883,
   "identical_to_prev": true,
-  "tuner": "tune_count_gemm_v2 (realized counts, BK fixed, torch.equal gate)"
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
  },
  "projgd@6144": {
   "cublas_ms": 0.2383,
@@ -547,7 +547,7 @@
   ],
   "prev_ms": 0.2994,
   "identical_to_prev": true,
-  "tuner": "tune_count_gemm_v2 (realized counts, BK fixed, torch.equal gate)"
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
  },
  "projgd@7168": {
   "cublas_ms": 0.2698,
@@ -573,7 +573,7 @@
   ],
   "prev_ms": 0.3018,
   "identical_to_prev": true,
-  "tuner": "tune_count_gemm_v2 (realized counts, BK fixed, torch.equal gate)"
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
  },
  "projgd@8192": {
   "cublas_ms": 0.2839,
@@ -599,7 +599,7 @@
   ],
   "prev_ms": 0.3928,
   "identical_to_prev": true,
-  "tuner": "tune_count_gemm_v2 (realized counts, BK fixed, torch.equal gate)"
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
  },
  "projup@205": {
   "cublas_ms": 0.0194,
@@ -627,7 +627,7 @@
   ],
   "prev_ms": 0.023,
   "identical_to_prev": true,
-  "tuner": "tune_count_gemm_v2 (realized counts, BK fixed, torch.equal gate)"
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
  },
  "projup@512": {
   "cublas_ms": 0.0307,
@@ -655,7 +655,7 @@
   ],
   "prev_ms": 0.0345,
   "identical_to_prev": true,
-  "tuner": "tune_count_gemm_v2 (realized counts, BK fixed, torch.equal gate)"
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
  },
  "projup@1024": {
   "cublas_ms": 0.0325,
@@ -683,7 +683,7 @@
   ],
   "prev_ms": 0.0406,
   "identical_to_prev": true,
-  "tuner": "tune_count_gemm_v2 (realized counts, BK fixed, torch.equal gate)"
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
  },
  "projup@2048": {
   "cublas_ms": 0.0537,
@@ -709,7 +709,7 @@
   ],
   "prev_ms": 0.0639,
   "identical_to_prev": true,
-  "tuner": "tune_count_gemm_v2 (realized counts, BK fixed, torch.equal gate)"
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
  },
  "projup@4096": {
   "cublas_ms": 0.0855,
@@ -735,7 +735,7 @@
   ],
   "prev_ms": 0.1015,
   "identical_to_prev": true,
-  "tuner": "tune_count_gemm_v2 (realized counts, BK fixed, torch.equal gate)"
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
  },
  "projup@4608": {
   "cublas_ms": 0.1002,
@@ -761,7 +761,7 @@
   ],
   "prev_ms": 0.1131,
   "identical_to_prev": true,
-  "tuner": "tune_count_gemm_v2 (realized counts, BK fixed, torch.equal gate)"
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
  },
  "projup@5120": {
   "cublas_ms": 0.1019,
@@ -787,7 +787,7 @@
   ],
   "prev_ms": 0.1145,
   "identical_to_prev": true,
-  "tuner": "tune_count_gemm_v2 (realized counts, BK fixed, torch.equal gate)"
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
  },
  "projup@6144": {
   "cublas_ms": 0.1303,
@@ -813,7 +813,7 @@
   ],
   "prev_ms": 0.1465,
   "identical_to_prev": true,
-  "tuner": "tune_count_gemm_v2 (realized counts, BK fixed, torch.equal gate)"
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
  },
  "projup@7168": {
   "cublas_ms": 0.1457,
@@ -839,7 +839,7 @@
   ],
   "prev_ms": 0.1692,
   "identical_to_prev": true,
-  "tuner": "tune_count_gemm_v2 (realized counts, BK fixed, torch.equal gate)"
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
  },
  "projup@8192": {
   "cublas_ms": 0.1617,
@@ -865,6 +865,6 @@
   ],
   "prev_ms": 0.1827,
   "identical_to_prev": true,
-  "tuner": "tune_count_gemm_v2 (realized counts, BK fixed, torch.equal gate)"
+  "tuner": "tune_count_gemm_v2 (D-419, realized counts, BK fixed, torch.equal gate)"
  }
 }

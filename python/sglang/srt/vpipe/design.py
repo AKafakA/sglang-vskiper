@@ -440,6 +440,16 @@ def host_config(path: str | None = None) -> dict[str, str]:
     if not p.is_file():
         raise ValueError(f"{_HOST_CONFIG_ENV} points at {raw!r}, which is not a file")
     cfg = json.loads(p.read_text())
+    # Committed host configs carry ${VAR} placeholders so no account path is published. Expand
+    # them here, once, before anything resolves a path: an unexpanded ${...} reached Path.exists()
+    # and every config failed even with the variable set.
+    cfg = {k: os.path.expandvars(v) if isinstance(v, str) else v for k, v in cfg.items()}
+    unexpanded = sorted(k for k, v in cfg.items() if isinstance(v, str) and "${" in v)
+    if unexpanded:
+        raise ValueError(
+            f"{raw}: unset environment variable(s) in {unexpanded}; set them (e.g. "
+            "VSKIPPER_DATA_ROOT) or write absolute paths into a local host config"
+        )
     missing = [k for k in _REQUIRED_HOST_KEYS if not str(cfg.get(k, "")).strip()]
     if missing:
         raise ValueError(f"host config {raw} is missing required keys: {missing}")
@@ -464,7 +474,7 @@ def design_attestation() -> dict[str, Any]:
     # (the family's trained range). The attestation reports the ARM's effective value, so the
     # served-design gate compares what this arm declares against what this process serves.
     return {
-        "source": "vpipe/design.py (constants)",
+        "source": "vpipe/design.py (constants, D-609)",
         "regime_switch": SERVED_REGIME_SWITCH,
         "low_row_policy": SERVED_LOW_ROW_POLICY,
         "routed_layers": list(arm_routed_layers()),

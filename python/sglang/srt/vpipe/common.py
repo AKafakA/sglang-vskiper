@@ -1245,7 +1245,7 @@ def resolved_design_attestation() -> dict[str, Any]:
 
     switch = regime_switch_config()
     return {
-        "source": "resolvers, at boot ",
+        "source": "resolvers, at boot (D-611)",
         "arm": active_arm_name(),
         # stock serves no skipper; reporting the fallback adapter name there would be a
         # true-looking field that is false -- the shape of defect this file exists to end

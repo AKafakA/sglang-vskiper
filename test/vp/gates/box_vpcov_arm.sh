@@ -3,9 +3,9 @@
 # Reachability/attestation only -- NEVER a performance number.
 #
 # This is the PROVEN 2026-08-24 v2 driver (box_vpcov_arm_v2.sh) verbatim in
-# logic, repo-resident since dev-h-harness-selfcontained ( Lane H) with
+# logic, repo-resident since dev-h-harness-selfcontained (D-307 Lane H) with
 # path resolution parameterized. v2's shape, kept exactly: TREE is a parameter
-# and sets PYTHONPATH (namespace-package srt override, the proven the HPC cluster A/B
+# and sets PYTHONPATH (namespace-package srt override, the proven CSD3 A/B
 # pattern); the probe client comes from the tree under test; server_info is
 # fetched again AFTER the probe (the attested route counters are post-probe);
 # no coverage tracer. Arm postures are sourced verbatim from gates/arms/ and
@@ -18,7 +18,7 @@
 set -uo pipefail
 ARM="${1:?usage: box_vpcov_arm.sh <arm> [tree-dir] [out-root]}"
 GATES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Harness paths come from the committed host config, like everything else.
+# [D-609] Harness paths come from the committed host config, like everything else.
 # These are plumbing (where to write, which interpreter), not design -- but there is
 # no reason for a second mechanism, and a hardcoded dev-box path is how this script
 # failed on the A100.
@@ -28,7 +28,7 @@ if [ -n "$_HC" ] && [ -f "$_HC" ]; then
   VP_GATE_PYTHON="${VP_GATE_PYTHON:-$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('serve_python',''))" "$_HC")}"
   VP_GATE_MODEL="${VP_GATE_MODEL:-$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('model_path',''))" "$_HC")}"
 fi
-W="${W:-${VP_GATE_WORKDIR:-/local/scratch/tmp/operator}}"
+W="${W:-${VP_GATE_WORKDIR:-/local/scratch/tmp/wd312}}"
 TREE="${2:-$W/tree-a56485bcf8}"
 OUTROOT="${3:-$W/vpcov-out}"
 V="${VP_GATE_PYTHON:-$W/sglang-sm75/.venv/bin/python}"
@@ -37,7 +37,7 @@ MODEL="${VP_GATE_MODEL:-$W/models/Meta-Llama-3-8B-Instruct-53346005}"
 SUITE="${VP_GATE_SUITE:-$W/suites/gsm8k.first100.requests.jsonl}"
 OUT=$OUTROOT/$ARM
 rm -rf "$OUT"; mkdir -p "$OUT"
-# Arms are NAMED, not exported. The arm_env_*.sh scripts are deleted: an
+# [D-609] Arms are NAMED, not exported. The arm_env_*.sh scripts are deleted: an
 # export that fails to reach the server is indistinguishable from one that worked,
 # which is how eighteen hours ran on a rejected design. The arm goes into the
 # durable file the served path reads, and the design comes from the tree.
@@ -55,7 +55,7 @@ d.resolve_arm(arm)                                    # fails closed on an unkno
 print(f"active arm -> {arm}")
 ARMPY
 [ $? -eq 0 ] || { echo "FATAL: arm $ARM is not a canonical arm"; exit 2; }
-export SGLANG_VP_HOST_CONFIG="${VP_GATE_HOST_CONFIG:-$TREE/deploy/hosts/a100.json}"
+export SGLANG_VP_HOST_CONFIG="${VP_GATE_HOST_CONFIG:-$TREE/deploy/hosts/vast-a100.json}"
 unset SGLANG_MOE_CONFIG_DIR
 # Stock mode: strip EVERY vpipe knob (including the weights remap above) so
 # the server is genuinely stock — the per-family stock-inertness gate serves

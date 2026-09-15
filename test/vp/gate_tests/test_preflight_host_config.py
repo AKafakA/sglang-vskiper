@@ -57,7 +57,7 @@ def test_it_checks_the_NAMED_config_not_the_alphabetically_first(tmp_path):
     real = tmp_path / "staged"
     real.mkdir()
     tree = _tree(tmp_path, {
-        "hpc": {"flexidepth_weights": "/data/nonexistent/nope/router.pt",
+        "aaa-decoy": {"flexidepth_weights": "/data/nonexistent/nope/router.pt",
                  "conditional_graph_helper": "/data/nonexistent/nope/helper.so",
                  "moe_config_dir": "/data/nonexistent/nope/moe"},
         "a100": {"flexidepth_weights": str(real), "conditional_graph_helper": str(real),
@@ -82,7 +82,7 @@ def test_a_named_config_whose_paths_are_missing_is_REFUSED(tmp_path):
 
 
 def test_a_named_config_that_does_not_exist_is_REFUSED(tmp_path):
-    tree = _tree(tmp_path, {"hpc": {"flexidepth_weights": "/x", "conditional_graph_helper": "/x",
+    tree = _tree(tmp_path, {"aaa-decoy": {"flexidepth_weights": "/x", "conditional_graph_helper": "/x",
                                      "moe_config_dir": "/x"}})
     done = _run(tree, tmp_path, "deploy/hosts/a100.json")
     assert done.returncode != 0

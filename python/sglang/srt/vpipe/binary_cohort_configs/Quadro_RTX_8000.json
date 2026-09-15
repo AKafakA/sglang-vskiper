@@ -136,7 +136,7 @@
   ],
   "bk_fixed": 32,
   "identical_to_prev": true,
-  "tuner": "copied from gateup (box = feasibility only/rtx8000-feasibility-only)"
+  "tuner": "copied from gateup (box = feasibility only, D-421/rtx8000-feasibility-only)"
  },
  "projgd@512": {
   "config": [
@@ -155,7 +155,7 @@
   ],
   "bk_fixed": 32,
   "identical_to_prev": true,
-  "tuner": "copied from gateup (box = feasibility only/rtx8000-feasibility-only)"
+  "tuner": "copied from gateup (box = feasibility only, D-421/rtx8000-feasibility-only)"
  },
  "projgd@1024": {
   "config": [
@@ -174,7 +174,7 @@
   ],
   "bk_fixed": 32,
   "identical_to_prev": true,
-  "tuner": "copied from gateup (box = feasibility only/rtx8000-feasibility-only)"
+  "tuner": "copied from gateup (box = feasibility only, D-421/rtx8000-feasibility-only)"
  },
  "projgd@2048": {
   "config": [
@@ -193,7 +193,7 @@
   ],
   "bk_fixed": 32,
   "identical_to_prev": true,
-  "tuner": "copied from gateup (box = feasibility only/rtx8000-feasibility-only)"
+  "tuner": "copied from gateup (box = feasibility only, D-421/rtx8000-feasibility-only)"
  },
  "projgd@4096": {
   "config": [
@@ -212,7 +212,7 @@
   ],
   "bk_fixed": 32,
   "identical_to_prev": true,
-  "tuner": "copied from gateup (box = feasibility only/rtx8000-feasibility-only)"
+  "tuner": "copied from gateup (box = feasibility only, D-421/rtx8000-feasibility-only)"
  },
  "projup@205": {
   "config": [

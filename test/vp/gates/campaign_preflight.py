@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -141,6 +142,8 @@ def main() -> int:
                 str(host_path) if host_path.is_file() else f"MISSING {host_path}")
     if host_path.is_file():
         cfg = json.loads(host_path.read_text())
+        # same expansion design.host_config() does: committed configs carry ${VAR} placeholders
+        cfg = {k: os.path.expandvars(v) if isinstance(v, str) else v for k, v in cfg.items()}
         for key in ("flexidepth_weights", "conditional_graph_helper", "moe_config_dir"):
             value = str(cfg.get(key, "") or "")
             ok &= check(f"host path {key}", bool(value) and Path(value).exists(),
