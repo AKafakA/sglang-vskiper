@@ -294,14 +294,14 @@ def full_graph_low_row_policy(
 ) -> str:
     """Return the routed-MLP body posture: ``off`` or ``native_dense``.
 
-    [lane-2 knob cleanup, D-582] ``full_dual`` and
+    [lane-2 knob cleanup] ``full_dual`` and
     ``SGLANG_FD_FULL_GRAPH_LOW_ROW_MAX_ROWS`` are gone. That pair was the third
     occupancy threshold in the design -- a per-layer body swap below 128 rows,
     sitting outside the two admission legs -- and the CSD3 duo A/B measured its
     removal as parity on gsm8k (knee TPS -0.1 %, TTFT +1.7 %, TPOT -0.2 %,
     E2E -0.2 %; overload TPS +0.1 %, TTFT -0.8 %, E2E -0.4 %; GR-1a PASS both
     cells). ``native_dense`` is NOT a threshold and stays: it is a whole-model
-    posture (D-358) that the non-released gate modes require for their
+    posture  that the non-released gate modes require for their
     reference arms, and it is unbounded by construction.
     """
 
@@ -571,7 +571,7 @@ def full_graph_prefill_cublas_enabled(
 def full_graph_prefill_fallback_min_project(
     environ: Optional[Mapping[str, str]] = None,
 ) -> Optional[float]:
-    """D-508: minimum PROJECT share (fraction of valid rows) below which a
+    """: minimum PROJECT share (fraction of valid rows) below which a
     routed layer on an EAGER prefill pass runs the exact dense full-dual body
     instead of a compaction body. None = off. Must lie in (0, 1]; fail closed
     on anything else (a typo must not silently disable the fallback)."""
@@ -1163,7 +1163,7 @@ def regime_switch_config(
 ) -> Optional[RegimeSwitchConfig]:
     """Return the served regime-switch design.
 
-    [D-609] The design is a CONSTANT, not an environment read. The only value
+    The design is a CONSTANT, not an environment read. The only value
     the environment may still carry is the explicit string ``"off"``, which the
     byte-identical-baseline arm uses to disable the mechanism outright; it cannot
     change any parameter. An absent variable now yields THE DESIGN, not ``None``
@@ -1232,7 +1232,7 @@ _REGIME_SWITCH_CONFIG_CACHE: dict[str, RegimeSwitchConfig] = {}
 def resolved_design_attestation() -> dict[str, Any]:
     """What this process ACTUALLY resolved -- never what design.py declares.
 
-    [D-611, Codex F8] The first version of the launch gate published
+    [, Codex F8] The first version of the launch gate published
     ``design_attestation()``: the ``SERVED_*`` constants, echoed back. Comparing the
     tree's constants against the tree's own constants is a tautology -- it cannot fail.
     An environment override changes what the RESOLVERS return while the declaration

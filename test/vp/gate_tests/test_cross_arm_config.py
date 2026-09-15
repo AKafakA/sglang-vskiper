@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """The cross-arm gate must REFUSE an undeclared configuration difference.
 
-This gate exists because the baseline became a genuinely different source tree (D-646):
+This gate exists because the baseline became a genuinely different source tree:
 upstream SGLang at 602c8615a1, 193 commits behind the fork. Identical CLI flags no longer
 imply identical resolved configuration, and a config difference the paper does not declare is
 an uncontrolled variable in all 54 paired cells.
 
 The tests assert the REFUSAL, not the pass. Every gate this project has lost time to --
-D-256, D-614, D-627 -- was passing at the time.
+ -- was passing at the time.
 """
 from __future__ import annotations
 

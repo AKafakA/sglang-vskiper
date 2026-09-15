@@ -1,5 +1,5 @@
 """Fixture test of the default-conformance core: the 2026-09-13 headline server_info
-against the defaults upstream computed for it, with the D-187 exemptions declared."""
+against the defaults upstream computed for it, with the exemptions declared."""
 import json
 import sys
 from pathlib import Path
@@ -60,7 +60,7 @@ def test_profile_scoped_exemptions_apply_only_under_their_profile():
 
 
 def test_multi_profile_rule_resolves_one_value_per_profile():
-    """D-773: a "profiles" rule gives fp16 under paper, bf16 under paper_bf16, nothing elsewhere."""
+    """: a "profiles" rule gives fp16 under paper, bf16 under paper_bf16, nothing elsewhere."""
     from verify_default_conformance import resolve_exemptions
     rules = dict(EXEMPT, dtype={"profiles": {"paper": "float16", "paper_bf16": "bfloat16"}, "decision": "D-773"},
                  mem_fraction_static={"profiles": {"paper": 0.8, "paper_bf16": 0.8}, "decision": "D-773"})

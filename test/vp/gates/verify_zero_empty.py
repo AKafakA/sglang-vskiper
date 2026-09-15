@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """HARD GATE: a natural-lane cell must contain ZERO empty generations.
 
-[D-628, owner-ordered 2026-09-10] The empty-generation defect survived from D-066 (2026-08-09)
+[, owner-ordered 2026-09-10] The empty-generation defect survived from (2026-08-09)
 to now -- through two campaigns and every existing gate -- because nothing ever asserted the
 one thing that would have caught it. Three separate blind spots kept it invisible:
 
@@ -12,7 +12,7 @@ one thing that would have caught it. Three separate blind spots kept it invisibl
 
 2. **lm-eval's extraction filter hides it.** gsm8k's filter rewrites an empty generation as
    the literal string ``"[invalid]"``, which is not empty. Counting ``filtered_resps`` reports
-   0.0% on a run whose raw responses are 51.6% empty (measured 2026-09-10; D-070 recorded the
+   0.0% on a run whose raw responses are 51.6% empty (measured 2026-09-10; recorded the
    same trap in August). This gate reads RAW text only.
 
 3. **finish_reason does not discriminate.** ``matched: 128009`` (``<|eot_id|>``) is also the
@@ -24,12 +24,12 @@ Usage:
     verify_zero_empty.py --lmeval-dir out/                 # quality lane (lm-eval samples)
     [--max-empty N]   allow N empties (default 0 -- the gate is ZERO by order)
 
-[D-728, owner 2026-09-12] KNOWN empties. An empty that the CHECKPOINT ITSELF produces under its
+[, owner 2026-09-12] KNOWN empties. An empty that the CHECKPOINT ITSELF produces under its
 own code on the exact served tokens (arm B is the witness) is inherited, not lost output, and is
 listed in ``known_empties.json`` next to this file with its witness. The gate still COUNTS and
 NAMES every such empty in its output -- the number is disclosed, never hidden -- but does not
 refuse the cell for it. Anything not on the list refuses exactly as before. The list is data in
-the tree, not an environment knob (D-609), and every entry must carry a witness.
+the tree, not an environment knob, and every entry must carry a witness.
 """
 from __future__ import annotations
 

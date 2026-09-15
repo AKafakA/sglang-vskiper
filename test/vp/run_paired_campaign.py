@@ -166,7 +166,7 @@ def arm_is_upstream(spec: dict[str, Any], arm: str) -> bool:
     """Is this arm GENUINE upstream SGLang, served from its own tree?
 
     The paper's baseline is a freshly-cloned upstream checkout with no vpipe/ package
-    (owner order D-587), NOT ARMS["stock"] -- which is this fork with the skipper off and
+    (owner order), NOT ARMS["stock"] -- which is this fork with the skipper off and
     whose own comment falsely claimed to be upstream for months.
     """
     return arm == spec.get("upstream_arm_name", "upstream")
@@ -184,9 +184,9 @@ def campaign_preflight_gate(spec: dict[str, Any],
 
     Extracted from main() so the QUALITY lane runs the same gate as the perf lane. It had
     never run against a genuine upstream tree at all: its manifest claimed 2319 files when
-    the commit yields 2079, so no correct tree could pass it (D-646). Hashing a directory
+    the commit yields 2079, so no correct tree could pass it. Hashing a directory
     does not bind it to the process that serves, which is why --serving-pythonpath exists
-    (audit D-624 #6).
+    (audit).
     """
     serving = serving_pythonpath(spec, arm)
     command = [sys.executable,
@@ -324,7 +324,7 @@ class Server:
 
 
 def default_conformance_gate(spec: dict[str, Any], arm: str, port: int) -> None:
-    """Gate E (D-184, restored by D-757): this server runs at SGLang's DEFAULTS for its model
+    """Gate E (restored by): this server runs at SGLang's DEFAULTS for its model
     on this device, except the knobs design.SERVED_LAUNCH_EXEMPTIONS names. Both arms, at
     boot, before any GPU time is spent. The cross-arm gate cannot see what both arms share;
     this one compares each arm against the defaults the BASELINE tree computes."""
@@ -483,7 +483,7 @@ def campaign_arms(spec: dict[str, Any]) -> list[tuple[str, str]]:
 def treatments_of(spec: dict[str, Any]) -> list[str]:
     """`arms.treatment` (one, the headline) or `arms.treatments` (a list: a sweep whose points
     share ONE baseline anchor inside the same session -- the plan's 12-arms-plus-anchor design,
-    D-690/N1). Exactly one of the two keys is accepted."""
+   /N1). Exactly one of the two keys is accepted."""
     arms = spec["arms"]
     if ("treatment" in arms) == ("treatments" in arms):
         raise SystemExit("spec.arms must carry exactly one of 'treatment' or 'treatments'")
@@ -497,7 +497,7 @@ def cross_arm_config_gate(spec: dict[str, Any], dataset: str, rep: int,
     Every other config gate checks ONE arm against its own intent. None of them can see
     whether the two arms are comparable TO EACH OTHER -- which is the question a paired table
     rests on, and which stopped being nearly free the moment the baseline became a separate
-    upstream tree 193 commits away (D-646). Identical CLI flags no longer imply identical
+    upstream tree 193 commits away. Identical CLI flags no longer imply identical
     resolved configuration.
 
     The allowlist comes from `spec["cross_arm_allow"]` and is a set of CLAIMS: each entry

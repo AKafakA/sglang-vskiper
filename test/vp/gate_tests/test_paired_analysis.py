@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """The paired table refuses an ungated rep, and reports a straddle as parity.
 
-The plan requires paired analysis bound into the run flow (D-624 #5). It was not: the driver
+The plan requires paired analysis bound into the run flow. It was not: the driver
 writes cells and computes no delta, and the one tool with the right method was written for the
 v1.3 layout — it globs `ovn-*/results/`, looks for `workgate_*.log` where the driver writes
 `.json`, and hardcodes the VOID knees (BBH 35, CoQA 23) against live values of 25 and 27.
 
 These tests encode the two behaviours that matter more than the arithmetic: an ungated rep is
-REFUSED loudly rather than dropped into the mean (D-593 — a missing rep and a failed rep must
+REFUSED loudly rather than dropped into the mean ( — a missing rep and a failed rep must
 never look alike), and an interval containing zero is reported as parity.
 """
 from __future__ import annotations
@@ -64,7 +64,7 @@ def test_a_gated_pair_produces_a_delta(tmp_path):
 
 
 def test_an_UNGATED_rep_is_refused_loudly_not_dropped(tmp_path):
-    """The D-593 rule: a rep with no GR-1a verdict must not quietly vanish into the mean."""
+    """The rule: a rep with no GR-1a verdict must not quietly vanish into the mean."""
     out = _build(tmp_path, 3)
     (out / "rep2" / "gsm8k" / "workgate_gsm8k_eqw_r10p45.json").unlink()
     done = _run(out)
@@ -126,7 +126,7 @@ def test_a_MISSING_ARM_DIRECTORY_is_reported_not_skipped(tmp_path):
     pair" without naming which dataset was missing or why.
 
     This runs at the END of a campaign, where an absent arm means that dataset never completed.
-    Silently skipping makes "never ran" look identical to "not in the spec" -- D-593's rule one
+    Silently skipping makes "never ran" look identical to "not in the spec" --'s rule one
     level up."""
     out = _build(tmp_path, 2)
     import shutil

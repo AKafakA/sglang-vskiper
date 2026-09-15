@@ -44,7 +44,7 @@ def replan_orphaned_flashinfer_decode_wrappers(
 ) -> None:
     """Re-plan an orphaned FlashInfer cuda-graph decode wrapper for replay.
 
-    Ported verbatim (D-250) out of the deleted FlexiDepthLayerRoutedAttnBackend.
+    Ported verbatim  out of the deleted FlexiDepthLayerRoutedAttnBackend.
     It never belonged to that class: the aliasing it repairs is a property of
     FLASHINFER's one-wrapper-per-batch-size registry, not of layer routing.
     Keeping it as a method forced the conditional-graph backend to require a

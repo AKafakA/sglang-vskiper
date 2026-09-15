@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""[D-728] The zero-empty gate's known list: named and counted, never hidden; unknown still refuses.
+"""The zero-empty gate's known list: named and counted, never hidden; unknown still refuses.
 
 Executed against real invocations of the gate on synthetic artifacts, not by reading its source."""
 from __future__ import annotations
@@ -68,7 +68,7 @@ def test_an_entry_without_a_witness_fails_closed(tmp_path):
 
 
 def test_the_accounting_validator_consults_the_same_known_list():
-    """[D-728] Found by running the harvest: validate_qps_artifact has its OWN empty-text
+    """Found by running the harvest: validate_qps_artifact has its OWN empty-text
     check, which refused the cell the gate had just passed. Both must read one file."""
     src = (ROOT / "test/vp/validate_qps_artifact.py").read_text()
     assert 'gates" / "known_empties.json"' in src and "known_empty_request_ids" in src

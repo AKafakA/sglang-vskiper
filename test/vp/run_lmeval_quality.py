@@ -3,7 +3,7 @@
 
 Why this exists. lm-eval has never been invoked from a committed file in this repo --
 every quality number came from hand-written shell on an ephemeral box. That is how the
-2026-09-09 quality lane spent a night measuring the no-skip body (D-627) and how a
+2026-09-09 quality lane spent a night measuring the no-skip body  and how a
 51.6 %-empty run reported 0.0 % empty (lm-eval rewrites an empty generation as
 "[invalid]", so `filtered_resps` hides it). The gates that catch both already existed and
 had no callers.
@@ -11,7 +11,7 @@ had no callers.
 Two rules this file exists to hold:
 
   * **lm-eval is UNMODIFIED and runs the FULL split.** `--limit` is refused outright.
-    D-607, owner: *"we should not making any changes on the 3rd party evaluation harness
+, owner: *"we should not making any changes on the 3rd party evaluation harness
     so llm-eval for quality and sglang serving for the performances, that is a protection
     of our results."* Scoring is lm-eval's, never ours.
   * **The prompt protocol is READ FROM THE PERF SUITE, never chosen here.** The frozen

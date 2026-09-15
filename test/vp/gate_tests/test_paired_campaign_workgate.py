@@ -11,7 +11,7 @@ have produced a table in which every pair read "unquotable" for a reason having 
 with the data.
 
 Both are invisible to a passing gate. So this asserts the REFUSAL, not the pass -- a gate
-never observed failing is not evidence (D-256, D-614, D-627 all passed their gates).
+never observed failing is not evidence ( all passed their gates).
 
 Fixtures are built to `cross_arm_work_gate.load_cell`'s ACTUAL reader: the LAST json record
 of the artifact, carrying logical_request_ids / input_lens / output_lens.
@@ -85,7 +85,7 @@ def test_the_gate_actually_ran_and_left_its_verdict(tmp_path):
 
 
 def test_a_missing_arm_artifact_fails_rather_than_skips(tmp_path):
-    """An unchecked pair is a FAILED pair -- audit D-624 #3 found the gate itself defaulting
+    """An unchecked pair is a FAILED pair -- audit #3 found the gate itself defaulting
     to pass when no --arm was given."""
     same = [(10, 20)]
     spec, rates = build(tmp_path, same, list(same))

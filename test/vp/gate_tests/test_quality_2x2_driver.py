@@ -7,12 +7,12 @@ Three properties carry that, and each has already failed once in this project:
   1. **The upstream arm gets `--upstream-baseline`.** Without it the quality driver keeps
      the fork attestation, so a genuine upstream server -- which has no `vp_runtime` --
      would be refused, and the natural "fix" is to drop back to `ARMS["stock"]`, which is
-     how arm C came to be the fork with the skipper off for months (D-587/D-646).
+     how arm C came to be the fork with the skipper off for months (/).
   2. **Suite names come from the spec, never from this file.** BBH's protocol is the
-     difference between +10.83 pp and -6.54 pp (D-643), and it is decided by which frozen
+     difference between +10.83 pp and -6.54 pp, and it is decided by which frozen
      suite is named.
   3. **A refused workload does not abort its arm.** One refused rate killed a whole arm's
-     GPU time on 2026-09-11 (D-692) and the refusal was itself the finding.
+     GPU time on 2026-09-11  and the refusal was itself the finding.
 
 Plus the boot path is IMPORTED, not re-expressed: a second implementation of "boot the
 upstream arm" is a second thing that can silently boot the fork.

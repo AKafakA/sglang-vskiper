@@ -1,4 +1,4 @@
-"""Memory contract of `count_matmul_gridexit`: the weight tile is never read past N (D-747).
+"""Memory contract of `count_matmul_gridexit`: the weight tile is never read past N.
 
 An out-of-bounds READ is numerically invisible (the store mask drops the padded columns) and
 silent whenever the over-read lands in mapped memory, which is why the Qwen3-4B fault surfaced

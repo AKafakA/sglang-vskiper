@@ -12,13 +12,13 @@ Arms C and D need a booted server, and until now that boot was hand-typed on a r
 Two consequences, both measured:
 
   * **Arm C was `ARMS["stock"]` -- this fork with the skipper off.** The gate condition it
-    is supposed to test literally reads "no quality collapse vs UPSTREAM sglang" (D-587),
+    is supposed to test literally reads "no quality collapse vs UPSTREAM sglang",
     so the comparison the table names has never actually been run. `Server` already knows
     how to serve the separate upstream tree and refuses if the fork answers instead; this
     driver reaches that code from the quality lane.
   * **Nothing gated the boot.** `verify_served_design` (G1b) and `campaign_preflight` (G1a)
     both existed with no caller on this path, so a quality cell could measure any arm at
-    all and report it under the label that was typed. D-627 is the receipt: a whole night of
+    all and report it under the label that was typed. is the receipt: a whole night of
     quality numbers described the production all-RUN body.
 
 So the boot, the attestation and both pre-gates are reused verbatim from
@@ -26,7 +26,7 @@ So the boot, the attestation and both pre-gates are reused verbatim from
 upstream arm" is a second thing that can silently boot the fork.
 
 **A refused workload does not abort its arm.** One refused rate once killed an entire arm's
-worth of GPU time (D-692) and the refusal was itself the finding. Every requested workload
+worth of GPU time  and the refusal was itself the finding. Every requested workload
 runs; refusals are recorded per row and the process exits non-zero at the end.
 
 Usage:
@@ -37,14 +37,14 @@ Usage:
 
 The spec is the paired-campaign spec plus `quality_suites`, and without `datasets`:
 
-  {"tree": ..., "upstream_tree": ..., "python": ..., "model_path": ...,
-   "suites_dir": ..., "staging_root": ..., "host_config": ..., "source_revision": ...,
+  {"tree":..., "upstream_tree":..., "python":..., "model_path":...,
+   "suites_dir":..., "staging_root":..., "host_config":..., "source_revision":...,
    "quality_suites": {"gsm8k": "gsm8k.d179", "coqa": "coqa.d179",
                       "bbh_cot": "bbh_cot.3shot.raw"}}
 
 Suite names live in the SPEC, never in this file: the protocol (chat vs raw) is read from
 whichever suite is named, and BBH's protocol is the difference between a +10.83 pp and a
--6.54 pp row (D-643).
+-6.54 pp row.
 """
 from __future__ import annotations
 

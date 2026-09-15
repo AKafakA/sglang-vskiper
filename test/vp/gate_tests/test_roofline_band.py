@@ -2,11 +2,11 @@
 """The derived decode band: the rule must REPRODUCE the shipped values, and fail closed.
 
 `enter_rows=176` / `exit_rows=144` were defaults in a test fixture in the commit that created
-the regime switch (D-705). The defence is to make the runtime compute them from device
+the regime switch. The defence is to make the runtime compute them from device
 properties. That defence is worth nothing unless the computation actually lands on the values
 we shipped and measured -- so that is the load-bearing test here.
 
-Owner ruling (D-705): this is a principled DEFAULT, never a claimed optimum. These tests pin
+Owner ruling: this is a principled DEFAULT, never a claimed optimum. These tests pin
 the rule, not the optimality of its output.
 """
 from __future__ import annotations

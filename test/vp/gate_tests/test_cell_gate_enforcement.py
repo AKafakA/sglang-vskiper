@@ -6,8 +6,8 @@ repository, and the hand-written drivers that did invoke them piped the gate int
 `tail|sed`, discarding its exit code. A refusing gate printed FATAL and the chain printed
 DONE nine seconds later.
 
-That is the third instance of one defect: D-614 (`design_attestation()` had no callers),
-D-624 finding 5 ("the statistics exist but are not mandatory"), D-627 (a night of quality
+That is the third instance of one defect: (`design_attestation()` had no callers),
+ finding 5 ("the statistics exist but are not mandatory") (a night of quality
 numbers describing the no-skip body). Every previous fix added a gate FILE. This tests the
 CALL SITE, and it tests the direction that matters -- that a defective cell FAILS.
 """
@@ -97,7 +97,7 @@ def test_prefill_only_arm_does_not_claim_decode_routing():
 
 
 def test_missing_design_attestation_is_a_refusal_not_a_false():
-    """A pre-D-609 tree cannot say what it served, and silence must not read as 'stock'."""
+    """A pre- tree cannot say what it served, and silence must not read as 'stock'."""
     with pytest.raises(RuntimeError, match="served_design"):
         runner._arm_routes_decode({"internal_states": [{"vp_runtime": {}}]})
 
@@ -141,7 +141,7 @@ def test_unknown_intent_is_still_checked(tmp_path):
 
 def test_arrivals_that_departed_from_the_trace_fail(tmp_path):
     """Two arms handed the same trace must see the same traffic, or the paired deltas are
-    between different workloads -- invisible to every output gate (D-624 #1)."""
+    between different workloads -- invisible to every output gate."""
     drifted = [0.0, 1.0, 2.0, 30.0, 60.0, 90.0]
     assert "arrival_fidelity" in _gates(tmp_path, offsets_s=drifted)
 

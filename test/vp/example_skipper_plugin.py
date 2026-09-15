@@ -20,7 +20,7 @@ To make it servable you would add, in `vpipe/design.py`:
     }
 
 and call `register_skipper("static_depth", build_static_depth)` once at import.
-Selection stays in the tree; only the implementation is pluggable (D-609).
+Selection stays in the tree; only the implementation is pluggable.
 """
 from __future__ import annotations
 

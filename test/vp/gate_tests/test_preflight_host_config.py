@@ -8,7 +8,7 @@ is not the HPC cluster, while the campaign contract named `deploy/hosts/a100.jso
 
 The false refusal was the harmless half. Had the first config's paths happened to exist, the
 gate would have PASSED while certifying a host config the run does not use -- the same shape
-as D-609, where a value never reached the server and every gate went green.
+as, where a value never reached the server and every gate went green.
 """
 from __future__ import annotations
 

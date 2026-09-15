@@ -1,4 +1,4 @@
-"""D-508 — per-layer break-even fallback on eager prefill passes
+""" — per-layer break-even fallback on eager prefill passes
 (SGLANG_FD_FULL_GRAPH_PREFILL_FALLBACK_MIN_PROJECT=<share>).
 
 Below the PROJECT-share threshold a routed layer must run the exact dense full-dual body (bit-identical to

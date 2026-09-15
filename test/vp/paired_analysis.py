@@ -2,7 +2,7 @@
 """The paired headline table: within-rep deltas, t-based 95 % CI, straddle rule.
 
 Why this file exists. The plan requires paired analysis *bound into the run flow, not left as
-a tool someone remembers to run* (D-624 #5) — and it was not. `run_paired_campaign.py` writes
+a tool someone remembers to run*  — and it was not. `run_paired_campaign.py` writes
 54 cells and computes no delta; the phrase "the paired unit is a within-rep delta" appears only
 in its docstring. The one tool that implements the right METHOD,
 `vPipe-doc/codex/tools/v13_results_table_ci.py`, was written for the v1.3 artifact layout and
@@ -20,7 +20,7 @@ Method, unchanged from that tool because the method was never the problem:
   * a CI containing zero is a STRADDLE, reported as parity, never as a win.
 
 Gating is inherited and non-negotiable: a rep counts only with a GR-1a work-identity PASS.
-**A rep that is MISSING and a rep that FAILED must never look alike** , so an ungated
+**A rep that is MISSING and a rep that FAILED must never look alike**, so an ungated
 rep is refused loudly rather than quietly dropped into the mean.
 
 Usage:  paired_analysis.py <out-dir> [--reps 1,2,3] [--json OUT]

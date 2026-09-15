@@ -8,7 +8,7 @@ Two defects this pins, both of the same family the project keeps re-finding.
    campaign it exits FATAL on arm A -- at ~04:00Z, after the GPU is spent.
 
 2. **The gate that could not see its own condition.** The 2x2's rule is "no quality collapse
-   vs UPSTREAM sglang" (D-587), and for months arm C was ARMS["stock"] -- this fork with the
+   vs UPSTREAM sglang", and for months arm C was ARMS["stock"] -- this fork with the
    skipper off. Every downstream reader saw only the arm LABEL, so the violation was
    invisible. The manifest now records the FACT, and the summariser refuses without it.
 """
@@ -128,7 +128,7 @@ def test_latex_emit_writes_a_row_and_macros(tmp_path: Path):
 
 
 def test_latex_emit_uses_the_lmeval_KEY_not_a_prettier_name(tmp_path: Path):
-    """D-641: the filter IS the measurement -- gsm8k strict-match flips the sign of (B-A)."""
+    """: the filter IS the measurement -- gsm8k strict-match flips the sign of (B-A)."""
     args = _campaign(tmp_path)
     _run(tmp_path, "--dataset", "gsm8k", *args, "--latex", tmp_path / "quality_rows.tex")
     assert "exact\\_match,flexible-extract" in (tmp_path / "quality_rows.tex").read_text()

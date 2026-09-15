@@ -712,17 +712,17 @@ def _served_design(server_info: Any) -> Any | None:
 def _arm_routes_decode(server_info: Any, *, upstream_baseline: bool = False) -> bool:
     """Does the LIVE server report a skipper that routes the decode phase?
 
-    Read from `vp_runtime.served_design`, the D-609 attestation block -- what the server
+    Read from `vp_runtime.served_design`, the attestation block -- what the server
     says it resolved, never a flag we passed. Verified against captured server_info:
     a baseline arm reports {arm: stock, skipper: None, active_phases: []} and a routed
     arm {arm: integrated_*, skipper: flexidepth, active_phases: [decode, prefill]}.
 
     On OUR tree a missing block is a REFUSAL, not a False. It means the served tree
-    predates the D-609 attestation, so we cannot tell what ran -- and "measured the wrong
+    predates the attestation, so we cannot tell what ran -- and "measured the wrong
     system while every gate passed" is the exact failure this harness exists to prevent.
 
     `upstream_baseline` INVERTS that, and this is the point rather than a loophole. The
-    paper's baseline is genuinely upstream SGLang (owner order D-587: "directly-freshly
+    paper's baseline is genuinely upstream SGLang (owner order: "directly-freshly
     cloned sglang without our changes"), a tree with no vpipe/ package at all -- so it can
     never carry this block, and the refusal above made the real baseline UNMEASURABLE by
     this harness. That is part of why every campaign to date silently used ARMS["stock"],

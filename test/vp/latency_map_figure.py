@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Two-panel figure for the appendix "latency below the knee, throughput above it" (D-753).
+"""Two-panel figure for the appendix "latency below the knee, throughput above it".
 
 Input: the JSON written by latency_map.py. Left: mean E2E reduction (%) vs offered load (0.75/0.95/1.25 x Q*),
 one line per dataset, pooled over reps (negative = faster than upstream). Right: output-throughput gain (%) vs

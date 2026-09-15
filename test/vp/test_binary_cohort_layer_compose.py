@@ -2,7 +2,7 @@
 """End-to-end composition test: pack -> count_matmul_gridexit -> activation
 -> count_matmul_gridexit -> weighted_scatter, both branches, vs the reference.
 
-The mainloop-fused activation variant was REJECTED by D-303 and its kernel is
+The mainloop-fused activation variant was REJECTED by and its kernel is
 not in this build, so only the unfused path is exercised.
 
 Index vectors come from torch nonzero here (the capture-time index

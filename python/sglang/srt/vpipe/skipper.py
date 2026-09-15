@@ -440,7 +440,7 @@ def register_skipper(name: str, factory: SkipperFactory) -> None:
     """Add a policy under ``name``; an arm then selects it by that name.
 
     Selection stays IN THE TREE (`design.py` ARMS), never in the environment
-    (D-609) -- this only decides what a name may resolve to.
+     -- this only decides what a name may resolve to.
     """
 
     if name in _SKIPPERS and _SKIPPERS[name] is not factory:

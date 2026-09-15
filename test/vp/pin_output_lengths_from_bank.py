@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pin per-request output lengths from a natural-length bank (D-298 dual banks).
+"""Pin per-request output lengths from a natural-length bank ( dual banks).
 
 Emits a length-controlled copy of a frozen suite: every decode request's
 ``output_len`` is set from the bank (``{"lengths": {request_id: tokens}}``)

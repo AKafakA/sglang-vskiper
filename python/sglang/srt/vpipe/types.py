@@ -179,7 +179,7 @@ PROJECTOR_CONTRACT = "vp-project-only-payload-v1"
 class ProjectorAdapter(ABC):
     """Supplies the PROJECT_ONLY payload for a routed layer.
 
-    Split out of the policy 2026-09-11 (D-701). The two are different plugins
+    Split out of the policy 2026-09-11. The two are different plugins
     answering different questions:
 
       * a ``FullGraphSkipperAdapter`` decides WHICH tokens take PROJECT_ONLY;
@@ -242,7 +242,7 @@ class FullGraphSkipperAdapter(ABC):
         The mock arm therefore still loads the ROUTER it never reads. Skipping
         that load is a behaviour change, not a cleanup: the router occupies HBM,
         and `server.max_total_num_tokens` is a DECLARED cross-arm field measured
-        at -0.98 % on the treatment arm (D-699). Dropping the unused weights would
+        at -0.98 % on the treatment arm. Dropping the unused weights would
         move it, so it is left alone until a campaign is ready to re-measure.
         """
 

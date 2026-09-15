@@ -5,7 +5,7 @@ launch has exercised; Qwen3-4B (2560 / 9728 / 608) is the v1.5 feasibility model
 where a GEMM width is not a multiple of every tuned tile: its fused projector width N = 1216 is not
 a multiple of BN = 128 (Llama's 28672 / 4096 / 1792 are multiples of every tuned BN), and its
 projector K = 608 is not a multiple of BK = 64. The first Qwen boot died with an illegal memory
-access inside `count_matmul_gridexit` at the 8192-token prefill capture (D-747): the EVEN_K path
+access inside `count_matmul_gridexit` at the 8192-token prefill capture: the EVEN_K path
 loaded the weight tile with no N mask, reading up to 64 rows past the projector weight's end.
 
 This test checks the arithmetic at every capture bucket (rows) and both gate modes; an out-of-bounds

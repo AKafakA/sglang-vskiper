@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Latency-below-the-knee / throughput-above-it map (D-753, paper appendix).
+"""Latency-below-the-knee / throughput-above-it map (paper appendix).
 
 From a paired campaign root, per (dataset, rate): pair every request across the two arms by request id
 (the work is identical by construction, GR-1a), bin the requests by pinned output tokens, and report the

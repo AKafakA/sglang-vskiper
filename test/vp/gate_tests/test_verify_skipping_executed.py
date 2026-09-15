@@ -4,7 +4,7 @@
 Two arms, two counter blocks, and reading only one of them is a bug in each direction:
 
   integrated_it4          admission-gated. regime_switch.counters counts decode PASSES as
-                          skip vs prod_allrun. This is where D-627 was caught: 16,702
+                          skip vs prod_allrun. This is where was caught: 16,702
                           passes, skip 0, an entire night of quality numbers describing
                           the production all-RUN body.
   integrated_alwaysskip   the 2x2's arm D. Its defining property is `regime_switch: False`,
@@ -68,7 +68,7 @@ def test_gated_arm_that_did_skip_passes(tmp_path):
 
 
 def test_share_below_the_floor_is_RECORDED_not_refused(tmp_path):
-    """CHANGED BY D-697 (owner: "we need just record but not as the hard gates").
+    """CHANGED BY (owner: "we need just record but not as the hard gates").
 
     This used to refuse, on the reasoning that a mostly-no-skip cell attributes the skipper's
     quality to a system that largely was not it. That reasoning holds for the QUALITY lane and

@@ -3,7 +3,7 @@
 
 Plan item 3, owner scope 2026-09-10: gsm8k only, all 12 points, one rate, 3 reps.
 
-There is no sweep loop, no CLI and no value-taking arm field in this repo, and D-609 forbids
+There is no sweep loop, no CLI and no value-taking arm field in this repo, and forbids
 expressing experiment configuration as environment variables. Twelve named entries in ARMS is
 the only supported parameterisation, so these tests hold the grid's shape: a missing or
 transposed point would silently become a hole in the published curve.
@@ -56,7 +56,7 @@ def test_one_seed_across_the_whole_sweep():
 
 
 def test_every_point_routes_BOTH_phases_like_the_served_system():
-    """D-619: a decode-only mock would confound skip magnitude with phase coverage, because
+    """: a decode-only mock would confound skip magnitude with phase coverage, because
     integrated_it4 -- the system this surface is meant to contextualise -- routes both."""
     assert all(arm["phases"] == "both" for arm in SWEEP.values())
     assert design.ARMS["integrated_it4"]["phases"] == "both"

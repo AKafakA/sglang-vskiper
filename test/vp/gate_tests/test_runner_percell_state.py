@@ -3,9 +3,9 @@
 
 The defect this encodes, found at 05:32Z with the 36-cell headline already running:
 
-  duration derivation (D-651) wrote its result back as `args.min_prompts, args.duration_s`.
+  duration derivation  wrote its result back as `args.min_prompts, args.duration_s`.
   Cell 1 therefore set them; cell 2 saw them non-None, took the `elif`, and raised
-    "--duration-s / --min-prompts are DIAGNOSTIC overrides ..."
+    "--duration-s / --min-prompts are DIAGNOSTIC overrides..."
   at a caller that had passed neither. The ladder and the bank harvest never noticed,
   because each invokes the runner ONCE per rung. The paired driver passes three suites in
   one qps-config, so it lost 2 of every 3 cells -- silently, with a message accusing the

@@ -2,7 +2,7 @@
 
 `enter_rows=176` / `exit_rows=144` were, by the record, **defaults in a test fixture** in the
 commit that created the regime switch (`fa8d914686`, 2026-07-23) — carried ever since, with no
-entry anywhere recording how they were chosen (D-705). That is exactly the shape a reviewer
+entry anywhere recording how they were chosen. That is exactly the shape a reviewer
 calls a magic number, and the answer is not prose: it is to make the runtime COMPUTE them.
 
 The rule, and why each term is there:
@@ -24,7 +24,7 @@ The rule, and why each term is there:
                                         occupancy oscillates. It must exceed the step-to-step
                                         swing or every drain pays repeated body transitions —
                                         the failure the 2026-07-23 W1 readout diagnosed as
-                                        "occupancy oscillates across the 144/176 dead-band ...
+                                        "occupancy oscillates across the 144/176 dead-band...
                                         cascading into a queue blowup".
 
     enter = r0 + half    exit = r0 - half
@@ -33,7 +33,7 @@ The rule, and why each term is there:
 times service time — a property of the WORKLOAD. Report the two separately; calling both
 "device-derived" is the small overstatement that makes a reviewer distrust the rest.
 
-⚠ **This is a principled DEFAULT, never a claimed optimum** (owner, D-705). Results obtained
+⚠ **This is a principled DEFAULT, never a claimed optimum** (owner). Results obtained
 with it are obtained without per-workload tuning, which makes them a lower bound. Sizing the
 band online from the server's own occupancy distribution is available and untried.
 
@@ -135,7 +135,7 @@ def assert_band_follows_rule(
 
     **Asserted, not computed — and that is deliberate.** puts the served design in the
     TREE as constants, so an arm must still DECLARE its band; a band computed at boot would
-    silently differ per host, which is the declared-vs-served split D-609 exists to prevent.
+    silently differ per host, which is the declared-vs-served split exists to prevent.
     This keeps both properties: the design is declared, and the runtime refuses to boot if the
     declaration has drifted from the rule.
 
@@ -214,7 +214,7 @@ def derived_kv_band(device_key: str, **rule) -> tuple[int, int]:
 
 def arm_kv_rule_inputs(arm: dict) -> dict:
     """The rule inputs an ARM implies: routed-layer count, its design skip ratio, and the per-step
-    tax scaled by routed-layer count (the tax is per routed layer, D-370)."""
+    tax scaled by routed-layer count (the tax is per routed layer)."""
 
     from sglang.srt.vpipe.design import SERVED_ROUTED_LAYERS
 
@@ -231,7 +231,7 @@ def assert_kv_band_follows_rule(
 ) -> None:
     """Refuse to serve a K/V band that is not what the rule gives for this device.
 
-    Asserted, not computed (D-609: the design is DECLARED in the tree; the runtime refuses to
+    Asserted, not computed (: the design is DECLARED in the tree; the runtime refuses to
     boot if the declaration has drifted from the rule). On a device whose bandwidth differs
     this refuses until the arm declares that device's band -- the H100 row is a prediction,
     not a re-tune. Passing changes nothing: this can only refuse.

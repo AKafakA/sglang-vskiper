@@ -45,7 +45,7 @@ def fd_attention_o_proj_full_graph(
 ) -> torch.Tensor:
     """Project the attention rows through the layer's own ``o_proj``.
 
-    [lane-2 knob cleanup, D-578] The compact-o_proj cohort branch that used to
+    [lane-2 knob cleanup] The compact-o_proj cohort branch that used to
     live here is deleted with its three env vars
     (``SGLANG_FD_FULL_GRAPH_COMPACT_O_PROJ{,_LAYERS,_MIN_ROWS}``). It was never
     enabled in any served arm — the gates default off — and before 2026-09-03 it
@@ -72,7 +72,7 @@ def fd_attention_qkv_full_graph(
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Project QKV for the whole batch through the layer's own weights.
 
-    [lane-2 knob cleanup, D-578] The compact-Q cohort branch is deleted along
+    [lane-2 knob cleanup] The compact-Q cohort branch is deleted along
     with ``SGLANG_FD_FULL_GRAPH_COMPACT_Q_PROJ`` and the o_proj layer-fraction
     gates it shared. Like the o_proj branch above, it was never enabled in any
     served arm and carried the same latent defect: it called

@@ -3,7 +3,7 @@
 
 Q* sets every operating point the campaign reports. On one unchanged BBH curve, three
 versions of this tool returned 38.75, then 25, then 21 — the true knee was 35, and all
-three were instrument artifacts (D-590/D-591). So these tests do not merely check that the
+three were instrument artifacts (/). So these tests do not merely check that the
 right answer comes out; they encode the historical WRONG answers and assert we do not
 reproduce them.
 """

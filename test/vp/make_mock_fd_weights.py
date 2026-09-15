@@ -3,7 +3,7 @@
 
 The deterministic_mock skipper requires FD weights loaded (its PROJECT payload
 runs the projector), so gating a family that has no trained checkpoint yet
-(e.g. the qwen3 mock arm before the D-306 training lands) needs a weights file
+(e.g. the qwen3 mock arm before the training lands) needs a weights file
 with that family's dimensions. These weights are RANDOM: mock arms exercise
 the machinery and attest routing/accounting — never quality, never
 performance. The file must never be confused with a trained checkpoint; the

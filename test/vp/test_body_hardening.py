@@ -1,9 +1,9 @@
-"""Hardening invariants of the routed-MLP bodies (D-450 era, P2 of the 2026-09-05 plan).
+"""Hardening invariants of the routed-MLP bodies ( era, P2 of the 2026-09-05 plan).
 
 1. ``weighted_scatter`` fails closed on strided route weights: the kernel reads
    ``weights_ptr + dst`` with no stride argument, so a strided 1-D view would be
    consumed silently wrong.
-2. (removed 2026-09-08, D-574: `_mapped_run_base_mlp` and the other per-layer
+2. (removed 2026-09-08: `_mapped_run_base_mlp` and the other per-layer
    capacity bodies were deleted with the layer-policy machinery.)
    the compact PROJECT branch is stubbed so the test runs without Triton/CUDA.
 """

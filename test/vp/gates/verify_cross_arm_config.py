@@ -9,7 +9,7 @@ question a paired table actually rests on: **are the two arms comparable to each
 That question used to be nearly free, because both arms were the same binary differing only
 by environment -- a field-level diff then found exactly two differing fields (the treatment,
 and `max_total_num_tokens` at -0.98%). It stopped being free the moment the baseline became
-GENUINE UPSTREAM SGLANG (D-587/D-646): the arms now run from two different source trees, 193
+GENUINE UPSTREAM SGLANG (/): the arms now run from two different source trees, 193
 commits apart, and identical CLI flags no longer imply identical resolved configuration.
 Upstream may default differently on the scheduler, chunked prefill, the CUDA-graph ladder or
 KV capacity, and every one of those moves throughput without touching the treatment.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The cell size is DECLARED. A suite that is not the agreed size cannot produce a cell.
 
-Owner, 2026-09-10: *"4000 is a requirement"* ... *"4000 for bbh only"*.
+Owner, 2026-09-10: *"4000 is a requirement"*... *"4000 for bbh only"*.
 
 The failure this encodes: a BBH suite was rebuilt with `--num-requests 3600`, copied from
 gsm8k, and 26 ladder cells were measured against it before anyone noticed. Every other gate
@@ -10,7 +10,7 @@ all of it was true OF THE WRONG SUITE. Row counts had only ever been read with `
 reports what the file IS, never what was agreed.
 
 So these tests check the REFUSAL, not the pass: a gate that has never been observed failing
-is not evidence (D-256, D-614, D-627 all passed their gates).
+is not evidence ( all passed their gates).
 """
 from __future__ import annotations
 

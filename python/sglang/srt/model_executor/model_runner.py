@@ -3366,7 +3366,7 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         dispatch recording, token-boundary KV launch) reads the result instead
         of ``os.environ``: stock no-VP serving must not pay per-forward env
         reads for machinery it never runs, because that CPU delta sits on the
-        BASELINE path the paper's numbers are measured against (D-251).
+        BASELINE path the paper's numbers are measured against.
 
         An ``init_*`` helper rather than inline logic, per the large-class-init
         style rule — a fork overriding VP activation swaps this one method.

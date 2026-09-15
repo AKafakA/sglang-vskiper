@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Native loop-attribution table (D-547 rule; paper banks appendix).
+"""Native loop-attribution table ( rule; paper banks appendix).
 
 Reads the loopers set (`set.json`: request ids per group, drawn from the served cells) and the native
 PyTorch runs produced by `native_loop_check_v2.py` (`native_<tag>.jsonl`, one record per prompt:
@@ -8,7 +8,7 @@ generations that hit the context window, mean and p90 output length. A run is us
 COMPLETE (every prompt of every group present) so the table never carries a partial column; the
 macros `\vpAttr<Model><Group>Loops` / `...Pct` / `...N` feed the two sentences of prose.
 
-usage: attribution_table.py <loopers dir> --rows out.tex --macros out.tex [--model raw=Llama-3-8B-Instruct ...]
+usage: attribution_table.py <loopers dir> --rows out.tex --macros out.tex [--model raw=Llama-3-8B-Instruct...]
 """
 from __future__ import annotations
 

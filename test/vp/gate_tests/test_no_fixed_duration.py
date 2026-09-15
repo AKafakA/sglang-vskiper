@@ -5,7 +5,7 @@ History, because the shape of the fix changed twice:
 
   * A fixed `--duration-s 180` made each rate submit `rate x duration` requests, so two cells
     at two rates did different work -- fatal to a Q* curve (a comparison ACROSS rates) and to
-    a paired table (a delta BETWEEN two cells). D-651 made the runner DERIVE it as rows/qps
+    a paired table (a delta BETWEEN two cells). made the runner DERIVE it as rows/qps
     and refuse a caller-supplied one.
   * Tracing that derivation end to end (2026-09-11) showed it could not affect anything:
     `requested_count = max(min_prompts, ceil(qps*duration))` with min_prompts set to the row

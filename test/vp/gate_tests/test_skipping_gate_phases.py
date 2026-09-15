@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""The skipping gate counts BOTH phases from the per-body counters (D-736), records a low
+"""The skipping gate counts BOTH phases from the per-body counters, records a low
 share instead of refusing it, and REFUSES counters that do not add up or a dead escape.
 
-[D-734] The paragraph below was written while the prefill dispatch machinery was silently OFF
-(env-gated on a variable D-609 had deleted); the "{dense: 0, fd: 0} counts transitions" reading
+The paragraph below was written while the prefill dispatch machinery was silently OFF
+(env-gated on a variable had deleted); the "{dense: 0, fd: 0} counts transitions" reading
 was wrong -- the counters were zero because nothing counted. Kept as history of the mistake.
 
-[D-697] The gate read `regime_switch.counters.decode` alone and refused the gsm8k 0.75 x Q*
+The gate read `regime_switch.counters.decode` alone and refused the gsm8k 0.75 x Q*
 cell as "never skipped" -- while that cell's treatment arm routed 4,925 prefill passes over
 6,977,016 prefill tokens. The refused cell reproduces v1.3's published row within its
 confidence interval on five of eight metrics.
@@ -15,7 +15,7 @@ confidence interval on five of eight metrics.
 because it counts switch TRANSITIONS, not routed work. Routed prefill work lives in
 `batch_composition`.
 
-D-627 was this gate blind to a mechanism that was OFF. This was the same gate blind to a
+ was this gate blind to a mechanism that was OFF. This was the same gate blind to a
 mechanism that was ON -- worse, because it discards real results while looking like diligence.
 The floor that survives is "something routed SOMEWHERE"; the share floor became a recorded note
 (owner: "we need just record but not as the hard gates").
@@ -33,7 +33,7 @@ GATE = ROOT / "test/vp/gates/verify_skipping_executed.py"
 
 def snap(tmp, name, *, decode_skip, decode_allrun, prefill_passes, prefill_routed=True,
          prefill_fd=None, prefill_dense=0, engagement_samples=None):
-    """[D-736] Snapshots carry the prefill leg's real per-body counters: by default every prefill
+    """Snapshots carry the prefill leg's real per-body counters: by default every prefill
     pass ran the routed body (fd == passes); tests override to model dense passes, dead counters
     ({0, 0} with passes > 0) and a dead engagement escape."""
     if prefill_fd is None:
@@ -91,7 +91,7 @@ def test_decode_skipping_still_passes_normally(tmp_path):
 
 
 def test_NOTHING_ROUTED_ANYWHERE_is_still_REFUSED(tmp_path):
-    """D-627's actual failure, and the one thing the floor must still catch: the measurement
+    """'s actual failure, and the one thing the floor must still catch: the measurement
     describes the production body while claiming to describe the skipper."""
     b = snap(tmp_path, "b.json", decode_skip=0, decode_allrun=20, prefill_passes=0)
     a = snap(tmp_path, "a.json", decode_skip=0, decode_allrun=16702, prefill_passes=0)
@@ -137,7 +137,7 @@ def test_healthy_prefill_counters_pass_and_are_printed(tmp_path):
 
 
 def test_dead_prefill_counters_with_passes_are_REFUSED(tmp_path):
-    """The exact shape every campaign cell had before D-734: passes ran, counters read {0, 0}."""
+    """The exact shape every campaign cell had before: passes ran, counters read {0, 0}."""
     b = snap(tmp_path, "b.json", decode_skip=0, decode_allrun=20, prefill_passes=3, prefill_fd=0, engagement_samples=0)
     a = snap(tmp_path, "a.json", decode_skip=100, decode_allrun=400, prefill_passes=2798, prefill_fd=0, engagement_samples=0)
     done = run(b, a)

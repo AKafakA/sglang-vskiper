@@ -1,6 +1,6 @@
 """The model-side vpipe seam, shared across families.
 
-Extracted MECHANICALLY from models/llama.py (D-307 Lane S commit 1;
+Extracted MECHANICALLY from models/llama.py ( Lane S commit 1;
 transform script archived in vPipe-doc). Families call these helpers at
 the exact sites llama.py did; behavior is byte-identical, proven by the
 full box gate chain incl. route+output equality vs frozen. Layer-level

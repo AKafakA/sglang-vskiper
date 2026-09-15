@@ -3,7 +3,7 @@
 
 Why this exists. A refactor that is "behaviour-preserving by construction" is an
 argument, and this project's standing rule is that an argument is not a
-measurement. D-702 split the projector out of the policy and opened the skipper
+measurement. split the projector out of the policy and opened the skipper
 registry; it was written so that every consumer keeps evaluating the same
 predicate and no attestation field moves. That claim is checkable in about
 twenty minutes of card time, and until it is checked the paper is describing an

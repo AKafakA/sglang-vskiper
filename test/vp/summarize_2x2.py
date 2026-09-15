@@ -8,7 +8,7 @@ key came first in the results dict -- `strict-match`. On gsm8k that INVERTS the 
     strict-match      (B - A) = +5.31 pp   the checkpoint appears to GAIN
     flexible-extract  (B - A) = -5.53 pp   the checkpoint costs
 
-D-630 recorded this exact reversal, which is why flexible-extract is a RULING
+ recorded this exact reversal, which is why flexible-extract is a RULING
 (2026-08-17: "flexible extraction ALWAYS under chat template") and not a preference. A
 summariser that silently picks a metric can hand over a headline with the wrong sign, so
 this one refuses instead: the metric per dataset is a table below, and a missing metric is
@@ -73,8 +73,8 @@ def _assert_every_arm_passed(root: Path, mapping: dict[str, str]) -> None:
     Found 2026-09-12 by reading an emitted row: coqa arm D was REFUSED on `zero_empty` --
     one empty generation, the gate doing exactly its job -- and the summariser read its
     `results_*.json` anyway and published $0.7760$ as arm D. **A gate that fires and a
-    consumer that ignores it is the defect this project has logged four times** (D-256,
-    D-614, D-624 #5, D-627); here it would have put a refused measurement into the paper's
+    consumer that ignores it is the defect this project has logged four times** (
+    #5); here it would have put a refused measurement into the paper's
     faithfulness table, which is the one table whose entire purpose is to be trustworthy.
 
     Checked per ARM rather than per file: a refused cell still writes complete-looking
@@ -101,7 +101,7 @@ def _assert_every_arm_passed(root: Path, mapping: dict[str, str]) -> None:
 def _assert_arm_c_is_upstream(root: Path, mapping: dict[str, str]) -> None:
     """Arm C must be GENUINE upstream, because that is what the gate condition names.
 
-    The gate reads "no quality collapse vs UPSTREAM sglang" (D-587). For months arm C was
+    The gate reads "no quality collapse vs UPSTREAM sglang". For months arm C was
     ARMS["stock"] -- this fork with the skipper off -- and every downstream reader saw only
     the arm LABEL, so the violation was invisible. Refuse rather than compute (D - C)
     against a C that was never upstream.

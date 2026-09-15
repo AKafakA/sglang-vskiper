@@ -11,7 +11,7 @@ read several times without either being noticed:
      one minute in, before serving a single request.
 
   2. `--min-prompts`/`--duration-s`, which the runner REFUSES unless the cell is a declared
-     diagnostic (owner rule 2 / D-651). The same defect that killed the ladder driver (D-661),
+     diagnostic (owner rule 2 /). The same defect that killed the ladder driver,
      in a second caller -- and the arithmetic was independently wrong: one duration derived
      from the SLOWEST rate, applied to every rate in the cell, makes the faster rates submit
      less than their whole suite.

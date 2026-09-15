@@ -366,7 +366,7 @@ def full_graph_conditional_graph_enabled(
 ) -> bool:
     """Return whether decode uses sequential device conditional stages.
 
-    [D-609] A design constant -- but a DECODE-phase one. The prefill-only arm has no
+    A design constant -- but a DECODE-phase one. The prefill-only arm has no
     decode phase, so asserting it there makes the arm unservable (validation rejects
     "conditional graph without decode", correctly). The old arm_env_vpre_binarycohort.sh
     simply never exported it; that phase-dependence was implicit in the scripts and has
@@ -599,7 +599,7 @@ def low_row_policy_attestation(
 ) -> dict[str, Any]:
     """The routed-MLP body posture, as a standalone (testable) evidence block.
 
-    `native_dense` (lane-2 cut3 item 1, D-358) means the routed MLP is the
+    `native_dense` (lane-2 cut3 item 1) means the routed MLP is the
     model's OWN dense feed-forward at every occupancy plus the projector,
     selected by the route mask — no count-adaptive or grouped dispatch is
     reachable from such a deployment. Reported so the posture is read off

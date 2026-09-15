@@ -11,9 +11,9 @@ tool returned three different answers --
     21      "grew >=1% over the PRECEDING rung", stopped by a single flat pair
 
 -- and the true knee was 35. All three were instrument artifacts, never the system
-(D-590/D-591). Hence the rule below, and hence `--self-test`.
+(/). Hence the rule below, and hence `--self-test`.
 
-THE RULE (D-590 owner definition, D-591 fixes):
+THE RULE ( owner definition fixes):
 
   1. Q* is the last INTEGER offered rate whose achieved output tok/s beats the RUNNING
      MAXIMUM by >= 1%. Running maximum = the best value at any lower rung, NOT the value at

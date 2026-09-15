@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Reject a cell whose REALIZED arrivals departed from the frozen trace.
 
-[Audit D-624 #1, the highest-risk finding] `use_trace_timestamps` was never forwarded to
+[Audit #1, the highest-risk finding] `use_trace_timestamps` was never forwarded to
 `get_request()`, so every cell drew Poisson arrivals while its summary reported "trace" and its
 artifacts hashed the frozen arrival file. Forwarding the flag makes trace replay POSSIBLE. It
 does not establish that a run FOLLOWED the trace -- and the audit asked for exactly that:

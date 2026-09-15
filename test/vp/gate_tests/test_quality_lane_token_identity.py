@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The quality lane must feed every arm the SAME token ids -- pinned at the source.
 
-Found by RUNNING the arms on the two requests that emptied (D-724, 2026-09-12): the driver
+Found by RUNNING the arms on the two requests that emptied (2026-09-12): the driver
 passed `tokenized_requests=False`, so lm-eval sent TEXT to the served arms and SGLang's
 tokenizer prepended <|begin_of_text|> on raw prompts, while lm-eval's HF backend (arms A/B)
 encodes with add_special_tokens=False. On coqa doc 80 that one token flipped the checkpoint's
@@ -36,8 +36,8 @@ def test_hf_arms_do_not_add_bos_either():
 
 
 def test_prefill_runner_gate_is_the_design_not_an_env_var():
-    """[D-734] The runner's prefill-regime machinery was gated on SGLANG_FD_WEIGHTS, which
-    D-609 stopped exporting; every headline cell then served with the escape and the
+    """The runner's prefill-regime machinery was gated on SGLANG_FD_WEIGHTS, which
+    stopped exporting; every headline cell then served with the escape and the
     counters dead. The serving path must never read that variable again."""
     runner = _code((ROOT / "python/sglang/srt/model_executor/runner/prefill_cuda_graph_runner.py").read_text())
     assert 'os.environ.get("SGLANG_FD_WEIGHTS"' not in runner

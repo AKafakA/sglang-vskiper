@@ -866,7 +866,7 @@ def _layer_contiguous_views(
     The per-layer stride is padded up to ``_LAYER_BACKING_ALIGN_BYTES`` so
     every layer's view starts at an allocation-grade aligned address — the
     unpadded stride is only coincidentally aligned for common model dims
-    (HBM D-299+1 review finding). The backing outlives the views through
+    (HBM+1 review finding). The backing outlives the views through
     their storage references; callers need only the views.
     """
     itemsize = torch.empty((), dtype=dtype).element_size()

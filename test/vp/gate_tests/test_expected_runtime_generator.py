@@ -40,7 +40,7 @@ def test_every_arm_in_the_design_gets_an_expectation():
 
 def test_upstream_asserts_the_ABSENCE_of_an_attestation():
     """Genuine upstream SGLang has no vpipe package, so there is no attestation block at all.
-    Its absence IS the assertion (D-587/D-646) -- an upstream arm that attests anything is a
+    Its absence IS the assertion (/) -- an upstream arm that attests anything is a
     mislaunched fork."""
     assert tool.expectation("upstream") == {"attestation": "absent"}
 

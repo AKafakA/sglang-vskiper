@@ -1,4 +1,4 @@
-"""Block 1B-2 (D-419) artifact contract for the binary-cohort count-GEMM configs.
+"""Block 1B-2  artifact contract for the binary-cohort count-GEMM configs.
 
 CPU-only: reads the committed per-device artifacts beside ``sglang.srt.vpipe.kernel``.
 Guards the two properties the cohort body now relies on:

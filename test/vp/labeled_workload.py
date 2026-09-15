@@ -1090,7 +1090,7 @@ def load_bbh_cot(limit: int) -> list[WorkloadItem]:
     CONTINUATION, then the question; tasks interleaved round-robin so any prefix of the
     pool is task-balanced.
 
-    RAW, not chat (D-643). `doc_to_text` is "Q: {{input}}\nA: Let's think step by step.\n"
+    RAW, not chat. `doc_to_text` is "Q: {{input}}\nA: Let's think step by step.\n"
     -- a continuation prompt -- every exemplar ends "So the answer is X.", so the answer
     marker the sole `get-answer` filter needs is PROMPT-INDUCED, and `until`'s "\n\n" is
     the few-shot separator. Under a chat template the model stops continuing and starts
@@ -1100,7 +1100,7 @@ def load_bbh_cot(limit: int) -> list[WorkloadItem]:
     Measured cost of getting this wrong: stock's marker rate was 76.7% under chat vs 98.1%
     under raw, and (D - C) INVERTED from +10.83 pp to -6.54 pp -- a 17 pp swing in the
     direction that flattered us. Raw does not collapse this checkpoint on BBH (0.0% empty
-    both arms), unlike raw gsm8k's 55% (D-632), so the risk that forces chat on gsm8k does
+    both arms), unlike raw gsm8k's 55%, so the risk that forces chat on gsm8k does
     not apply here."""
     import datasets
 
@@ -1676,7 +1676,7 @@ def load_longbench_summary(
 def load_newrow(
     dataset: str, limit: int, tokenizer: Any, context_length: int
 ) -> list[WorkloadItem]:
-    """Balanced long-output rows (D-519): LongBench-Write / LCA library-based
+    """Balanced long-output rows: LongBench-Write / LCA library-based
     code generation from locally staged jsonl (`newrows_local.py`).
 
     Window filter (ruling A1): prompt (chat-templated, measured with the SAME

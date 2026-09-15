@@ -112,7 +112,7 @@ def test_weights_key_selects_the_checkpoint_file(tmp_path):
 
 
 def test_qwen_sharedband_arm_is_a_declared_deviation():
-    """[D-778] The shared-band posture serves the GLOBAL (Llama) band under the Qwen arm's inputs: the rule
+    """The shared-band posture serves the GLOBAL (Llama) band under the Qwen arm's inputs: the rule
     would refuse that band, so `decode_kv_band_policy: shared` must be the only reason it boots, and the
     attestation must say so; every other field is the learned arm's."""
     from sglang.srt.vpipe import design

@@ -2,7 +2,7 @@
 """The two-tree equivalence gate, pinned on the three ways it could lie.
 
 It exists because "behaviour-preserving by construction" is an argument, and an
-argument is not a measurement (D-702). Three properties make the check worth
+argument is not a measurement. Three properties make the check worth
 running at all:
 
   1. it compares `stable_server_identity`, the SAME basis the cross-arm gate
@@ -11,7 +11,7 @@ running at all:
   2. it sends NO requests -- both servers are read at boot, so nothing the
      traffic does can mask or manufacture a difference;
   3. the allowlist DEFAULTS TO EMPTY. A gate whose default is permissive passes
-     on the day it matters (D-256: Gate B passed for weeks on lanes differing by
+     on the day it matters (: Gate B passed for weeks on lanes differing by
      exactly the token it stripped).
 """
 from __future__ import annotations

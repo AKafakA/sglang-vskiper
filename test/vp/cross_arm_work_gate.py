@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Gate A (work==0): cross-arm work identity for the V1 4-arm perf comparison.
 
-GOLDEN RULE (GR-1a / D-134 / SPEC 2026-08-12 "Validation gates" A): a cross-arm
+GOLDEN RULE (GR-1a / / SPEC 2026-08-12 "Validation gates" A): a cross-arm
 throughput/latency comparison is admissible ONLY if, for every request in the
 cell, EVERY arm served the identical input-token count AND generated the
 identical output-token count. This gate checks all arms of a cell against a
@@ -10,7 +10,7 @@ reference identity (the ``V-dec-rs`` = "vpipe" calibration by default, per SPEC
 signed verdict. It exits nonzero on any mismatch.
 
 Promoted from ``codex/campaigns/2026-08-07-rebuilt-benchmark-pipeline`` into
-``test/vp/`` (D-188) with two corrections:
+``test/vp/``  with two corrections:
   1. read the aggregate **LAST** record of the benchmark artifact (reuses
      ``validate_qps_artifact.read_last_record``) — the per-cell rollup is the
      final JSONL line, not the first; the old first-line read returned a warmup
@@ -28,7 +28,7 @@ Usage:
       --arm V-dec-rs=<V-dec-rs>/gsm8k_qps6_rep1.jsonl \
       --out gate_a.json
   # or a fixed frozen table instead of a reference arm:
-  cross_arm_work_gate.py --cell ... --table lengths.json --arm ... --out ...
+  cross_arm_work_gate.py --cell... --table lengths.json --arm... --out...
 """
 from __future__ import annotations
 

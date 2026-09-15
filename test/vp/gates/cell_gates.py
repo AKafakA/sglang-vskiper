@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""The three per-experiment gates (owner contract, D-622).
+"""The three per-experiment gates (owner contract).
 
     G1  CONFIG IDENTITY   BEFORE the cell  -> refuse to run
     G2  EQUAL WORK        AFTER the cell   -> assert; on failure FIX + RERUN
     G3  ZERO ERRORS       AFTER the cell   -> assert; on failure FIX + RERUN
 
 G1 blocks because a wrong configuration cannot be repaired once the GPU is spent -- that is the
-~18 h of A100 time D-609 records. G2 and G3 can only be asserted afterwards, because work
+~18 h of A100 time records. G2 and G3 can only be asserted afterwards, because work
 identity and error counts do not exist until the cell has run.
 
 WHAT HAPPENS ON FAILURE IS THE POINT. A failed G2/G3 makes the cell's numbers NOT QUOTABLE: the
 cell is fixed and re-run, never reinterpreted, re-labelled, or cited with a caveat. This project
 has failed exactly there before -- quarantined numbers kept being cited, and a mechanism
 diagnostic was substituted for a full suite. So a failing cell is marked INVALID.* on disk, the
-same treatment that made the D-609 cells unreadable to every downstream tool.
+same treatment that made the cells unreadable to every downstream tool.
 
     cell_gates.py pre  --tree T --upstream U --workdir W --url URL --arm ARM
-    cell_gates.py post --cell <cell dir> [--arm NAME=results.jsonl ...] [--mark-invalid]
+    cell_gates.py post --cell <cell dir> [--arm NAME=results.jsonl...] [--mark-invalid]
 """
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ def pre(a) -> int:
 
 
 def mark_invalid(cell: Path, why: str) -> None:
-    """Rename so no downstream tool's path pattern can match it (the D-609 treatment)."""
+    """Rename so no downstream tool's path pattern can match it (the treatment)."""
     if cell.name.startswith("INVALID."):
         return
     dest = cell.with_name(f"INVALID.{cell.name}")
@@ -77,7 +77,7 @@ def post(a) -> int:
     `status: "completed" | "accounting_failed"` -- but `accounting_failed` appears NOWHERE else
     in the tree: no analysis tool reads it, so `analyze_qps_evaluation.py` will aggregate a
     failed cell into a table exactly like a passing one. The gate ran, recorded the failure, and
-    nothing refused the number. That is the D-609 pattern, and closing it is this function's job.
+    nothing refused the number. That is the pattern, and closing it is this function's job.
     """
     cell = a.cell
     if not cell.is_dir():

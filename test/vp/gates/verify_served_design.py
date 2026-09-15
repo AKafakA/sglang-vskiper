@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """THE INPUT GATE: refuse to run a campaign unless the server is serving the design.
 
-[D-609/D-614] Every gate this project owns checks the OUTPUT of a measurement -- GR-1a work
+[/] Every gate this project owns checks the OUTPUT of a measurement -- GR-1a work
 identity, GR-2 tables, Accounting-v5, bank audits, straddle rules. **None of them checks that
 the right system was measured.** On 2026-09-09 roughly eighteen hours of A100 time (~$15) went
 into a design the owner had rejected: the intended value was pushed in through

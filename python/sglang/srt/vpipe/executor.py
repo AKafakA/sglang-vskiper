@@ -14,7 +14,7 @@ chosen by the layer's policy:
   compact        packed cohort through the grouped path
   dual_compact   both cohorts packed, per-bucket minimum rows
   binary_cohort  the count-adaptive indexed GEMM in `kernel.py` -- the shipped
-                 prefill body (D-302/D-303)
+                 prefill body (/)
 
 Policy dispatch is precedence-ordered so binary_cohort is chosen BEFORE the
 grouped/compact gates; getting that order wrong silently runs the old body

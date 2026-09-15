@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""RandomSkip sweep as an E2E heatmap (D-754; layout after the Astrolabe SYSTOR'26 sensitivity figure).
+"""RandomSkip sweep as an E2E heatmap (; layout after the Astrolabe SYSTOR'26 sensitivity figure).
 
 Reads a sweep root's per-arm reports (`paired_report.integrated_randomskip_r{R}_d{D}.json`, written by
 run_paired_campaign.py for a spec with several treatments) and renders two panels — E2E mean (left) and

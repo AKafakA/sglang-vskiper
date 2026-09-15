@@ -11,7 +11,7 @@ for v1.4, which is worse than absent. It imports `v13_results_table_ci`, which g
 `ovn-<ds>-r<rate>-rep<N>/results/`, looks for `workgate_*.log` where the driver now writes
 `workgate_*.json`, and hardcodes `ROWS` with **two void knees** (BBH 35, coqa 23; the live ones
 are 25 and 27). Pointed at the new campaign it would either crash or verify the wrong rows. A
-gate that cannot fire is the defect this project keeps re-finding (D-614, D-624 #5, D-627).
+gate that cannot fire is the defect this project keeps re-finding ( #5).
 
 So this reads the ONE source of truth: `paired_analysis.py --json`, which is bound into the run
 flow, applies the GR-1a gating, computes the t-based CI and the straddle rule. **The statistic

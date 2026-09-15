@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""THE DEFAULT-CONFORMANCE GATE (Gate E, D-184 restored; D-757): does ONE server run at
+"""THE DEFAULT-CONFORMANCE GATE (Gate E restored;): does ONE server run at
 SGLang's DEFAULT configuration for its model on its device, except for knobs DECLARED by name?
 
 The cross-arm gate (`verify_cross_arm_config`) asks whether the two arms are comparable to
@@ -7,7 +7,7 @@ EACH OTHER. It cannot see what both arms share: on 2026-09-13 every headline cel
 turned out to carry `dtype float16` on checkpoints published in bf16 and
 `mem_fraction_static 0.8` against a computed default of 0.83, both undeclared, and the
 cross-arm gate passed every one of them because both arms carried the same values.
-D-184 (owner, 2026-08-12) had ordered a default-conformance gate; it was lost in the
+ (owner, 2026-08-12) had ordered a default-conformance gate; it was lost in the
 vpipe-core extraction. This is that gate, as code, refusing at boot.
 
 "Default" means: what `ServerArgs(model_path=<the model>)` resolves to, computed by the
@@ -111,7 +111,7 @@ def resolve_exemptions(exemptions: dict[str, dict[str, Any]], active: str) -> di
 
     Two rule forms: {"value": v, "profile": p?} applies under p (or everywhere when p is absent);
     {"profiles": {p1: v1, p2: v2}} applies under p1 with v1, under p2 with v2, and NOT under any
-    other profile (D-773: fp16 under "paper", bf16 under "paper_bf16", the default elsewhere)."""
+    other profile (: fp16 under "paper", bf16 under "paper_bf16", the default elsewhere)."""
     out: dict[str, dict[str, Any]] = {}
     for field, rule in exemptions.items():
         if "profiles" in rule:
@@ -123,7 +123,7 @@ def resolve_exemptions(exemptions: dict[str, dict[str, Any]], active: str) -> di
 
 
 def same(served: Any, default: Any) -> bool:
-    if isinstance(default, (int, float)) and isinstance(served, (int, float)) \
+    if isinstance(default, (int, float)) and isinstance(served, (int, float))\
             and not isinstance(default, bool) and not isinstance(served, bool):
         return abs(float(served) - float(default)) < 1e-9
     return served == default or str(served) == str(default)

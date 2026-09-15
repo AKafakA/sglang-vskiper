@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Refuse a quality measurement in which the skipper never skipped.
 
-[D-627] On 2026-09-09 a quality run executed **16,702 decode passes with skip: 0**. The regime
+On 2026-09-09 a quality run executed **16,702 decode passes with skip: 0**. The regime
 switch's decode leg enters the skip body only above enter_rows=176; lm-eval drives concurrency
 16, so the arm sat in `prod_allrun` -- the production all-RUN body -- for the entire run. Every
 quality number from it describes a system that never skipped, and none of them was quotable.
 
 Nothing objected, because every gate in the project asks "is the server serving the configuration
 we declared?" and the answer was yes. The configuration was declared correctly and produced no
-skipping. That is the D-609 failure one level up: an input gate cannot catch an error in the
+skipping. That is the failure one level up: an input gate cannot catch an error in the
 intent itself.
 
 So this gate does not compare configuration. It reads the ATTESTED COUNTERS and asks a different
@@ -47,7 +47,7 @@ def skip_and_total(path: Path) -> tuple[int, int, str]:
     There are two, and which one carries the evidence depends on the arm:
 
       regime_switch.counters   admission-gated arms (vskipper, formerly integrated_it4). Counts DECODE PASSES
-                               as skip vs prod_allrun. This is what D-627 was caught with.
+                               as skip vs prod_allrun. This is what was caught with.
       fd_c3.counters           always-route arms (integrated_alwaysskip), whose defining
                                property is `regime_switch: False` -- so its counters are
                                permanently zero and reading them says "nothing ran". Counts
@@ -118,7 +118,7 @@ def skip_and_total(path: Path) -> tuple[int, int, str]:
 
 
 def prefill_evidence(path: Path) -> Optional[dict]:
-    """[D-736] The prefill leg's own metrics, for the delta checks in main(): per-body pass
+    """The prefill leg's own metrics, for the delta checks in main(): per-body pass
     counts, the scheduler's prefill pass count they must add up to, and the engagement
     escape's observation count. None when the arm does not route prefill."""
     vp = _vp_runtime(path)

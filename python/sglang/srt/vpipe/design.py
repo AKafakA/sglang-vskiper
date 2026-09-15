@@ -1,6 +1,6 @@
 """The served design and the canonical arms, as code.
 
-[D-609] WHY THIS FILE EXISTS
+WHY THIS FILE EXISTS
 ---------------------------
 On 2026-09-09 roughly eighteen hours of A100 time measured a design the owner had
 rejected. The intended configuration was pushed in through the environment
@@ -338,7 +338,7 @@ _SWEEP_DEPTH_RATIOS = (0.25, 0.50, 0.75)
 def _rule_band(arm: Mapping[str, Any]) -> dict[str, tuple[int, int]]:
     """The arm's decode K/V band FROM THE RULE (Appendix "band from the roofline"), for the A100.
 
-    [D-764, owner 2026-09-13] Each sweep arm reads its own removable work: a mock that skips a
+    [, owner 2026-09-13] Each sweep arm reads its own removable work: a mock that skips a
     fraction `rate` of rows around a fraction `depth` of the routed set removes rate x depth of
     the routed (row, layer) work, and that is the `s` the rule takes (FlexiDepth's `s` = 0.5 is
     the same quantity: every routed layer's router skips half the rows). The v1.4 sweep served
@@ -623,7 +623,7 @@ def arm_routed_layers() -> tuple[int, ...]:
 def mechanism(value: bool, *, decode_only: bool = False) -> bool:
     """Apply a design constant only where the arm can actually run it.
 
-    [D-609] The constants above describe THE SERVED SKIPPER SYSTEM. They are not
+    The constants above describe THE SERVED SKIPPER SYSTEM. They are not
     universal truths about the process: an arm serving no skipper (``stock``) must have
     every one of them off, and a decode-phase mechanism needs an arm with a decode phase.
 

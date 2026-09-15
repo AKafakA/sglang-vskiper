@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The D-701 split: policy vs projector, pinned as a BEHAVIOUR-PRESERVING refactor.
+"""The split: policy vs projector, pinned as a BEHAVIOUR-PRESERVING refactor.
 
 Before the split, one boolean `requires_flexidepth_weights` answered two different
 questions -- "does the policy read a trained gate?" and "does a skipped row have

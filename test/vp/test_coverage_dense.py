@@ -363,7 +363,7 @@ def test_seam_observe_is_level_triggered_idempotent_in_state() -> None:
 
 
 def test_fused_evidence_allows_both_phases_and_attests_its_scope() -> None:
-    """Lane-2 cut3 item 4 (D-359): the fused evidence kernel is decode-layout and
+    """Lane-2 cut3 item 4: the fused evidence kernel is decode-layout and
     row-capped, so the mode is chosen per PASS. A both-phase deployment is therefore
     legal, must still have decode active, and must say in the attestation that two
     evidence definitions coexist."""
@@ -405,7 +405,7 @@ def test_fused_evidence_allows_both_phases_and_attests_its_scope() -> None:
 
 
 def test_native_dense_low_row_policy_is_unbounded_and_attested() -> None:
-    """Lane-2 cut3 item 1 (D-358): `native_dense` is the serving arm's routed-MLP
+    """Lane-2 cut3 item 1: `native_dense` is the serving arm's routed-MLP
     posture — the model's own dense feed-forward at EVERY occupancy. It carries no
     row bound (setting one is refused) and says so in the attestation."""
     import pytest

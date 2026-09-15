@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""ablation_table.py -- the mechanism-ablation rows for the paper (plan v5 item 1, D-761 add.).
+"""ablation_table.py -- the mechanism-ablation rows for the paper (plan v5 item 1 add.).
 
-usage: ablation_table.py --headline generated/paired_report.json --report stock=PATH --report vdec_fd=PATH ...
+usage: ablation_table.py --headline generated/paired_report.json --report stock=PATH --report vdec_fd=PATH...
                          --dataset gsm8k --knee gsm8k=11 --rows out.tex [--macros out.tex] [--metrics mean_e2e_latency_ms,duration]
 
 One row per (dataset, rate) cell; one column pair per arm (E2E mean delta %, makespan delta %), the headline arm first.

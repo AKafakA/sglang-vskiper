@@ -4,7 +4,7 @@
 The chat-vs-raw question has already had to be re-answered by hand more than once, and
 getting it wrong is not a small error: forcing chat flags onto coqa CREATES a mismatch
 between the lanes rather than fixing one, and running gsm8k raw reproduces the
-FlexiDepth checkpoint's 51.6 %-empty collapse (D-628/D-632). So the driver reads
+FlexiDepth checkpoint's 51.6 %-empty collapse (/). So the driver reads
 `prompt_kind` out of the frozen suite instead of carrying its own table.
 """
 from __future__ import annotations
@@ -111,7 +111,7 @@ def test_no_limit_is_ever_emitted():
 
 
 def test_bbh_uses_the_cot_task_not_the_broken_one():
-    """`bbh_fewshot` scores 0.0 through a leading-space artifact (D-616)."""
+    """`bbh_fewshot` scores 0.0 through a leading-space artifact."""
     assert driver.TASKS["bbh_cot"] == "bbh_cot_fewshot"
     assert "bbh_fewshot" not in driver.TASKS.values()
 
@@ -129,7 +129,7 @@ def test_suite_name_defaults_to_workload_but_is_overridable(tmp_path):
 
 def test_native_arm_gets_a_batch_size_and_served_does_not():
     """lm-eval's default batch_size is 1, which ran a native arm ~15x slower than a served
-    one AND silently differed from the batch_size=8 of D-631/D-632's reference runs. Served
+    one AND silently differed from the batch_size=8 of/'s reference runs. Served
     arms must NOT get it -- the server does the batching."""
     native = driver._lmeval_command(_args(hf_model="/m", batch_size="8"), "gsm8k", "chat_messages")
     assert native[native.index("--batch_size") + 1] == "8"

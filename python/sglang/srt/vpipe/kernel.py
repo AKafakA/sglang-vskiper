@@ -1,4 +1,4 @@
-"""Binary-cohort GEMM primitives — the count-adaptive routed-MLP kernel (D-302/D-303).
+"""Binary-cohort GEMM primitives — the count-adaptive routed-MLP kernel (/).
 
 Replaces the grouped ``fused_moe`` dispatch on routed layers. At low router
 engagement that path taxed the ~84% of rows that still RUN, consuming ~19% of
@@ -26,7 +26,7 @@ Two variants present in the frozen tree are deliberately ABSENT here:
   * ``count_matmul``/``_kernel`` — the non-grid-exit variant, superseded by
     ``count_matmul_gridexit`` (persistent-while loses 2.4-2.7x on A100).
   * ``count_matmul_fused_silu``/``_fused_kernel`` — mainloop activation fusion,
-    REJECTED by D-303 (breaks TC pipelining: 1.68-2.31x vs 1.18-1.41x unfused).
+    REJECTED by (breaks TC pipelining: 1.68-2.31x vs 1.18-1.41x unfused).
 Neither is imported by the executor. Kernel bodies below are byte-identical to
 the frozen tree so route digests and numerics are unchanged.
 """
@@ -411,7 +411,7 @@ def count_matmul_gridexit(
     ``scatter_scale=False`` (hard_mask gate, v1.5) writes the unweighted result: no ``w``
     multiply in the epilogue, hard selection by the route map alone.
 
-    Promoted by D-302/D-303 over the persistent-while ``count_matmul`` (which
+    Promoted by/ over the persistent-while ``count_matmul`` (which
     lost 2.4-2.7x on A100); it is what the binary-cohort MLP path calls.
 
     F4 (lane-2 tax-removal track): ``gather_index`` makes the kernel read row

@@ -219,7 +219,7 @@ def _binary_cohort_mlp(
     prefill_cublas: bool = False,
     route_maps: Optional[tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = None,
 ) -> torch.Tensor:
-    """Count-adaptive binary-cohort MLP (D-302/D-303; design v2.1).
+    """Count-adaptive binary-cohort MLP (/; design v2.1).
 
     pack -> tuned count-GEMM -> silu_mul -> tuned count-GEMM ->
     route-weighted scatter, per branch, over one shared scratch set.
@@ -228,7 +228,7 @@ def _binary_cohort_mlp(
     load fail-closed from the committed per-device artifact; the config
     is selected per bucket-rows at first use (capture-frozen there-
     after). PROJECT GEMMs use their own per-op keys (``projgd``,
-    ``projup``; Block 1B-2, D-419) — the artifact must carry them.
+    ``projup``; Block 1B-2) — the artifact must carry them.
     """
 
     from sglang.srt.vpipe.kernel import (

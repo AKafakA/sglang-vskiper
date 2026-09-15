@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Appendix table: natural-lane generation lengths of both arms per dataset and rate (D-749/D-753).
+"""Appendix table: natural-lane generation lengths of both arms per dataset and rate (/).
 
 Reads harvest directories (`harvest-<ds>-<lbl>/bank.json` for the served arm, `harvest-upstream-<ds>-<lbl>/bank.json`
 for upstream) and emits LaTeX rows: n, mean tokens, runaway count (>= 4096 tokens, i.e. generations that ran to

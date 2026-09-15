@@ -151,8 +151,8 @@ def full_graph_compact_config(
 ) -> bool:
     """Return whether the routed bodies compact, failing closed on a bad value.
 
-    [lane-2 knob cleanup, D-578] This used to return a four-tuple carrying a
-    capacity fraction, a minimum row count and a rounding multiple. After D-574
+    [lane-2 knob cleanup] This used to return a four-tuple carrying a
+    capacity fraction, a minimum row count and a rounding multiple. After
     deleted the capacity-based bodies, the fraction and the min-row count no
     longer reached any computation — they survived only as inputs to attestation
     counters, i.e. they changed what we *reported* about a pass, never what the

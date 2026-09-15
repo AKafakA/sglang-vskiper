@@ -6,7 +6,7 @@ from a historical setup record instead of from the campaign's own requirements, 
 **stock upstream SGLang baseline tree was missing** -- the tree every paired performance cell
 is measured against. Nothing objected. It surfaced only because the owner asked.
 
-That is the same failure as D-609: an intended state that nothing enforced. `verify_served_design`
+That is the same failure as: an intended state that nothing enforced. `verify_served_design`
 closes it for the SERVER's configuration; this closes it for the campaign's INPUTS.
 
 The baseline is not optional and is not interchangeable with the `stock` ARM:
@@ -15,7 +15,7 @@ The baseline is not optional and is not interchangeable with the `stock` ARM:
     stock arm             OUR fork with the skipper inert -- proves the tree adds nothing
                           when off; a 32-request correctness control, NOT a baseline
 
-D-597 measured the two within 0.15 %, but that was one measurement. Treating it as permanent
+ measured the two within 0.15 %, but that was one measurement. Treating it as permanent
 licence to skip upstream would be assuming exactly what wants checking.
 
 Exit non-zero = DO NOT RUN. A campaign script must treat that as fatal, never a warning.

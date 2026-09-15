@@ -1,4 +1,4 @@
-"""Locally staged rows for the balanced long-output rows (owner D-519, 2026-09-06).
+"""Locally staged rows for the balanced long-output rows (owner, 2026-09-06).
 
 Two datasets, read from a staged directory (CSD3 has no outbound network; the
 staging happens on a box with network and the files travel with a MANIFEST that
