@@ -87,6 +87,8 @@ if [ "$RESCORE" = 1 ]; then
     --cells "$PACK"/quality-lane-raw/harvest-*/cell/*.qual_*_rep1.jsonl --out "$OUT/loaded_all.rescored.json"
   LOADED=$OUT/loaded_all.rescored.json
 fi
+python3 "$VP/f1_macros.py" "$PACK/F1" --macros "$OUT/f1_macros.tex"
+python3 "$VP/loaded_shares.py" --raw "$PACK/quality-lane-raw" --macros "$OUT/loaded_shares_macros.tex" --json "$OUT/loaded_shares.json"
 python3 "$VP/loaded_quality_table.py" "$LOADED" \
   --rows "$OUT/loaded_quality_rows.tex" --sweep-rows "$OUT/loaded_quality_sweep.tex" \
   --macros "$OUT/loaded_quality_macros.tex"

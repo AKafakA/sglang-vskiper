@@ -128,6 +128,29 @@ def main() -> int:
           f"(B-A) {rep['B_minus_A']['mean_pp']:+.2f} ± {rep['B_minus_A']['ci95_half_pp']:.2f} pp | "
           f"(D-C) {rep['D_minus_C']['mean_pp']:+.2f} ± {rep['D_minus_C']['ci95_half_pp']:.2f} pp | "
           f"paired d-o-d {z['mean_pp']:+.2f} ± {z['ci95_half_pp']:.2f} pp -> {rep['verdict']}")
+    extra = []   # extra macros, with {macro} filled in below
+    if args.dataset == "gsm8k" and SPEC["gsm8k"][1] == "__composite__":
+        # The three readings (App. E.2): the same paired d-o-d under each published filter alone. The
+        # composite is the reported one; the two others show how much the filter choice moves the result.
+        readings = {}
+        for flt, tag in (("strict-match", "Strict"), ("flexible-extract", "Flex")):
+            saved = SPEC["gsm8k"]; SPEC["gsm8k"] = (saved[0], flt, saved[2])
+            try:
+                pf = {k: load_arm(v, "gsm8k") for k, v in arms.items()}
+            finally:
+                SPEC["gsm8k"] = saved
+            if set.intersection(*(set(v) for v in pf.values())) != keys:
+                sys.exit(f"FATAL: the {flt} reading scores a different document set")
+            df = [(pf["D"][k] - pf["C"][k]) - (pf["B"][k] - pf["A"][k]) for k in keys]
+            st = stats(df); readings[flt] = {"dod": st, "means": {q: 100 * sum(pf[q][k] for k in keys) / n for q in pf}}
+            extra += [f"\\newcommand{{\\{args.macro_prefix}{{macro}}Dod{tag}}}{{{st['mean_pp']:+.2f}}}",
+                      f"\\newcommand{{\\{args.macro_prefix}{{macro}}Dod{tag}Ci}}{{{st['ci95_half_pp']:.2f}}}"]
+        allm = [rep["dod"]["mean_pp"]] + [r["dod"]["mean_pp"] for r in readings.values()]
+        spread = max(allm) - min(allm)
+        extra.append(f"\\newcommand{{\\{args.macro_prefix}{{macro}}DodFilterSpread}}{{{spread:.2f}}}")
+        rep["readings"] = readings
+        print(f"  readings: strict {readings['strict-match']['dod']['mean_pp']:+.2f} ± {readings['strict-match']['dod']['ci95_half_pp']:.2f} | "
+              f"flexible {readings['flexible-extract']['dod']['mean_pp']:+.2f} ± {readings['flexible-extract']['dod']['ci95_half_pp']:.2f} | spread {spread:.2f} pp")
     if args.json:
         json.dump(rep, open(args.json, "w"), indent=1)
     if args.latex:
@@ -162,7 +185,8 @@ def main() -> int:
             f"\\newcommand{{\\{args.macro_prefix}{macro}ArmD}}{{{m['D']/100:.4f}}}",
             f"\\newcommand{{\\{args.macro_prefix}{macro}ArmC}}{{{m['C']/100:.4f}}}",
             f"\\newcommand{{\\{args.macro_prefix}{macro}DodLower}}{{{z['mean_pp'] - z['ci95_half_pp']:+.2f}}}",
-        ]) + "\n"
+            f"\\newcommand{{\\{args.macro_prefix}{macro}ArmCPct}}{{{m['C']:.1f}}}",
+        ] + [e.replace("{macro}", macro) for e in extra]) + "\n"
         with open(args.latex, "a") as fh:
             fh.write(row)
         mpath = args.macros or os.path.join(os.path.dirname(args.latex), "quality_macros.tex")

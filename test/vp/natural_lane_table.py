@@ -33,7 +33,7 @@ def main():
     ap.add_argument("--alwaysroute-lmeval", help="its lm-eval scores")
     a = ap.parse_args(); d = json.load(open(a.summary)); rows, macros = [], []
     ar = json.load(open(a.alwaysroute)) if a.alwaysroute else {}
-    lm = {}
+    lm, lm_all = {}, {}
     src = dict(json.load(open(a.lmeval)))
     if a.alwaysroute_lmeval:
         src.update(json.load(open(a.alwaysroute_lmeval)))
@@ -43,6 +43,9 @@ def main():
         sc = rec["scores"]; q = sc.get("exact_match,flexible-extract", sc.get("exact_match,get-answer", sc.get("f1")))
         arm = "alwaysroute" if (m.group(1) or "").startswith("integrated_alwaysskip") else ("upstream" if m.group(1) else "vskipper")
         lm[(arm, m.group(2), m.group(3))] = q
+        lm_all[(arm, m.group(2), m.group(3))] = sc
+    def scores_for(rec, ds, arm, lbl):
+        return lm_all.get((arm, ds, lbl), {})
     def quality(rec, ds, arm, lbl):
         return lm[(arm, ds, lbl)]
     for ds, labels in LABELS.items():
@@ -67,6 +70,12 @@ def main():
             dq = 100 * (quality(v, ds, "vskipper", lbl) - quality(u, ds, "upstream", lbl)); dtps = 100 * (tps(v) - tps(u)) / tps(u)
             macros.append(f"\\newcommand{{\\vpNatUp{MW[ds] + WORD[rate]}Qual}}{{{100*quality(u, ds, 'upstream', lbl):.1f}}}")
             macros.append(f"\\newcommand{{\\vpNatHyb{MW[ds] + WORD[rate]}Qual}}{{{100*quality(v, ds, 'vskipper', lbl):.1f}}}")
+            if ds == "gsm8k":
+                # the two published GSM8K filters, served minus upstream, for the banks appendix's divergence sentence
+                for key, tag in (("exact_match,flexible-extract", "FlexDelta"), ("exact_match,strict-match", "StrictDelta")):
+                    su, sv = scores_for(u, ds, 'upstream', lbl).get(key), scores_for(v, ds, 'vskipper', lbl).get(key)
+                    if su is not None and sv is not None:
+                        macros.append(f"\\newcommand{{\\vpNatGsm{WORD[rate]}{tag}}}{{{100*(sv-su):+.1f}}}")
             rows.append(f" & & \\emph{{stack $\\Delta$}} & {v['cap_hits']-u['cap_hits']:+d} & {pct('mean_out_tokens'):+.0f}\\% & {pct('mean_ttft_ms'):+.0f}\\% & {pct('mean_tpot_ms'):+.0f}\\% & {pct('mean_e2e_s'):+.0f}\\% & {dtps:+.0f}\\% & {pct('duration_s'):+.0f}\\% \\\\")
             if lbl == labels[-1][0]: rows.append(r"\addlinespace")
             tag = MW[ds] + WORD[rate]
