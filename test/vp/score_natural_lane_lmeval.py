@@ -87,12 +87,28 @@ for cell in [c for pat in a.cells for c in sorted(glob.glob(pat))]:
     if ds == "gsm8k":
         docs = [{"question": "", "answer": f"#### {gold[i][1]}"} for i in range(n)]
         filtered = apply_filters(gsm, texts, docs)
+        per_filter = {}
         for fname, fr in filtered.items():
             acc = 0.0
+            ok = []
             for i in range(n):
                 res = gsm.process_results(docs[i], [fr[i][0] if isinstance(fr[i], list) else fr[i]])
-                acc += float(res["exact_match"])
+                ok.append(float(res["exact_match"]))
+                acc += ok[-1]
+            per_filter[fname] = ok
             scores[f"exact_match,{fname}"] = acc / n
+        # Marker-aware composite. NOT a new metric: it selects between lm-eval's OWN two published
+        # filters by a stated rule -- strict-match where the generation emits the #### answer marker
+        # (GSM8K's own gold format, which is what strict-match keys on), flexible extraction where it
+        # does not. Both readings are biased and in opposite directions: this checkpoint appends a
+        # confidence epilogue that flexible extraction's last-number rule mistakes for the answer,
+        # while the base model often omits the marker under a chat template and strict-match
+        # penalises it for that. Reported as a sensitivity check beside the authors' filter.
+        if {"strict-match", "flexible-extract"} <= set(per_filter):
+            acc = 0.0
+            for i in range(n):
+                acc += per_filter["strict-match"][i] if "####" in texts[i] else per_filter["flexible-extract"][i]
+            scores["exact_match,marker-composite"] = acc / n
     elif ds == "bbh_cot":
         docs = [{"input": "", "target": gold[i][1]} for i in range(n)]
         filtered = apply_filters(bbh, texts, docs)

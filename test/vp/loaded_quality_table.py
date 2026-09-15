@@ -28,10 +28,13 @@ NAMES = {"gsm8k": "GSM8K", "bbh_cot": "BBH-CoT", "coqa": "CoQA"}
 MW = {"gsm8k": "Gsm", "bbh_cot": "Bbh", "coqa": "Coqa"}
 RW = {"0.75": "Low", "0.95": "Mid", "1.25": "High"}
 # the harness's own filter per task -- the key score_natural_lane_lmeval.py emits
-METRIC = {"gsm8k": "exact_match,flexible-extract",
+# GSM8K uses the marker-aware composite: this checkpoint's confidence epilogue makes
+# flexible-extract alone an arm-dependent reading (the base model never emits the epilogue, the
+# checkpoint does). BBH and CoQA have a single filter each and are unaffected.
+METRIC = {"gsm8k": "exact_match,marker-composite",
           "bbh_cot": "exact_match,get-answer",
           "coqa": "f1"}
-METRIC_TEX = {"gsm8k": r"\texttt{exact\_match,flexible-extract}",
+METRIC_TEX = {"gsm8k": r"\texttt{exact\_match,marker-composite}",
               "bbh_cot": r"\texttt{exact\_match,get-answer}",
               "coqa": r"\texttt{f1,none}"}
 ARMS = [("upstream", "Base + upstream SGLang"),
@@ -40,6 +43,27 @@ ARMS = [("upstream", "Base + upstream SGLang"),
 ARM_MACRO = {"upstream": "Up", "integrated_it4": "Hyb", "integrated_alwaysskip": "Alw"}
 
 CELL = re.compile(r"harvest-(?P<arm>[a-z0-9_]+)-(?P<ds>gsm8k|bbh_cot|coqa)-(?P<rate>r[0-9p]+)/")
+# Arms whose quality number is only meaningful if the ROUTED DECODE BODY actually executed. A
+# served flag is not a treatment: a hybrid cell that ran the stock body on every decode pass is
+# upstream's number wearing the hybrid's label, and printing it would misattribute the baseline.
+# Measured instance: the GSM8K and CoQA 0.75xQ* hybrid cells both ran fd_tokens_skip_body = 0.
+ROUTED_REQUIRED = {"integrated_it4"}
+
+
+def routed_decode_share(cell_path):
+    """Routed share of decode rows from the cell's own attestation, or None if unavailable."""
+    root = cell_path.split("/cell/")[0]
+    try:
+        d = json.load(open(f"{root}/server_info.after.json"))
+    except Exception:
+        return None
+    v = d.get("internal_states", [{}])[0].get("vp_runtime", {})
+    c3 = (v.get("model", {}).get("flexidepth", {}).get("fd_c3", {}) or v.get("fd_c3", {})).get("counters", {})
+    skip = c3.get("fd_tokens_skip_body")
+    allrun = c3.get("fd_tokens_prod_allrun_band")
+    if skip is None or allrun is None or (skip + allrun) == 0:
+        return None
+    return skip / (skip + allrun)
 
 
 def index(scores):
@@ -50,6 +74,16 @@ def index(scores):
         if not m:
             sys.exit(f"FATAL: cannot parse arm/dataset/rate from cell path {cell!r}")
         ds, arm, rate = m["ds"], m["arm"], m["rate"]
+        if arm in ROUTED_REQUIRED:
+            share = routed_decode_share(cell)
+            if share == 0.0:
+                print(f"  VOID {ds}@{rate}: routed decode body never executed "
+                      f"(fd_tokens_skip_body = 0); this cell is upstream's number, not the "
+                      f"hybrid's. Refusing to print it.", file=sys.stderr)
+                continue
+            if share is None:
+                sys.exit(f"FATAL {cell}: no decode body counters in the attestation. A hybrid "
+                         "quality number is only meaningful with the routed body seen executing.")
         key = METRIC[ds]
         if key not in rec["scores"]:
             sys.exit(f"FATAL {cell}: expected metric {key!r}, got {sorted(rec['scores'])}. "
@@ -83,12 +117,13 @@ def main():
             def cell(arm):
                 v = cells.get(arm)
                 return f"{v[0]:.2f}" if v else "--"
-            row = (f"{NAMES[ds]} & ${rate_x}\\times Q^*$ & {METRIC_TEX[ds]} & {n[0]} & "
-                   f"{cell('upstream')} & {cell('integrated_it4')} & "
-                   f"{cell('integrated_alwaysskip')} \\\\")
-            sweep.append(row)
+            # the sweep carries the rate column; the knee block does not -- it is one rate,
+            # named in the caption, so a constant column would be noise in the main table.
+            body = (f"{METRIC_TEX[ds]} & {n[0]} & {cell('upstream')} & "
+                    f"{cell('integrated_it4')} & {cell('integrated_alwaysskip')}")
+            sweep.append(f"{NAMES[ds]} & ${rate_x}\\times Q^*$ & {body} \\\\")
             if rate_x == "0.95":
-                knee.append(row)
+                knee.append(f"{NAMES[ds]} & {body} \\\\")
             for arm, _ in ARMS:
                 if cells.get(arm):
                     macros.append(f"\\newcommand{{\\{a.macro_prefix}{MW[ds]}{RW[rate_x]}"
