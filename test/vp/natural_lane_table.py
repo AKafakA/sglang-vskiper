@@ -54,10 +54,10 @@ def main():
             if any((arm, ds, lbl) not in lm for arm in ("upstream", "vskipper")):
                 print(f"  {ds} {lbl}: no lm-eval score for both arms -> cell skipped", file=sys.stderr); continue
             for arm, r in (("upstream", u), ("vskipper", v)):
-                rows.append(f"{NAMES[ds] if arm == 'upstream' else ''} & {rate if arm == 'upstream' else ''} & {STACK[arm]} & {100*quality(r, ds, arm, lbl):.1f} & {r['cap_hits']} & {r['mean_out_tokens']:.0f} & {r['mean_ttft_ms']:.0f} & {r['mean_tpot_ms']:.1f} & {r['mean_e2e_s']:.1f} & {tps(r):.0f} & {r['duration_s']:.0f} \\\\")
+                rows.append(f"{NAMES[ds] if arm == 'upstream' else ''} & {rate if arm == 'upstream' else ''} & {STACK[arm]} & {r['cap_hits']} & {r['mean_out_tokens']:.0f} & {r['mean_ttft_ms']:.0f} & {r['mean_tpot_ms']:.1f} & {r['mean_e2e_s']:.1f} & {tps(r):.0f} & {r['duration_s']:.0f} \\\\")
             w = ar.get(ds, {}).get(lbl)
             if w is not None and ("alwaysroute", ds, lbl) in lm:
-                rows.append(f" & & FlexiDepth always-route & {100*quality(w, ds, 'alwaysroute', lbl):.1f} & {w['cap_hits']} & {w['mean_out_tokens']:.0f} & {w['mean_ttft_ms']:.0f} & {w['mean_tpot_ms']:.1f} & {w['mean_e2e_s']:.1f} & {tps(w):.0f} & {w['duration_s']:.0f} \\\\")
+                rows.append(f" & & FlexiDepth always-route & {w['cap_hits']} & {w['mean_out_tokens']:.0f} & {w['mean_ttft_ms']:.0f} & {w['mean_tpot_ms']:.1f} & {w['mean_e2e_s']:.1f} & {tps(w):.0f} & {w['duration_s']:.0f} \\\\")
                 tag = MW[ds] + WORD[rate]
                 macros.append(f"\\newcommand{{\\vpNatAll{tag}Qual}}{{{100*quality(w, ds, 'alwaysroute', lbl):.1f}}}")
                 macros.append(f"\\newcommand{{\\vpNatAll{tag}EtoE}}{{{w['mean_e2e_s']:.1f}}}")
@@ -67,7 +67,7 @@ def main():
             dq = 100 * (quality(v, ds, "vskipper", lbl) - quality(u, ds, "upstream", lbl)); dtps = 100 * (tps(v) - tps(u)) / tps(u)
             macros.append(f"\\newcommand{{\\vpNatUp{MW[ds] + WORD[rate]}Qual}}{{{100*quality(u, ds, 'upstream', lbl):.1f}}}")
             macros.append(f"\\newcommand{{\\vpNatHyb{MW[ds] + WORD[rate]}Qual}}{{{100*quality(v, ds, 'vskipper', lbl):.1f}}}")
-            rows.append(f" & & \\emph{{stack $\\Delta$}} & {dq:+.1f}~pp & {v['cap_hits']-u['cap_hits']:+d} & {pct('mean_out_tokens'):+.0f}\\% & {pct('mean_ttft_ms'):+.0f}\\% & {pct('mean_tpot_ms'):+.0f}\\% & {pct('mean_e2e_s'):+.0f}\\% & {dtps:+.0f}\\% & {pct('duration_s'):+.0f}\\% \\\\")
+            rows.append(f" & & \\emph{{stack $\\Delta$}} & {v['cap_hits']-u['cap_hits']:+d} & {pct('mean_out_tokens'):+.0f}\\% & {pct('mean_ttft_ms'):+.0f}\\% & {pct('mean_tpot_ms'):+.0f}\\% & {pct('mean_e2e_s'):+.0f}\\% & {dtps:+.0f}\\% & {pct('duration_s'):+.0f}\\% \\\\")
             if lbl == labels[-1][0]: rows.append(r"\addlinespace")
             tag = MW[ds] + WORD[rate]
             for name, val in (("OutTok", pct("mean_out_tokens")), ("EtoE", pct("mean_e2e_s")), ("TPOT", pct("mean_tpot_ms")), ("TPS", dtps), ("Qual", dq), ("Makespan", pct("duration_s"))):

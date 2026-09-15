@@ -22,7 +22,7 @@ GATES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # These are plumbing (where to write, which interpreter), not design -- but there is
 # no reason for a second mechanism, and a hardcoded dev-box path is how this script
 # failed on the A100.
-_HC="${SGLANG_VP_HOST_CONFIG:-}"
+_HC="${SGLANG_VP_HOST_CONFIG:-${VP_GATE_HOST_CONFIG:-}}"
 if [ -n "$_HC" ] && [ -f "$_HC" ]; then
   W="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('gate_workdir',''))" "$_HC")"
   VP_GATE_PYTHON="${VP_GATE_PYTHON:-$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('serve_python',''))" "$_HC")}"
@@ -41,7 +41,7 @@ rm -rf "$OUT"; mkdir -p "$OUT"
 # export that fails to reach the server is indistinguishable from one that worked,
 # which is how eighteen hours ran on a rejected design. The arm goes into the
 # durable file the served path reads, and the design comes from the tree.
-PYTHONPATH=$TREE/python "$VP_GATE_PYTHON" - "$ARM" "$TREE" <<'ARMPY'
+PYTHONPATH=$TREE/python "$V" - "$ARM" "$TREE" <<'ARMPY'
 import importlib.util, pathlib, sys
 arm, tree = sys.argv[1], pathlib.Path(sys.argv[2])
 # design.py is loaded BY PATH, but it is no longer dependency-free: it lazily imports
@@ -55,7 +55,7 @@ d.resolve_arm(arm)                                    # fails closed on an unkno
 print(f"active arm -> {arm}")
 ARMPY
 [ $? -eq 0 ] || { echo "FATAL: arm $ARM is not a canonical arm"; exit 2; }
-export SGLANG_VP_HOST_CONFIG="${VP_GATE_HOST_CONFIG:-$TREE/deploy/hosts/vast-a100.json}"
+export SGLANG_VP_HOST_CONFIG="${VP_GATE_HOST_CONFIG:-$TREE/deploy/hosts/a100.json}"
 unset SGLANG_MOE_CONFIG_DIR
 # Stock mode: strip EVERY vpipe knob (including the weights remap above) so
 # the server is genuinely stock — the per-family stock-inertness gate serves
