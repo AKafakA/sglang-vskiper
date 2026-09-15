@@ -9,7 +9,7 @@
 # reference tree (c3a1302668), nvcc. See gates/README.md for the env contract.
 set -uo pipefail
 GATES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-W="${VP_GATE_WORKDIR:-/local/scratch/tmp/wd312}"
+W="${VP_GATE_WORKDIR:-/tmp/vpipe-gates}"
 TREE="${VP_GATE_TREE:-$(cd "$GATES_DIR/../../.." && pwd)}"
 FROZEN="${VP_GATE_FROZEN_TREE:-$W/tree-frozen-c3a1302668}"
 V="${VP_GATE_PYTHON:-$W/sglang-sm75/.venv/bin/python}"
@@ -18,7 +18,7 @@ NVCC="${VP_GATE_NVCC:-/usr/local/cuda-13.0/bin/nvcc}"
 LOG(){ echo "[$(date -u +%FT%TZ)] $*"; }
 LOG "=== BOX GATES start  tree=$TREE"
 
-LOG "--- 0. frozen-tree requires_grad fix (the declared identical fix from the CSD3 A/B)"
+LOG "--- 0. frozen-tree requires_grad fix (the declared identical fix from the cluster A/B)"
 FROZEN_TREE_PATH="$FROZEN" python3 - <<'PY'
 import os
 p = os.environ["FROZEN_TREE_PATH"] + "/python/sglang/srt/models/llama.py"
