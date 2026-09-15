@@ -141,6 +141,18 @@ def main():
                     macros.append(f"\\newcommand{{\\{a.macro_prefix}{MW[ds]}{RW[rate_x]}{tag}Ci}}"
                                   f"{{{ci:.2f}}}")
 
+    # Appendix E.4's mechanism numbers, generated rather than typed: the spread of each arm across
+    # the rungs it is reported at. The hybrid's spread is the regime switch's signature and the
+    # switch-free arms' spreads are the contrast, so neither may drift from the table above it.
+    for ds in ("gsm8k", "coqa", "bbh_cot"):
+        for arm, tag in (("upstream", "Up"), ("integrated_it4", "Hyb"),
+                         ("integrated_alwaysskip", "Alw")):
+            vals = [idx[(ds, arm, r)][0] for r, _ in RATES[ds] if (ds, arm, r) in idx]
+            if len(vals) >= 2:
+                macros.append(f"\\newcommand{{\\{a.macro_prefix}{MW[ds]}{tag}Spread}}"
+                              f"{{{max(vals) - min(vals):.2f}}}")
+                macros.append(f"\\newcommand{{\\{a.macro_prefix}{MW[ds]}{tag}Rungs}}{{{len(vals)}}}")
+
     if not knee:
         sys.exit("FATAL: no 0.95xQ* cells scored; the main-table block would be empty.")
     open(a.rows, "w").write("\n".join(knee) + "\n")
