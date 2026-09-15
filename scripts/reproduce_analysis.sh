@@ -131,4 +131,4 @@ done
 
 echo
 echo "Done. $(ls "$OUT"/*.tex | wc -l) LaTeX fragments in $OUT."
-echo "Compare against the shipped set:  diff -r $OUT versions/1.5.6/generated"
+echo "Compare against the shipped set:  diff -r $OUT versions/1.5.7/generated"
