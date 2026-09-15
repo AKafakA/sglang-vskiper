@@ -123,7 +123,14 @@ def main():
             # named in the caption, so a constant column would be noise in the main table.
             body = (f"{METRIC_TEX[ds]} & {n[0]} & {cell('upstream')} & "
                     f"{cell('integrated_it4')} & {cell('integrated_alwaysskip')}")
-            sweep.append(f"{NAMES[ds]} & ${rate_x}\\times Q^*$ & {body} \\\\")
+            # the sweep rows also carry the hybrid's two paired differences with their intervals
+            # (E.4 promises "each cell's interval is reported with it"); the knee block keeps them in prose
+            def paired_col(other):
+                h, w = cells.get("integrated_it4"), cells.get(other)
+                hv, wv = rows_by_key.get((ds, "integrated_it4", rate_lbl)), rows_by_key.get((ds, other, rate_lbl))
+                if not (h and w and hv and wv) or len(hv) != len(wv): return "--"
+                d, ci = paired_ci(hv, wv); return f"${d:+.2f} \\pm {ci:.2f}$"
+            sweep.append(f"{NAMES[ds]} & ${rate_x}\\times Q^*$ & {body} & {paired_col('upstream')} & {paired_col('integrated_alwaysskip')} \\\\")
             if rate_x == "0.95":
                 knee.append(f"{NAMES[ds]} & {body} \\\\")
             for arm, _ in ARMS:
