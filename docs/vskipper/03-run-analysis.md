@@ -72,8 +72,14 @@ the table renders two stacks per cell instead of three, and no error is raised.
 ## Check
 
 ```bash
-diff -r $OUT versions/1.5.7/generated
+diff -r $OUT ../paper/vskipper/generated
 ```
 
 Every `.tex` fragment must be byte-identical. Two expected exceptions: `bank_policy.tex`, which is one line
 written from a shell variable, and the figure images themselves, whose derived macros are compared instead.
+
+**Why `generated/` and not a version snapshot.** `generated/` is the directory the PDF is typeset from, and it is
+committed, so it cannot drift from the paper you are holding. The `versions/<x.y>/` directories are historical
+archives of past builds; targeting one of those made this check go stale the moment anyone corrected a number,
+and a reader would have seen diffs that were not theirs. If you want to reproduce a *specific* past build, check
+that tag out first and compare against its own `generated/`.
