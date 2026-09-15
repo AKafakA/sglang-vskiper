@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Drop decision identifiers from docstrings, using Python's own tokenizer.
+"""Drop decision identifiers from docstrings and comments, using Python's own tokenizer.
 
 The comment-line pass (`scrub_decision_ids.py`) deliberately refuses to touch anything but a
 comment, because a regex over whole lines broke three files by firing inside string literals.
@@ -50,7 +50,12 @@ def scrub(path: pathlib.Path):
         return None
     out, changed = [], False
     for tok in tokenize.generate_tokens(io.StringIO(src).readline):
-        if tok.type == tokenize.STRING and tok.start in spans and re.search(ID, tok.string):
+        is_doc = tok.type == tokenize.STRING and tok.start in spans
+        # COMMENT tokens too: the line-based pass only saw comments that START a line, so a
+        # trailing `# [D-nnn] ...` on a code line survived it. The tokenizer knows the difference
+        # between a comment and a `#` inside a string, which is what made the regex unsafe.
+        is_comment = tok.type == tokenize.COMMENT
+        if (is_doc or is_comment) and re.search(ID, tok.string):
             new = tok.string
             for rx, sub in RULES:
                 new = rx.sub(sub, new)

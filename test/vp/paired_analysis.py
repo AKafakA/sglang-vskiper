@@ -49,7 +49,7 @@ LATENCY_METRICS = [
     # a throughput in the paper: the drain of the few longest requests decides it.
     ("makespan", "duration"),
     ("drain", "drain_s"),   # makespan - injection window: the tail after the last arrival (the pinned natural lengths' longest requests)
-]  # [D-750 add.2, owner 09-13] p95 added: reported, not gated (the bank-set rule is on the means)
+]  # [ add.2, owner 09-13] p95 added: reported, not gated (the bank-set rule is on the means)
 THROUGHPUT_METRICS = [("output TPS", "output_throughput"),
                       ("injected rate", "injected_rate")]  # requests / injection window: the arrival rate the client actually delivered (open-loop check)
 

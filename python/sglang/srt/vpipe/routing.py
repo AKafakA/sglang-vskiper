@@ -183,7 +183,7 @@ def fd_parity_trace_tensor(
 ) -> None:
     """Persist one target row for deterministic direct-vs-full-graph parity diagnostics."""
 
-    directory = ""  # [D-609] pinned; trace knob, not configurable
+    directory = ""  # pinned; trace knob, not configurable
     target_epoch = 0
     if not directory or tensor is None or token_epoch != target_epoch:
         return
@@ -238,7 +238,7 @@ def fd_parity_trace_context(layer_id: int, forward_batch):
             "FlexiDepth prefill parity trace prefix lengths do not match requests"
         )
     offset = int(
-        "-1"  # [D-609] pinned; trace knob, not configurable
+        "-1"  # pinned; trace knob, not configurable
     )
     request_tokens = lengths[request_index]
     normalized_offset = offset if offset >= 0 else request_tokens + offset
@@ -258,7 +258,7 @@ def _fdvp_router_graph_max_rows():
     try:
         return max(
             0,
-            64,  # [D-609] pinned; trace knob, not configurable
+            64,  # pinned; trace knob, not configurable
         )
     except ValueError:
         return 64
@@ -267,7 +267,7 @@ def _fdvp_router_graph_max_entries():
         return max(
             0,
             int(
-                "4"  # [D-609] pinned; trace knob, not configurable
+                "4"  # pinned; trace knob, not configurable
             ),
         )
     except ValueError:
@@ -374,7 +374,7 @@ class FDRouter(nn.Module):
         # Router norm. DEFAULT = FDRMSNorm, which reproduces the released
         # FlexiDepth checkpoint's routing EXACTLY and is what the oracle and the
         # route-digest gate expect.
-        #
+         
         # Opting into the fused kernel (SGLANG_FD_FUSED_ROUTER_NORM=1) collapses
         # ~6-8 elementwise launches per routed layer per step into one and buys a
         # MEASURED 0.32 ms/step of flat decode tax, but it is NOT route-identical:

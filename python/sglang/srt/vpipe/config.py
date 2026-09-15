@@ -12,7 +12,7 @@ env must fail closed, not silently select the other branch.
 
 from __future__ import annotations
 
-from sglang.srt.vpipe.design import (  # [D-609] the design is code
+from sglang.srt.vpipe.design import (  # the design is code
     SERVED_COMPACT_ENABLED, SERVED_CONDITIONAL_GRAPH, SERVED_DEVICE_ROUTE_DIGEST,
     SERVED_DEVICE_ROUTE_TAPE, SERVED_LAYER_COUNTERS, SERVED_LAYER_POLICY,
     SERVED_MASKED_DECODE_ATTENTION, SERVED_PREFILL_GROUPED_MLP,
@@ -81,7 +81,7 @@ def full_graph_eager_semantic_debug_enabled(
     """Return whether the trace-only eager execution gate is enabled."""
 
     # design constant, not an environment read
-    return False  # debug knob, deleted (D-609)
+    return False  # debug knob, deleted 
 def full_graph_defer_project_kv_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
@@ -95,14 +95,14 @@ def full_graph_batched_commit_enabled(
     """Return whether per-layer deferred commits fuse into one launch."""
 
     # design constant, not an environment read
-    return False  # feature dropped (D-578); refused by validation
+    return False  # feature dropped; refused by validation
 def full_graph_commit_overlap_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
     """Return whether the deferred K/V commit overlaps the logits suffix."""
 
     # design constant, not an environment read
-    return False  # feature dropped (D-578); refused by validation
+    return False  # feature dropped; refused by validation
 def full_graph_forced_all_run_fastpath_enabled(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:
@@ -145,7 +145,7 @@ def full_graph_virtual_cohort_enabled(
     """Return whether compact branches use mapped virtual-tensor I/O."""
 
     # design constant, not an environment read
-    return False  # superseded by binary_cohort (D-574)
+    return False  # superseded by binary_cohort 
 def full_graph_compact_config(
     environ: Optional[Mapping[str, str]] = None,
 ) -> bool:

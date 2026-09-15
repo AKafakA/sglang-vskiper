@@ -36,8 +36,8 @@ _STAGE_DIR_ENV = "VP_NEWROWS_STAGE_DIR"
 FILES = {
     "longbench_write": "longbench_write.jsonl",
     "lca_libgen": "lca_libgen.jsonl",
-    "lca_libgen_noapi": "lca_libgen.jsonl",  # same rows, instruction-only prompt (D-526)
-    "lca_libgen_official": "lca_libgen.jsonl",  # same rows, benchmark protocol (D-531)
+    "lca_libgen_noapi": "lca_libgen.jsonl",  # same rows, instruction-only prompt 
+    "lca_libgen_official": "lca_libgen.jsonl",  # same rows, benchmark protocol 
     "longwriter6k": "longwriter6k.jsonl",  # serving-scale writing row (owner 2026-09-06)
     "livecodebench": "livecodebench.jsonl",  # serving-scale code row (owner 2026-09-06)
 }

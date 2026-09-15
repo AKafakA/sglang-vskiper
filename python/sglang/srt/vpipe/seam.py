@@ -10,7 +10,7 @@ lm-level take the ForCausalLM wrapper.
 
 import os
 from functools import lru_cache
-from sglang.srt.vpipe.design import (  # [D-609] design/host paths are code
+from sglang.srt.vpipe.design import (  # design/host paths are code
     active_arm_name,
     design_attestation,
     flexidepth_weights_path,
@@ -230,7 +230,7 @@ def maybe_fd_layer_forward(layer, positions, hidden_states, forward_batch, resid
         # direct_eager: the quality-attribution reference. It answers whether
         # a quality result is the checkpoint's or vPipe's execution of it, so
         # it is a gate instrument, never a performance path.
-        #
+         
         # Only the plain body is carried. The pre-refactor tree also had
         # fd_layer_forward_vp{,_coalesced} (gated on SGLANG_FD_VP_PROJECT,
         # the removed V1 path) and fd_layer_forward_eager_compact (gated on
@@ -287,7 +287,7 @@ def attach_vp_model(model, config):
     # ref can therefore yield commit A for the config and commit B for the
     # weights, and loaders like DummyModelLoader do not derive weights from
     # that snapshot at all.
-    #
+     
     # So the OPERATOR DECLARATION is authoritative, and the config commit is
     # only corroboration: if both are present they must AGREE, because a
     # disagreement means the deployment is not what it claims. A skipper

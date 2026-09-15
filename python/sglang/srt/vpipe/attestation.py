@@ -11,7 +11,7 @@ visible beside it."""
 
 from __future__ import annotations
 
-from sglang.srt.vpipe.design import (  # [D-609]
+from sglang.srt.vpipe.design import (    
     moe_config_dir,
     SERVED_CONDITIONAL_GRAPH,
     mechanism,

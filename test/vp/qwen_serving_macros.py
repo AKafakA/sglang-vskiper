@@ -23,5 +23,5 @@ shared = [x.split("=", 1)[1] for x in sys.argv[1:] if x.startswith("--shared=")]
 emit("Hyb", args[0])
 for p in args[1:]:
     emit("All", p)
-for p in shared:   # step 10d (D-778): the Qwen arm under the shared Llama band, prefix Shr
+for p in shared:   # step 10d: the Qwen arm under the shared Llama band, prefix Shr
     emit("Shr", p)

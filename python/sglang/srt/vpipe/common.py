@@ -30,7 +30,7 @@ import signal
 import json as _json
 import os
 
-from sglang.srt.vpipe.design import (  # [D-609] the design is code
+from sglang.srt.vpipe.design import (  # the design is code
     SERVED_EXECUTION_MODE,
     SERVED_FUSED_PROJECT_INPUT,
     SERVED_FUSED_ROUTER_NORM,
@@ -1056,13 +1056,13 @@ def fdvp_fused_project_input_enabled():
     # design constant, not an environment read
     return mechanism(SERVED_FUSED_PROJECT_INPUT)
 def fdvp_fused_project_input_shared_storage_enabled():
-    return False  # [D-609] design constant, not an environment read
+    return False  # design constant, not an environment read
 def _fdvp_router_graph_enabled():
-    return False  # [D-609] pinned off; trace knob, no served purpose
+    return False  # pinned off; trace knob, no served purpose
 def _fdvp_timing_enabled():
-    return False  # [D-609] pinned off; trace knob, no served purpose
+    return False  # pinned off; trace knob, no served purpose
 def fd_parity_trace_target() -> str:
-    return ""  # [D-609] pinned off; trace knob, no served purpose
+    return ""  # pinned off; trace knob, no served purpose
 def resolve_full_graph_skipper(
     environ: Optional[Mapping[str, str]] = None,
 ) -> FullGraphSkipperAdapter:

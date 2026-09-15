@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sglang.srt.vpipe.design import (  # [D-609]
+from sglang.srt.vpipe.design import (    
     conditional_graph_helper_path,
 )
 

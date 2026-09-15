@@ -165,7 +165,7 @@ SERVED_LAUNCH_EXEMPTIONS: Final[dict[str, dict[str, Any]]] = {
 # cannot smuggle a value: every non-default it produces must also be listed above.
 SERVED_LAUNCH_PROFILES: Final[dict[str, dict[str, Any]]] = {
     "paper": {"dtype": "float16", "mem_fraction_static": 0.8},
-    "paper_bf16": {"dtype": "bfloat16", "mem_fraction_static": 0.8},   # D-773: Qwen3-4B (native dtype)
+    "paper_bf16": {"dtype": "bfloat16", "mem_fraction_static": 0.8},   #: Qwen3-4B (native dtype)
     "sglang_default": {},
 }
 SERVED_LAUNCH_PROFILE_DEFAULT: Final[str] = "paper"
@@ -182,19 +182,19 @@ ARMS: Final[dict[str, dict[str, Any]]] = {
     # which is how at least three sessions concluded the baseline was already upstream and
     # built campaigns on it. It is this tree -- same 193 commits, same hook sites in
     # models/llama.py, same vpipe package imported -- with the treatment not applied.
-    #
+     
     # THE PAPER'S BASELINE IS NOT THIS ARM. It is a separate freshly-cloned upstream tree at
     # commit 602c8615a1 carrying no vpipe/ package at all, staged and content-verified
     # against deploy/upstream_baseline.json and served by its own PYTHONPATH (owner order
     #: "it has to be the based directly-freshly cloned sglang without our changes").
-    #
+     
     # This arm's legitimate role is the CONTROL that measures what our fork costs when it is
     # not treating anything -- found +0.06 %/+0.14 % output TPS against fresh upstream,
     # i.e. nothing. But that was measured at 150 commits past upstream and HEAD is now 193,
     # and an equivalence carried across a design change is what voided the v1.3 table. Serve
     # upstream for the baseline and this becomes a control rather than a load-bearing
     # assumption.
-    #
+     
     # TODO (owner 2026-09-10): rename this key. NOT to "upstream" -- that would make the old
     # lie permanent -- but to something that says what it is, e.g. "fork_noskip". Deferred
     # only because the name is written into deploy/active_arm, expect_stock.json and every
@@ -211,16 +211,16 @@ ARMS: Final[dict[str, dict[str, Any]]] = {
     "vskipper": {"skipper": "flexidepth", "phases": "both", "regime_switch": True},
     # THE QUALITY POSTURE. Identical to integrated_it4 except that admission is OFF,
     # so every routed pass routes regardless of load.
-    #
+     
     # This restores what the deleted arm_env_*.sh scripts did: they exported NO
     # SGLANG_VP_REGIME_SWITCH, so the mechanism was off and the arm always routed. The
     # refactor set regime_switch=True on every routed arm, and Codex flagged it (review 1, P1
     # F4) -- I dismissed it as matching the campaign manifest. It does match the CAMPAIGN. It
     # does not match the QUALITY lane, and the two need opposite postures:
-    #
+     
     #   performance : admission ON  -- measures the served design under real load
     #   quality     : admission OFF -- measures the SKIPPER; quality must not depend on load
-    #
+     
     # Measured consequence of getting this wrong: an lm-eval run at concurrency 16 sits far
     # below enter_rows=176, so the decode leg stays in prod_allrun. A quality run on
     # 2026-09-09 executed 16,702 decode passes with skip=0 -- it measured a system that never
@@ -233,7 +233,7 @@ ARMS: Final[dict[str, dict[str, Any]]] = {
     # Arbitrary per-token routes with no semantics: the substrate-generality arm. Proves
     # the runtime assumes nothing about the policy that produced a route, and carries the
     # skip-rate x depth trade-off study.
-    #
+     
     # BOTH phases, and named to say so. It was `vdec_randomskip`, decode-only, but
     # the study overlays FlexiDepth's operating point on this surface and the served system
     # (integrated_it4) routes both phases -- a decode-only mock would confound skip
@@ -307,26 +307,26 @@ ARMS["vskipper_qwen3_4b_sharedband"] = {
 
 # THE SKIP-RATE x DEPTH SWEEP (plan item 3; owner scope 2026-09-10: gsm8k only, ALL 12 points,
 # one rate, 3 reps, with the upstream anchor interleaved in the same session).
-#
+ 
 # Twelve named arms, because that is the only parameterisation the repo supports. There is no
 # sweep loop, no CLI, and no value-taking arm field, and forbids expressing any of this
 # as an environment variable -- the design lives in the tree. `resolve_arm` is a dict lookup
 # and no consumer hard-codes the arm list, so naming them is sufficient.
-#
+ 
 # Built by comprehension rather than twelve hand-written dicts: the entries differ only in two
 # floats, and twelve near-identical literals are exactly where a transposed digit silently
 # mislabels a sweep point. It is still a module-level constant evaluated at import, which is
 # what asks for. Each point also publishes its own rate/depth/seed through the
 # attestation (`skipper.py:284-286`), so a mislabelled cell is detectable in `server_info`
 # rather than taken on trust.
-#
+ 
 # The SEED is identical across all twelve: the curve must vary in rate and depth only.
-#
+ 
 # DEPTH is a ratio WITHIN the fixed routed set `SERVED_ROUTED_LAYERS` (range(16, 32)), taken
 # from the tail -- 0.25/0.50/0.75 select layers 28-31 / 24-31 / 20-31. Do NOT express depth by
 # changing SERVED_ROUTED_LAYERS: that is a design constant shared by every arm, and
 # `verify_served_design` will correctly refuse the diff.
-#
+ 
 # `integrated_randomskip` above is LEFT ALONE. Its values are the deleted
 # arm_env_vdec_randomskip.sh's, verbatim, which keeps it comparable to prior RandomSkip
 # evidence. Note that `..._r50_d50` is configuration-identical to it, same seed included --
@@ -545,7 +545,7 @@ def served_model_revision() -> str:
 # name into `deploy/active_arm`; the served path reads it; the manifest records what
 # resolved. A file survives the process, can be inspected after the fact, and diffs --
 # an `export` leaves no trace and cannot be checked once the shell is gone.
-#
+ 
 # An unknown name raises. There is no "default that quietly applies", which is the
 # property that let a wrong configuration run for eighteen hours.
 _ACTIVE_ARM_FILE = "deploy/active_arm"

@@ -7,7 +7,7 @@ rather than serve a posture nobody declared.
 
 from __future__ import annotations
 
-from sglang.srt.vpipe.design import (  # [D-609]
+from sglang.srt.vpipe.design import (    
     conditional_graph_helper_path,
 )
 
@@ -278,7 +278,7 @@ def validate_full_graph_model_configuration(
     # pre-refactor tree failed the same way, at capture, with
     # cudaErrorStreamCaptureUnsupported. Refuse the combination HERE so the
     # operator gets an actionable message at startup instead of a capture abort.
-    #
+     
     # Gate on ROUTED LAYERS ACTUALLY LOADED, not on the adapter's declared
     # requirement: resolve_full_graph_skipper() returns the FlexiDepth adapter by
     # default and requires_flexidepth_weights defaults to True, so keying off the
@@ -448,7 +448,7 @@ def validate_full_graph_model_configuration(
     # body must be the stock graph. Fail closed on the prerequisites the high
     # (skip) band still needs. Only enforce when decode is an active phase (a
     # prefill-only endpoint's decode leg is dormant).
-    #
+     
     # The old `conditional_max_rows >= decode.enter_rows` constraint is REMOVED:
     # with the low band on stock graphs, the conditional graph is never used
     # below the band, so band buckets need not be conditional buckets.

@@ -13,7 +13,7 @@ measured from the decode runner, which is the coverage oracle by construction.""
 
 from __future__ import annotations
 
-from sglang.srt.vpipe.design import (  # [D-609]
+from sglang.srt.vpipe.design import (    
     SERVED_EXECUTION_MODE, skipper_deployed,
 )
 
