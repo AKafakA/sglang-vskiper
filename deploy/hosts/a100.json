@@ -1,13 +1,13 @@
 {
   "_comment": "Committed host paths for the Vast A100-80GB PCIe box . Values are FILESYSTEM LOCATIONS, never design. Boot fails closed if any path is absent. NOTE: /dev/shm is mounted noexec on this container, so the CUDA helper .so lives on the root filesystem -- a shared object under /dev/shm cannot be mmap'd PROT_EXEC and the server dies at load.",
-  "host": "vast-a100",
-  "flexidepth_weights": "/rds/user/wd312/hpc-work/llm/vpipe-csd3/serving/flexidepth_router_weights.pt",
+  "host": "a100",
+  "flexidepth_weights": "${VSKIPPER_DATA_ROOT}/serving/flexidepth_router_weights.pt",
   "conditional_graph_helper": "/opt/vpipe/helper-sm80/libvpipe_cuda_conditional_graph.so",
-  "moe_config_dir": "/rds/user/wd312/hpc-work/llm/vpipe-csd3/serving/moe-configs-a100-largeM-r1",
+  "moe_config_dir": "${VSKIPPER_DATA_ROOT}/serving/moe-configs-a100-largeM-r1",
   "served_model_revision": "53346005fb0ef11d3b6a83b12c895cca40156b6c",
   "gate_workdir": "/dev/shm/vpipe",
   "serve_python": "/opt/vpipe/venv/bin/python",
-  "model_path": "/rds/user/wd312/hpc-work/llm/vpipe-csd3/models/Meta-Llama-3-8B-Instruct-53346005",
-  "flexidepth_weights_qwen3_4b": "/rds/user/wd312/hpc-work/llm/vpipe-csd3/serving/flexidepth_router_weights_qwen3_4b_step20000.pt",
+  "model_path": "${VSKIPPER_DATA_ROOT}/models/Meta-Llama-3-8B-Instruct-53346005",
+  "flexidepth_weights_qwen3_4b": "${VSKIPPER_DATA_ROOT}/serving/flexidepth_router_weights_qwen3_4b_step20000.pt",
   "_comment_qwen3_4b": "[v1.5] FlexiDepth-Qwen3-4B alignment-only ste_hard router/projector deltas (step 20000, sha256 ae291c5000c966db3e1940af...), selected by the vskipper_qwen3_4b arms' weights_key; the base model (Qwen/Qwen3-4B @ 1cfa9a72) is passed on the launch command line."
 }

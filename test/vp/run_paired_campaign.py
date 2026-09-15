@@ -36,7 +36,7 @@ The spec is data, not code (QPS grids are contract data):
      "model_path": "/dev/shm/vpipe/models/Meta-Llama-3-8B-Instruct-53346005",
      "suites_dir": "/dev/shm/vpipe/suites",
      "staging_root": "/dev/shm/vpipe",
-     "host_config": "deploy/hosts/vast-a100.json",
+     "host_config": "deploy/hosts/a100.json",
      "expect_dir": "/opt/vpipe/campaign",
      "arms": {"baseline": "upstream", "treatment": "vskipper"},
      "datasets": {"gsm8k": {"r11p25": 11.25, "r14p25": 14.25, "r18p75": 18.75}}}
@@ -197,7 +197,7 @@ def campaign_preflight_gate(spec: dict[str, Any],
                # 0 shards" on a box with the model staged one level up .
                "--workdir", spec["staging_root"],
                # The campaign's own host config, NAMED. The gate used to pick the
-               # alphabetically first deploy/hosts/*.json for itself and validated CSD3
+               # alphabetically first deploy/hosts/*.json for itself and validated the HPC cluster
                # paths on a Vast box .
                "--host-config", spec["host_config"],
                "--serving-pythonpath", str(serving)]

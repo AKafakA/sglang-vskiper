@@ -283,3 +283,6 @@ test/registered/xpu/test_nvidia_nemotron_3_nano.py
 artifacts/
 .claude/scheduled_tasks.lock
 .humanize/
+
+# Operator-supplied host configs (copy a deploy/hosts/*.json and fill in real paths)
+deploy/hosts/local-*.json
