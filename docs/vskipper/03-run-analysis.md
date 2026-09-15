@@ -72,7 +72,7 @@ the table renders two stacks per cell instead of three, and no error is raised.
 ## Check
 
 ```bash
-diff -r $OUT versions/1.5.6/generated
+diff -r $OUT versions/1.5.7/generated
 ```
 
 Every `.tex` fragment must be byte-identical. Two expected exceptions: `bank_policy.tex`, which is one line
