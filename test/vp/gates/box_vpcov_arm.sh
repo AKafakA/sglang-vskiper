@@ -100,7 +100,7 @@ fi
 
 $V "$TREE/test/vp/fdpre_label_probe.py" --url "http://127.0.0.1:$PORT" \
   --requests-jsonl "$SUITE" --first-n 32 \
-  --concurrency 8 --max-new-tokens 128 --topk 20 \
+  --concurrency "${VP_GATE_PROBE_CONCURRENCY:-8}" --max-new-tokens 128 --topk 20 \
   --output-dir "$OUT/probe" 2>&1 | tail -3 | tee -a "$OUT/posture.txt"
 curl -s -m 10 "http://127.0.0.1:$PORT/server_info" > "$OUT/server_info.json"
 kill $SPID 2>/dev/null; sleep 8; kill -9 $SPID 2>/dev/null; sleep 4
