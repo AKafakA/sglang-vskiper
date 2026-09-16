@@ -41,6 +41,9 @@ from pathlib import Path
 LATENCY_METRICS = [
     ("TTFT p50", "median_ttft_ms"), ("TTFT mean", "mean_ttft_ms"), ("TTFT p95", "p95_ttft_ms"), ("TTFT p99", "p99_ttft_ms"),
     ("TPOT p50", "median_tpot_ms"), ("TPOT mean", "mean_tpot_ms"), ("TPOT p95", "p95_tpot_ms"), ("TPOT p99", "p99_tpot_ms"),
+    # token-weighted TPOT: the benchmark's mean inter-token latency over every generated token, beside the
+    # request-mean TPOT above (which weighs a five-token CoQA answer as much as a 400-token GSM8K one)
+    ("ITL mean", "mean_itl_ms"),
     ("E2E p50", "median_e2e_latency_ms"), ("E2E mean", "mean_e2e_latency_ms"), ("E2E p95", "p95_e2e_latency_ms"),
     ("E2E p99", "p99_e2e_latency_ms"),
     # [, owner 09-13] makespan = the cell's wall time to complete its FIXED work, drain included

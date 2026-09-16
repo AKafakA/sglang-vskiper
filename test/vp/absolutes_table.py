@@ -49,6 +49,8 @@ def main() -> int:
             cells.append(value)
             if ds in MACRO_DS and frac in MACRO_RATE:
                 macros.append(f"\\newcommand{{\\vpAbs{MACRO_METRIC[metric]}{MACRO_DS[ds]}{MACRO_RATE[frac]}}}{{{value}}}")
+        if ds in MACRO_DS and frac in MACRO_RATE and "ITL mean" in m:   # token-weighted TPOT, macro only (no column)
+            macros.append(f"\\newcommand{{\\vpAbsITL{MACRO_DS[ds]}{MACRO_RATE[frac]}}}{{{m['ITL mean']['baseline_abs']:.0f}}}")
         if ds in MACRO_DS and frac in MACRO_RATE:   # the drain's share of the makespan (App. J's CoQA sentence)
             share = 100.0 * m["drain"]["baseline_abs"] / m["makespan"]["baseline_abs"]
             macros.append(f"\\newcommand{{\\vpAbsDrainShare{MACRO_DS[ds]}{MACRO_RATE[frac]}}}{{{share:.0f}}}")
