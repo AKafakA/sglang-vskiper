@@ -29,5 +29,10 @@
   "NVIDIA_RTX_A6000": {
     "peak_tflops_bf16": 154.8,
     "peak_bw_gbs": 768.0
+  },
+  "_source_l40s": "nvidia.com L40S datasheet (read 2026-09-16): 48 GB GDDR6, 864 GB/s; FP16/BF16 tensor 733 TFLOPS sparse -> 362.1 dense. Key = canonical_device_key('NVIDIA L40S').",
+  "NVIDIA_L40S": {
+    "peak_tflops_bf16": 362.1,
+    "peak_bw_gbs": 864.0
   }
 }

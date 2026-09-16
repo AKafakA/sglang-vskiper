@@ -83,6 +83,8 @@ SERVED_DECODE_KV_BAND_BY_DEVICE: Final[dict[str, tuple[int, int]]] = {
     "NVIDIA_A100_40GB": (130000, 160000),
     # [plan v4, 2026-09-16 22:4xZ] RTX A6000 (768 GB/s GDDR6 -> V* = 62.6k): the fourth hardware point.
     "NVIDIA_RTX_A6000": (60000, 80000),
+    # [plan v4, 2026-09-16 23:2xZ] L40S (864 GB/s GDDR6 -> V* = 70.4k): the fourth hardware point (the A6000 box could not run the cu13 substrate).
+    "NVIDIA_L40S": (70000, 90000),
 }
 
 SERVED_LOW_ROW_POLICY: Final[str] = "off"

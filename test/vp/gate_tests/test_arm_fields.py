@@ -148,6 +148,7 @@ def test_every_device_band_is_the_rule_output_for_the_served_arm():
     assert design.SERVED_DECODE_KV_BAND_BY_DEVICE["NVIDIA_RTX_5880_Ada_Generation"] == (80_000, 100_000)
     assert design.SERVED_DECODE_KV_BAND_BY_DEVICE["NVIDIA_A100_40GB"] == (130_000, 160_000)
     assert design.SERVED_DECODE_KV_BAND_BY_DEVICE["NVIDIA_RTX_A6000"] == (60000, 80000)
+    assert design.SERVED_DECODE_KV_BAND_BY_DEVICE["NVIDIA_L40S"] == (70000, 90000)
     # memory class refines the A100 key; nothing else is touched
     assert band_device_key("NVIDIA_A100", 40 * 1024**3) == "NVIDIA_A100_40GB"
     assert band_device_key("NVIDIA_A100", 80 * 1024**3) == "NVIDIA_A100"

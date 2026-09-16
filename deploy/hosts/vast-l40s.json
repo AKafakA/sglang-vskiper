@@ -1,0 +1,11 @@
+{
+  "_comment": "Committed host paths for the Vast L40S box (plan v3, owner 2026-09-16: the fourth hardware point (864 GB/s GDDR6)). Values are FILESYSTEM LOCATIONS, never design (D-609). The sm_89 helper .so lives on the root filesystem (/dev/shm is noexec). The device tile artifact binary_cohort_configs/NVIDIA_L40S.json and the Triton MoE configs are the A100's, CARRIED UNCHANGED for cross-device consistency (same posture as the H100 row); the regime-switch band is the roofline rule's output for the device's published peaks (device_roofline.json), asserted at boot and by the execution-difference gate.",
+  "host": "vast-l40s",
+  "flexidepth_weights": "/dev/shm/vpipe/serving/flexidepth_router_weights.pt",
+  "conditional_graph_helper": "/opt/vpipe/helper-sm89/libvpipe_cuda_conditional_graph.so",
+  "moe_config_dir": "/dev/shm/vpipe/serving/moe-configs",
+  "served_model_revision": "53346005fb0ef11d3b6a83b12c895cca40156b6c",
+  "gate_workdir": "/dev/shm/vpipe",
+  "serve_python": "/opt/vpipe/venv/bin/python",
+  "model_path": "/dev/shm/vpipe/models/Meta-Llama-3-8B-Instruct-53346005"
+}
