@@ -1,6 +1,6 @@
 {
   "_comment": "What the campaign's arms EXECUTE differently, declared BEFORE any paper cell (incident-graph-ladder-confound-20260916, rule 1). verify_execution_differences.py reads every arm's boot snapshot and refuses the campaign on any difference not listed here. Values are per arm; a field absent from an arm's entry must be equal across all arms.",
-  "fields_compared": ["decode_ladder_top", "decode_ladder_buckets", "kv_capacity_tokens", "chunked_prefill_size", "mem_fraction_static", "dtype", "attention_backend", "sampling_backend", "prefill_graph"],
+  "fields_compared": ["decode_ladder_top", "decode_ladder_buckets", "decode_ladder_bs", "decode_graph_backend", "decode_tc_compiler", "prefill_graph_backend", "prefill_graph_bs", "kv_capacity_tokens", "chunked_prefill_size", "mem_fraction_static", "dtype", "attention_backend", "sampling_backend"],
   "tolerances": {"kv_capacity_tokens_rel": 0.015},
   "declared": {
     "upstream":       {"decode_ladder_top": 256,  "reason": "literal SGLang default ladder on 80 GB (T1 column)"},

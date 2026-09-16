@@ -39,15 +39,19 @@ def effective(info: dict) -> dict:
         bs = dec.get("bs") or []
         top, n = (max(bs) if bs else dec.get("max_bs")), len(bs)
         source = "cuda_graph_config.decode"
+    dec_cfg = dig(info, "cuda_graph_config", "decode", default={}) or {}
+    pre_cfg = dig(info, "cuda_graph_config", "prefill", default={}) or {}
     return {
         "decode_ladder_top": top, "decode_ladder_buckets": n, "decode_ladder_source": source,
+        "decode_ladder_bs": list(bs),                       # the LIST, compared across arms (review 09-16 finding 3)
+        "decode_graph_backend": dec_cfg.get("backend"), "decode_tc_compiler": dec_cfg.get("tc_compiler"),
+        "prefill_graph_backend": pre_cfg.get("backend"), "prefill_graph_bs": list(pre_cfg.get("bs") or []),
         "kv_capacity_tokens": info.get("max_total_num_tokens") or dig(info, "memory_usage", "token_capacity"),
         "chunked_prefill_size": info.get("chunked_prefill_size"),
         "mem_fraction_static": info.get("mem_fraction_static"),
         "dtype": info.get("dtype"),
         "attention_backend": info.get("attention_backend"),
         "sampling_backend": info.get("sampling_backend"),
-        "prefill_graph": bool(dig(info, "cuda_graph_config", "prefill", default=None)),
     }
 
 
@@ -58,6 +62,7 @@ def main() -> int:
     ap.add_argument("--declaration", required=True, type=Path)
     ap.add_argument("--report", action="store_true")
     ap.add_argument("--port", default=None, help="only this campaign's snapshots (server_info.conformance.<arm>.<port>.json)")
+    ap.add_argument("--since", type=float, default=None, help="refuse snapshots older than this epoch (stale files from a previous run)")
     a = ap.parse_args()
     decl = json.loads(a.declaration.read_text())
     arms = a.arms.split(",")
@@ -66,15 +71,19 @@ def main() -> int:
         files = sorted(glob.glob(str(a.snapshots / f"server_info.conformance.{arm}.{a.port or '*'}.json")))
         if not files:
             print(f"REFUSED: no boot snapshot for arm {arm!r} under {a.snapshots}"); return 2
-        eff[arm] = effective(json.loads(Path(files[-1]).read_text())); eff[arm]["snapshot"] = Path(files[-1]).name
+        snap = Path(files[-1])
+        if a.since is not None and snap.stat().st_mtime < a.since:
+            print(f"REFUSED: snapshot for {arm!r} ({snap.name}) predates this campaign (stale)"); return 2
+        eff[arm] = effective(json.loads(snap.read_text())); eff[arm]["snapshot"] = snap.name
     base = arms[0]
     print(f"execution differences vs {base} ({eff[base]['snapshot']}):")
     undeclared = []
     for arm in arms:
         e = eff[arm]; d = decl["declared"].get(arm, {})
-        print(f"  {arm:16s} ladder top {e['decode_ladder_top']!s:>5} ({e['decode_ladder_buckets']} buckets, {e['decode_ladder_source']}) "
-              f"kv {e['kv_capacity_tokens']} chunk {e['chunked_prefill_size']} mem {e['mem_fraction_static']} dtype {e['dtype']} "
-              f"attn {e['attention_backend']} samp {e['sampling_backend']} prefill_graph {e['prefill_graph']}")
+        print(f"  {arm:16s} ladder top {e['decode_ladder_top']!s:>5} ({e['decode_ladder_buckets']} buckets, {e['decode_ladder_source']}, "
+              f"list==base {e['decode_ladder_bs']==eff[base]['decode_ladder_bs']}) decode {e['decode_graph_backend']}/{e['decode_tc_compiler']} "
+              f"prefill {e['prefill_graph_backend']}/{len(e['prefill_graph_bs'])} kv {e['kv_capacity_tokens']} chunk {e['chunked_prefill_size']} "
+              f"mem {e['mem_fraction_static']} dtype {e['dtype']} attn {e['attention_backend']} samp {e['sampling_backend']} [{e['snapshot']}]")
         for field in decl["fields_compared"]:
             v, vb = e.get(field), eff[base].get(field)
             expected = d.get(field)
@@ -85,11 +94,20 @@ def main() -> int:
                 if v is None or vb is None:
                     undeclared.append(f"{arm}: {field} unreadable"); continue
                 rel = abs(v - vb) / max(1, vb)
-                if rel > decl["tolerances"]["kv_capacity_tokens_rel"] or (v < vb and expected != "smaller_ok" and rel > 1e-9):
-                    if not (v > vb and rel <= decl["tolerances"]["kv_capacity_tokens_rel"]):
-                        undeclared.append(f"{arm}: {field}={v} vs {vb} ({rel*100:.2f} %, declared {expected})")
+                if v > vb and expected != "larger_ok":      # a larger pool FAVOURS the treatment: never passes undeclared
+                    undeclared.append(f"{arm}: {field}={v} > baseline {vb} (+{rel*100:.2f} %) undeclared")
+                elif v < vb and (expected != "smaller_ok" or rel > decl["tolerances"]["kv_capacity_tokens_rel"]):
+                    undeclared.append(f"{arm}: {field}={v} vs {vb} (-{rel*100:.2f} %, declared {expected})")
             elif field == "decode_ladder_buckets":
-                continue  # follows the top; reported, not gated
+                continue  # reported; the LIST below is what is gated
+            elif field == "decode_ladder_bs":
+                # arms declared at the same top must capture the SAME bucket list; a declared different top
+                # (the literal-default arm) is allowed to differ
+                if d.get("decode_ladder_top") == decl["declared"].get(base, {}).get("decode_ladder_top") and v != vb:
+                    undeclared.append(f"{arm}: decode bucket list differs from {base} (n={len(v)} vs {len(vb)}, sets differ: {sorted(set(v)^set(vb))[:8]})")
+            elif field in ("prefill_graph_bs",):
+                if v != vb:
+                    undeclared.append(f"{arm}: {field} differs from {base} (n={len(v)} vs {len(vb)})")
             else:
                 if v != vb and expected is None:
                     undeclared.append(f"{arm}: {field}={v!r} vs {base} {vb!r} (undeclared)")
