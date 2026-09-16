@@ -311,6 +311,25 @@ ARMS["vskipper_qwen3_4b_sharedband"] = {
     "decode_kv_band_policy": "shared",
 }
 
+# [D-830, 2026-09-16] The third model: FlexiDepth-Qwen3-8B, our alignment-only `ste_hard` checkpoint
+# (coef 2.5e-5; CloudLab d8545 campaign 2026-09-16, model of record = the last checkpoint that passed
+# the on-node quality gate, D-828). Same family port as Qwen3-4B (36 layers, routed 18..35, 8 K/V heads
+# x 128 = 4 KB/token/layer). `design_skip_ratio` = the chat-template skip the gate attested on the
+# served checkpoint (0.383 at step 5,000); `decode_kv_band` = the rule with this arm's inputs
+# (L_r = 18, s = 0.383, tau scaled 18/16): A100 V* = 206k -> 210k/260k; H100 HBM3 -> 360k/450k;
+# A100-40 -> 170k/210k. Asserted at boot; served GSM8K only (owner 18:5xZ), on the A100 node.
+ARMS["vskipper_qwen3_8b"] = {
+    "skipper": "flexidepth", "phases": "both", "regime_switch": True,
+    "gate_mode": "hard_mask", "compact": False, "routed_layers": tuple(range(18, 36)),
+    "weights_key": "flexidepth_weights_qwen3_8b", "design_skip_ratio": 0.383,
+    "decode_kv_band": {"NVIDIA_A100": (210000, 260000), "NVIDIA_H100_HBM3": (360000, 450000), "NVIDIA_A100_40GB": (170000, 210000)},
+}
+ARMS["vskipper_qwen3_8b_alwaysroute"] = {
+    "skipper": "flexidepth", "phases": "both", "regime_switch": False,
+    "gate_mode": "hard_mask", "compact": False, "routed_layers": tuple(range(18, 36)),
+    "weights_key": "flexidepth_weights_qwen3_8b", "design_skip_ratio": 0.383,
+}
+
 # THE SKIP-RATE x DEPTH SWEEP (plan item 3; owner scope 2026-09-10: gsm8k only, ALL 12 points,
 # one rate, 3 reps, with the upstream anchor interleaved in the same session).
  

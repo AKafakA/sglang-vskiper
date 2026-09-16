@@ -57,8 +57,16 @@ def growing_rungs(curve: list[tuple[float, float]]) -> list[tuple[float, float, 
     """
     out: list[tuple[float, float, bool]] = []
     running_max = 0.0
-    for rate, tps in curve:
-        grew = running_max <= 0.0 or tps >= running_max * (1.0 + GROWTH)
+    for i, (rate, tps) in enumerate(curve):
+        prev_max = running_max
+        grew = prev_max <= 0.0 or tps >= prev_max * (1.0 + GROWTH)
+        # [D-827, owner 2026-09-16] growth must be SUSTAINED: the next rung must also hold the
+        # level (>= 1 % above the running max that stood BEFORE this rung). A single noisy rung
+        # on a flat band (H100-500W gsm8k: rungs 15-22 within 0.3 % of 1,228 tok/s, rung 20
+        # +1.29 %) otherwise reads as a knee after a genuine climb, which the CLIMB guard cannot
+        # see. Reproduces every recorded knee (A100 13/34/25, H100-700W 30) and gives 14 there.
+        if grew and prev_max > 0.0 and i + 1 < len(curve):
+            grew = curve[i + 1][1] >= prev_max * (1.0 + GROWTH)
         if grew:
             running_max = max(running_max, tps)
         out.append((rate, tps, grew))
@@ -244,6 +252,12 @@ def self_test() -> int:
     assert marked[22] is False, "rung 22 ties rung 21 and must NOT count as growth"
     assert marked[35] is True, "rung 35 beats every lower rung and must count"
     print("  PASS — the tie at rung 22 is non-growing but does not stop the search")
+
+    # [D-827] a single noisy rung on a flat band after a genuine climb is NOT a knee.
+    blip = [(12, 1155.0), (13, 1203.1), (14, 1226.3), (15, 1227.6), (16, 1227.1), (17, 1227.2), (18, 1229.3),
+            (19, 1229.0), (20, 1242.1), (21, 1228.8), (22, 1228.1)]
+    assert qstar([(float(r), t) for r, t in blip]) == 14, "the +1.29 % blip at rung 20 must not be the knee"
+    print("  PASS — the H100-500W blip curve returns 14 (sustained growth), not 20")
 
     # A curve that never plateaus must not yield a confident knee at its own edge.
     rising = [(float(n), 1000.0 * n) for n in range(5, 12)]

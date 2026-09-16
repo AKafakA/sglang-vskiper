@@ -152,3 +152,15 @@ def test_every_device_band_is_the_rule_output_for_the_served_arm():
     assert band_device_key("NVIDIA_A100", 80 * 1024**3) == "NVIDIA_A100"
     assert band_device_key("NVIDIA_RTX_5880_Ada_Generation", 48 * 1024**3) == "NVIDIA_RTX_5880_Ada_Generation"
     assert set(design._rule_band(design.ARMS["vskipper"])) == set(design.SERVED_DECODE_KV_BAND_BY_DEVICE)
+
+
+def test_qwen3_8b_arm_band_follows_the_rule_with_its_own_inputs():
+    """[D-830] the third model's band is the rule's output for its attested skip (0.383) on every declared device."""
+    from sglang.srt.vpipe import design
+    from sglang.srt.vpipe.roofline import arm_kv_rule_inputs, derived_kv_band
+
+    arm = design.ARMS["vskipper_qwen3_8b"]; inputs = arm_kv_rule_inputs(arm)
+    assert inputs["routed_layers"] == 18 and abs(inputs["skip_ratio"] - 0.383) < 1e-9
+    for key, band in arm["decode_kv_band"].items():
+        assert derived_kv_band(key, **inputs) == tuple(band), (key, band)
+    assert design.ARMS["vskipper_qwen3_8b_alwaysroute"]["regime_switch"] is False
