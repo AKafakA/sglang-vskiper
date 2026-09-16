@@ -74,12 +74,17 @@ def main() -> int:
         snap = Path(files[-1])
         if a.since is not None and snap.stat().st_mtime < a.since:
             print(f"REFUSED: snapshot for {arm!r} ({snap.name}) predates this campaign (stale)"); return 2
-        eff[arm] = effective(json.loads(snap.read_text())); eff[arm]["snapshot"] = snap.name
+        info = json.loads(snap.read_text())
+        eff[arm] = effective(info); eff[arm]["snapshot"] = snap.name
+        eff[arm]["is_fork"] = bool(dig(info, "internal_states", 0, "vp_runtime"))
     base = arms[0]
     print(f"execution differences vs {base} ({eff[base]['snapshot']}):")
     undeclared = []
     for arm in arms:
-        e = eff[arm]; d = decl["declared"].get(arm, {})
+        e = eff[arm]; d = decl["declared"].get(arm)
+        if d is None and e["is_fork"] and "fork_default" in decl:
+            d = decl["fork_default"]      # every fork-served arm (sweep/ablation/Qwen mocks) shares the design's ladder + K/V rule
+        d = d or {}
         print(f"  {arm:16s} ladder top {e['decode_ladder_top']!s:>5} ({e['decode_ladder_buckets']} buckets, {e['decode_ladder_source']}, "
               f"list==base {e['decode_ladder_bs']==eff[base]['decode_ladder_bs']}) decode {e['decode_graph_backend']}/{e['decode_tc_compiler']} "
               f"prefill {e['prefill_graph_backend']}/{len(e['prefill_graph_bs'])} kv {e['kv_capacity_tokens']} chunk {e['chunked_prefill_size']} "
