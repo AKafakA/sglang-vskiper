@@ -330,6 +330,17 @@ ARMS["vskipper_qwen3_8b_alwaysroute"] = {
     "weights_key": "flexidepth_weights_qwen3_8b", "design_skip_ratio": 0.383,
 }
 
+# [D-832 add., owner 2026-09-16 22:0xZ] The same model's checkpoint-7500 (chat skip 0.428; its 100-doc gate read gsm8k
+# -11 pp, inside the gate's noise): served under the rule "highest skip whose quality holds", decided by block B's full
+# lm-eval score at the knee. Band by the rule with s = 0.428: A100 180k/230k.
+ARMS["vskipper_qwen3_8b_s7500"] = {
+    **ARMS["vskipper_qwen3_8b"], "weights_key": "flexidepth_weights_qwen3_8b_s7500", "design_skip_ratio": 0.428,
+    "decode_kv_band": {"NVIDIA_A100": (180000, 230000), "NVIDIA_H100_HBM3": (320000, 400000), "NVIDIA_A100_40GB": (150000, 190000)},
+}
+ARMS["vskipper_qwen3_8b_s7500_alwaysroute"] = {
+    **ARMS["vskipper_qwen3_8b_alwaysroute"], "weights_key": "flexidepth_weights_qwen3_8b_s7500", "design_skip_ratio": 0.428,
+}
+
 # THE SKIP-RATE x DEPTH SWEEP (plan item 3; owner scope 2026-09-10: gsm8k only, ALL 12 points,
 # one rate, 3 reps, with the upstream anchor interleaved in the same session).
  

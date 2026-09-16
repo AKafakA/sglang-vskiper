@@ -164,3 +164,7 @@ def test_qwen3_8b_arm_band_follows_the_rule_with_its_own_inputs():
     for key, band in arm["decode_kv_band"].items():
         assert derived_kv_band(key, **inputs) == tuple(band), (key, band)
     assert design.ARMS["vskipper_qwen3_8b_alwaysroute"]["regime_switch"] is False
+    arm7 = design.ARMS["vskipper_qwen3_8b_s7500"]; inp7 = arm_kv_rule_inputs(arm7)
+    assert abs(inp7["skip_ratio"] - 0.428) < 1e-9
+    for key, band in arm7["decode_kv_band"].items():
+        assert derived_kv_band(key, **inp7) == tuple(band), (key, band)
