@@ -57,12 +57,13 @@ def main() -> int:
     ap.add_argument("--arms", required=True, help="comma-separated arm names, baseline first")
     ap.add_argument("--declaration", required=True, type=Path)
     ap.add_argument("--report", action="store_true")
+    ap.add_argument("--port", default=None, help="only this campaign's snapshots (server_info.conformance.<arm>.<port>.json)")
     a = ap.parse_args()
     decl = json.loads(a.declaration.read_text())
     arms = a.arms.split(",")
     eff = {}
     for arm in arms:
-        files = sorted(glob.glob(str(a.snapshots / f"server_info.conformance.{arm}.*.json")))
+        files = sorted(glob.glob(str(a.snapshots / f"server_info.conformance.{arm}.{a.port or '*'}.json")))
         if not files:
             print(f"REFUSED: no boot snapshot for arm {arm!r} under {a.snapshots}"); return 2
         eff[arm] = effective(json.loads(Path(files[-1]).read_text())); eff[arm]["snapshot"] = Path(files[-1]).name
