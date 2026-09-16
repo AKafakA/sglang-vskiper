@@ -41,6 +41,9 @@ def t_crit(df: int) -> float:
     return 1.960
 
 
+FILTER_COUNTS: dict[str, dict[str, int]] = {}   # per arm root, filled by the composite loader (App. E.2's table)
+
+
 def load_arm(root: str, dataset: str) -> dict[tuple[str, int], float]:
     prefix, flt, metric = SPEC[dataset]
     files = sorted(glob.glob(os.path.join(root, "**", f"{prefix}*.jsonl"), recursive=True))
@@ -66,11 +69,17 @@ def load_arm(root: str, dataset: str) -> dict[tuple[str, int], float]:
                     val = fr[0] if isinstance(fr, list) else fr
                     rows.setdefault((task, int(r["doc_id"])), {})[r.get("filter", "none")] = {
                         "ok": float(r[metric]), "val": str(val).strip()}
+        unparsed = fooled = 0
         for key, per in rows.items():
             if not {"strict-match", "flexible-extract"} <= set(per):
                 sys.exit(f"FATAL: {key} lacks both GSM8K filters; cannot apply the composite rule")
             parsed = per["strict-match"]["val"] not in ("", "[invalid]")
             out[key] = per["strict-match"]["ok"] if parsed else per["flexible-extract"]["ok"]
+            unparsed += not parsed
+            # "fooled": strict parsed the marked answer and scored it correct, flexible's last-number
+            # rule picked a different number and scored it wrong (the Confidence-epilogue failure)
+            fooled += parsed and per["strict-match"]["ok"] == 1.0 and per["flexible-extract"]["ok"] == 0.0
+        FILTER_COUNTS[root] = {"n": len(rows), "strict_unparsed": unparsed, "flexible_fooled": fooled}
         return out
     for task, f in newest.items():
         with open(f) as fh:
@@ -145,6 +154,20 @@ def main() -> int:
             st = stats(df); readings[flt] = {"dod": st, "means": {q: 100 * sum(pf[q][k] for k in keys) / n for q in pf}}
             extra += [f"\\newcommand{{\\{args.macro_prefix}{{macro}}Dod{tag}}}{{{st['mean_pp']:+.2f}}}",
                       f"\\newcommand{{\\{args.macro_prefix}{{macro}}Dod{tag}Ci}}{{{st['ci95_half_pp']:.2f}}}"]
+        for flt, tag in (("strict-match", "Strict"), ("flexible-extract", "Flex")):
+            mm = readings[flt]["means"]
+            extra.append(f"\\newcommand{{\\{args.macro_prefix}{{macro}}BminusA{tag}}}{{{mm['B'] - mm['A']:+.2f}}}")
+            extra.append(f"\\newcommand{{\\{args.macro_prefix}{{macro}}DminusC{tag}}}{{{mm['D'] - mm['C']:+.2f}}}")
+        # App. E.2's table: per arm, rows strict-match could not parse and rows flexible extraction was
+        # fooled on, from the composite loader's pass over the same files
+        for q, root in arms.items():
+            c = FILTER_COUNTS.get(root)
+            if c is None:
+                sys.exit(f"FATAL: no filter counts recorded for arm {q} ({root})")
+            for name, k in (("StrictUnparsed", "strict_unparsed"), ("FlexFooled", "flexible_fooled")):
+                extra.append(f"\\newcommand{{\\{args.macro_prefix}{{macro}}Arm{q}{name}}}{{{c[k]}}}")
+                extra.append(f"\\newcommand{{\\{args.macro_prefix}{{macro}}Arm{q}{name}Pct}}{{{100 * c[k] / c['n']:.1f}}}")
+        rep["filter_counts"] = {q: FILTER_COUNTS[root] for q, root in arms.items()}
         allm = [rep["dod"]["mean_pp"]] + [r["dod"]["mean_pp"] for r in readings.values()]
         spread = max(allm) - min(allm)
         extra.append(f"\\newcommand{{\\{args.macro_prefix}{{macro}}DodFilterSpread}}{{{spread:.2f}}}")
