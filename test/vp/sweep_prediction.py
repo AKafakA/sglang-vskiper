@@ -65,12 +65,12 @@ def main() -> int:
             row = sweeps.get(label, {}).get(arm); o = occ.get(label, {}).get(arm, {}).get(a.suite, {})
             if row is None:
                 cells += ["--"] if label == "ungated" else ["--", "--", "--"]; continue
-            p90 = o.get("resident_kv_p90_est"); sb = o.get("decode_passes_skipbody"); ar = o.get("decode_passes_allrun")
+            p90 = o.get("resident_kv_p90_est"); sb = o.get("decode_passes_skip"); ar = o.get("decode_passes_allrun"); rs = o.get("decode_rows_skip_share")
             eng = (sb / (sb + ar)) if (sb is not None and ar) else None
             if label == "ungated":   # every pass routed by construction: one column, the E2E change
                 cells += [f"{row['delta']:+.1f}"]
-            else:
-                cells += [f"{p90/1e3:.0f}k" if p90 else "--", f"{100*eng:.0f}\\%" if eng is not None else "--", f"{row['delta']:+.1f}"]
+            else:   # engaged = share of decode passes on the routed body / share of decode rows (a routed pass is a large batch)
+                cells += [f"{p90/1e3:.0f}k" if p90 else "--", f"{100*eng:.0f}/{100*rs:.0f}\\%" if (eng is not None and rs is not None) else "--", f"{row['delta']:+.1f}"]
             points.setdefault(label, []).append((v, row["delta"], p90, arm))
         lines.append(f"{int(r*100)}\\,\\% & {int(d*100)}\\,\\% & {v/1e3:.0f}k & {ex//1000}k/{en//1000}k & " + " & ".join(cells) + r" \\")
     a.rows.write_text("\n".join(lines) + "\n"); a.macros.write_text("\n".join(macros) + "\n")
@@ -80,7 +80,7 @@ def main() -> int:
     def occ_of(arm): return occ.get("fixed", {}).get(arm, {}).get(a.suite, {})
     losers = [p for p in fx if p[1] > 0]; winners = [p for p in fx if p[1] < 0]
     def eng(arm):
-        o = occ_of(arm); sb, ar = o.get("decode_passes_skipbody"), o.get("decode_passes_allrun")
+        o = occ_of(arm); sb, ar = o.get("decode_passes_skip"), o.get("decode_passes_allrun")
         return 100.0 * sb / (sb + ar) if (sb is not None and ar) else None
     up = occ.get("fixed", {}).get("upstream", {}).get(a.suite, {}).get("resident_kv_p90_est")
     tie = [p for p in above if p[1] < 0]
@@ -92,6 +92,14 @@ def main() -> int:
         le = [eng(p[3]) for p in losers if eng(p[3]) is not None]; we = [eng(p[3]) for p in winners if eng(p[3]) is not None]
         if le: f.write(f"\\newcommand{{\\vpPredLoserEngMin}}{{{min(le):.0f}}}\n\\newcommand{{\\vpPredLoserEngMax}}{{{max(le):.0f}}}\n")
         if we: f.write(f"\\newcommand{{\\vpPredWinnerEngMin}}{{{min(we):.0f}}}\n\\newcommand{{\\vpPredWinnerEngMax}}{{{max(we):.0f}}}\n")
+        # the same two ranges under each arm's OWN band (panel c): the losers are held to the stock body, the
+        # winners route a few percent of decode passes and keep most of their gain (its source is prefill's)
+        def eng_rule(arm):
+            o = occ.get("rule", {}).get(arm, {}).get(a.suite, {}); sb, ar = o.get("decode_passes_skip"), o.get("decode_passes_allrun")
+            return 100.0 * sb / (sb + ar) if (sb is not None and ar) else None
+        lr = [eng_rule(p[3]) for p in losers if eng_rule(p[3]) is not None]; wr = [eng_rule(p[3]) for p in winners if eng_rule(p[3]) is not None]
+        if lr: f.write(f"\\newcommand{{\\vpPredRuleLoserEngMin}}{{{min(lr):.0f}}}\n\\newcommand{{\\vpPredRuleLoserEngMax}}{{{max(lr):.0f}}}\n")
+        if wr: f.write(f"\\newcommand{{\\vpPredRuleWinnerEngMin}}{{{min(wr):.0f}}}\n\\newcommand{{\\vpPredRuleWinnerEngMax}}{{{max(wr):.0f}}}\n")
         if up: f.write(f"\\newcommand{{\\vpPredUpstreamOcc}}{{{up/1e3:.0f}}}\n")
         if up:
             au = [p for p in fx if p[0] > up]; bu = [p for p in fx if p[0] <= up]
@@ -101,7 +109,7 @@ def main() -> int:
             m = ARM_RE.match(tie[0][3]); f.write(f"\\newcommand{{\\vpPredTieArm}}{{{int(m.group(1))}\\%$\\times${int(m.group(2))}\\%}}\n\\newcommand{{\\vpPredTieVstar}}{{{tie[0][0]/1e3:.0f}}}\n\\newcommand{{\\vpPredTieOcc}}{{{tie[0][2]/1e3:.0f}}}\n\\newcommand{{\\vpPredTieDelta}}{{{tie[0][1]:+.1f}}}\n")
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
     fig, ax = plt.subplots(figsize=(4.4, 2.35), dpi=200)
-    style = {"ungated": dict(marker="^", color="#7f7f7f", label="no band (always route)"), "fixed": dict(marker="o", color="#c0392b", label="fixed band (enter 200k)"), "rule": dict(marker="s", color="#1f77b4", label="own rule band")}
+    style = {"ungated": dict(marker="^", color="#7f7f7f", label="no band (a)"), "fixed": dict(marker="o", color="#c0392b", label="shared band (b)"), "rule": dict(marker="s", color="#1f77b4", label="own band (c)")}
     for label, pts in points.items():
         ax.scatter([p[0] / 1e3 for p in pts], [p[1] for p in pts], s=22, zorder=3, **style[label])
         if label == "fixed":

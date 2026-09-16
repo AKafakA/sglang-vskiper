@@ -17,7 +17,7 @@ Method, unchanged from that tool because the method was never the problem:
   * the paired unit is ONE REP's delta — a rep runs both arms on the same pinned equal-work
     suite at the same rate, so the comparison is already paired within the rep;
   * across reps, a t-based 95 % CI on those deltas;
-  * a CI containing zero is a STRADDLE, reported as parity, never as a win.
+  * a CI containing zero is a STRADDLE, reported as unresolved (no resolved difference), never as a win and never as equivalence.
 
 Gating is inherited and non-negotiable: a rep counts only with a GR-1a work-identity PASS.
 **A rep that is MISSING and a rep that FAILED must never look alike** (D-593), so an ungated
@@ -41,6 +41,9 @@ from pathlib import Path
 LATENCY_METRICS = [
     ("TTFT p50", "median_ttft_ms"), ("TTFT mean", "mean_ttft_ms"), ("TTFT p95", "p95_ttft_ms"), ("TTFT p99", "p99_ttft_ms"),
     ("TPOT p50", "median_tpot_ms"), ("TPOT mean", "mean_tpot_ms"), ("TPOT p95", "p95_tpot_ms"), ("TPOT p99", "p99_tpot_ms"),
+    # token-weighted TPOT: the benchmark's mean inter-token latency over every generated token, beside the
+    # request-mean TPOT above (which weighs a five-token CoQA answer as much as a 400-token GSM8K one)
+    ("ITL mean", "mean_itl_ms"),
     ("E2E p50", "median_e2e_latency_ms"), ("E2E mean", "mean_e2e_latency_ms"), ("E2E p95", "p95_e2e_latency_ms"),
     ("E2E p99", "p99_e2e_latency_ms"),
     # [D-756, owner 09-13] makespan = the cell's wall time to complete its FIXED work, drain included
@@ -181,7 +184,7 @@ def main() -> int:
 
     print(f"paired headline — {args.treatment} vs {args.baseline}")
     print("  negative = treatment FASTER for latency; positive = treatment HIGHER for TPS")
-    print("  an interval containing zero is PARITY, reported as parity (straddle rule)\n")
+    print("  an interval containing zero is UNRESOLVED: no resolved difference, never a win and never equivalence (straddle rule)\n")
 
     report: dict = {"baseline": args.baseline, "treatment": args.treatment, "rows": []}
     unit = {"duration": "s", "drain_s": "s", "output_throughput": "tok/s", "injected_rate": "req/s"}
@@ -198,7 +201,7 @@ def main() -> int:
                 span = ""
             else:
                 lo, hi = mean - half, mean + half
-                verdict = "PARITY (straddles 0)" if lo <= 0 <= hi else (
+                verdict = "unresolved (straddles 0)" if lo <= 0 <= hi else (
                     "treatment better" if (hi < 0 and field != "output_throughput")
                     or (lo > 0 and field == "output_throughput") else "treatment worse")
                 span = f"  [{lo:+.2f}, {hi:+.2f}]"

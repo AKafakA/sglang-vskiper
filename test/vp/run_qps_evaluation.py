@@ -134,8 +134,27 @@ DECLARED_SUITE_ROWS = {"gsm8k": 3600, "coqa": 4000, "bbh_cot": 4000}
 _SUITE_SUFFIXES = (".", "_eqw", "_nat", "_vprebank")
 
 
+# EXACT-SUITE sizes, consulted BEFORE the per-dataset map above. The dataset map is the
+# PERFORMANCE lane's equal-work bank size and is deliberately untouched: bbh_cot stays 4000 there
+# and every bbh_cot_eqw_* cell still resolves to it.
+#
+# The QUALITY lane has always carried the full lm-eval split, not the perf bank: all four 2x2 arms
+# ran BBH at 6511 docs over 27 subtasks -- arms A/B on the hf backend and C/D on the served
+# backends, in both campaigns. So 6511 is not a new size here; it is the size the quality evidence
+# has always used, and refusing it would refuse the lane's own established protocol. The gsm8k and
+# coqa quality suites are listed for the same reason even though their values equal the defaults,
+# so the quality lane's sizes are explicit rather than inherited by accident.
+DECLARED_SUITE_ROWS_EXACT = {
+    "gsm8k.qual": 3600,      # 1,319 test + 2,281 train padding
+    "coqa.qual": 4000,       # 500 validation + 3,500 train padding
+    "bbh_cot.qual": 6511,    # full lm-eval test split, 27 subtasks, test-only (no padding)
+}
+
+
 def declared_rows_for(workload: str) -> tuple[str, int] | None:
     """The dataset and its agreed row count, or None when the suite is not a campaign one."""
+    if workload in DECLARED_SUITE_ROWS_EXACT:
+        return workload, DECLARED_SUITE_ROWS_EXACT[workload]
     for dataset in sorted(DECLARED_SUITE_ROWS, key=len, reverse=True):
         if workload == dataset or any(
             workload.startswith(dataset + suffix) for suffix in _SUITE_SUFFIXES

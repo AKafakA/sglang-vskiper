@@ -12,11 +12,13 @@ a clone with no host: the per-rung directories carry the summary, so the multi-g
 needed for this table.
 
 usage: ladder_table.py gsm8k=<root> bbh_cot=<root> coqa=<root> --knee gsm8k=11 ... --rows out.tex [--macros out.tex]
+       (h100_gsm8k=<root> for the H100 replicate's own GSM8K ladder; a rung directory named r<N>-<suffix> is a
+       retry that never served and is skipped, exactly as an unserved rung is)
 """
 import argparse, pathlib, re, sys
 
-NAMES = {"gsm8k": "GSM8K", "bbh_cot": "BBH", "coqa": "CoQA"}
-MW = {"gsm8k": "Gsm", "bbh_cot": "Bbh", "coqa": "Coqa"}
+NAMES = {"gsm8k": "GSM8K", "bbh_cot": "BBH", "coqa": "CoQA", "h100_gsm8k": "GSM8K (H100)"}
+MW = {"gsm8k": "Gsm", "bbh_cot": "Bbh", "coqa": "Coqa", "h100_gsm8k": "HundredGsm"}
 TPS = re.compile(r"Output token throughput \(tok/s\):\s*([0-9.]+)")
 
 
@@ -66,6 +68,8 @@ def main() -> int:
         p = MW.get(ds, ds.title())
         macros += [f"\\newcommand{{\\vpLadder{p}Knee}}{{{knee}}}",
                    f"\\newcommand{{\\vpLadder{p}Rungs}}{{{rungs[0]}--{rungs[-1]}}}",
+                   f"\\newcommand{{\\vpLadder{p}AtKnee}}{{{at_knee:.0f}}}",
+                   f"\\newcommand{{\\vpLadder{p}AtTop}}{{{at_top:.0f}}}",
                    f"\\newcommand{{\\vpLadder{p}Growth}}{{{growth:+.1f}}}"]
     open(args.rows, "w").write("\n".join(rows) + "\n")
     if args.macros:

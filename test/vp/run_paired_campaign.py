@@ -353,6 +353,50 @@ def default_conformance_gate(spec: dict[str, Any], arm: str, port: int) -> None:
     log(f"    Gate E default conformance ({arm}): PASS")
 
 
+def runner_command(spec: dict[str, Any], arm: str, manifest: Path, qps_config: Path,
+                   cells_dir: Path, port: int) -> list[str]:
+    """The run_qps_evaluation.py invocation for ONE booted arm.
+
+    Shared by the perf lane (run_arm_cells) and the natural-lane harvest (run_natural_harvest.py)
+    so the two clients of the quality table are driven by one argv, not two hand-copied ones.
+    """
+    tree = Path(spec["tree"])
+    return ([spec["python"], str(tree / "test/vp/run_qps_evaluation.py"),
+         # THE EXPERIMENT NAME MUST BE THE ARM. run_qps_evaluation asserts
+         # `deployment["system_id"] == args.experiment` (:1545), and this driver sets
+         # --system-id to the arm (:252). Passing a composite label here raised
+         #   ValueError: deployment system 'upstream' does not match experiment
+         #               'paired-gsm8k-upstream-rep1'
+         # on BOTH arms of the smoke -- 100 % of cells, one minute in, before any request
+         # was served. Nothing is lost by matching: the dataset, rate and rep are already
+         # carried by the output path (rep<N>/<dataset>/<arm>/) and by the cell filename
+         # (<suite>_qps<rate>_rep<N>.jsonl).
+         "--experiment", arm,
+         "--deployment-manifest", str(manifest),
+         "--model", served_model_name(spec), "--workload-dir", spec["suites_dir"],
+         "--qps-config", str(qps_config), "--output-dir", str(cells_dir),
+         "--evidence-class", spec.get("evidence_class", "development"),
+         "--host", "127.0.0.1", "--port", str(port), "--reps", "1",
+         "--runner-source-revision", spec["source_revision"],
+         # ONE REFUSED RATE MUST NOT COST THE OTHER TWO.
+         #
+         # An arm-run covers every rate of its dataset in one invocation. Without this,
+         # the FIRST refused cell aborts the whole invocation and the remaining rates are
+         # never attempted. Measured 2026-09-11: gsm8k r8p25 was refused on
+         # `skipping_executed` (peak occupancy 96 against the design's enter_rows=176, so
+         # the load-aware switch correctly never left prod_allrun) -- and that refusal
+         # took r10p45 and r13p75 with it, despite both engaging cleanly at peak 389/386.
+         # The arm produced nothing, so GR-1a failed all three rates and rep 1 gsm8k
+         # yielded ZERO usable pairs.
+         #
+         # The ladder has always passed this for the same reason: a rung that fails its
+         # gates must not abandon the band. A refused cell is still refused -- its
+         # artifacts are renamed INVALID.* and GR-1a fails that rate -- it simply no
+         # longer takes its siblings down.
+         "--continue-after-accounting-rejection"]
+        + (["--upstream-baseline"] if arm_is_upstream(spec, arm) else []))
+
+
 def run_arm_cells(spec: dict[str, Any], dataset: str, rates: dict[str, float],
                   arm: str, rep: int, out_dir: Path, port: int) -> int:
     """All rates for one (dataset, arm, rep) against ONE boot. Returns the runner's rc."""
@@ -398,40 +442,7 @@ def run_arm_cells(spec: dict[str, Any], dataset: str, rates: dict[str, float],
         # fewer than their whole suite. The runner derives duration = rows/qps per cell,
         # which is the only form that keeps work identical across rates.
         completed = subprocess.run(
-            [spec["python"], str(tree / "test/vp/run_qps_evaluation.py"),
-             # THE EXPERIMENT NAME MUST BE THE ARM. run_qps_evaluation asserts
-             # `deployment["system_id"] == args.experiment` (:1545), and this driver sets
-             # --system-id to the arm (:252). Passing a composite label here raised
-             #   ValueError: deployment system 'upstream' does not match experiment
-             #               'paired-gsm8k-upstream-rep1'
-             # on BOTH arms of the smoke -- 100 % of cells, one minute in, before any request
-             # was served. Nothing is lost by matching: the dataset, rate and rep are already
-             # carried by the output path (rep<N>/<dataset>/<arm>/) and by the cell filename
-             # (<suite>_qps<rate>_rep<N>.jsonl).
-             "--experiment", arm,
-             "--deployment-manifest", str(manifest),
-             "--model", served_model_name(spec), "--workload-dir", spec["suites_dir"],
-             "--qps-config", str(qps_config), "--output-dir", str(cell_root / "cells"),
-             "--evidence-class", spec.get("evidence_class", "development"),
-             "--host", "127.0.0.1", "--port", str(port), "--reps", "1",
-             "--runner-source-revision", spec["source_revision"],
-             # ONE REFUSED RATE MUST NOT COST THE OTHER TWO.
-             #
-             # An arm-run covers every rate of its dataset in one invocation. Without this,
-             # the FIRST refused cell aborts the whole invocation and the remaining rates are
-             # never attempted. Measured 2026-09-11: gsm8k r8p25 was refused on
-             # `skipping_executed` (peak occupancy 96 against the design's enter_rows=176, so
-             # the load-aware switch correctly never left prod_allrun) -- and that refusal
-             # took r10p45 and r13p75 with it, despite both engaging cleanly at peak 389/386.
-             # The arm produced nothing, so GR-1a failed all three rates and rep 1 gsm8k
-             # yielded ZERO usable pairs.
-             #
-             # The ladder has always passed this for the same reason: a rung that fails its
-             # gates must not abandon the band. A refused cell is still refused -- its
-             # artifacts are renamed INVALID.* and GR-1a fails that rate -- it simply no
-             # longer takes its siblings down.
-             "--continue-after-accounting-rejection"]
-            + (["--upstream-baseline"] if arm_is_upstream(spec, arm) else []),
+            runner_command(spec, arm, manifest, qps_config, cell_root / "cells", port),
             check=False, stdout=(cell_root / "runner.log").open("wb"),
             stderr=subprocess.STDOUT,
         )

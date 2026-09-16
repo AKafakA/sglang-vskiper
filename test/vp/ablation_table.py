@@ -39,10 +39,15 @@ WORD = {"0.75": "Low", "0.95": "Mid", "1.25": "High"}          # macro names tak
 FIELD = {"mean_e2e_latency_ms": "EtoE", "duration": "Makespan", "mean_ttft_ms": "TTFT", "mean_tpot_ms": "TPOT", "output_throughput": "TPS"}
 
 
+def signed(x: float) -> str:
+    """+.1f without a signed zero: a -0.0 cell reads as a loss it is not."""
+    return f"{x:+.1f}".replace("-0.0", "+0.0")
+
+
 def fmt(row: dict | None, ci: bool) -> str:
     if row is None:
         return "--"
-    s = f"{row['mean_pct']:+.1f}"
+    s = signed(row['mean_pct'])
     return f"{s} $\\pm$ {row['ci95_half']:.1f}" if ci else s
 
 
@@ -53,6 +58,8 @@ def main() -> int:
     ap.add_argument("--dataset", default="gsm8k")
     ap.add_argument("--knee", action="append", default=[], help="dataset=Q*")
     ap.add_argument("--metrics", default="mean_e2e_latency_ms,duration")
+    ap.add_argument("--macro-only-metrics", default="mean_tpot_ms,mean_ttft_ms",
+                    help="fields emitted as macros but not as table columns (the prose cites an arm's TPOT/TTFT)")
     ap.add_argument("--rows", type=Path, required=True)
     ap.add_argument("--macros", type=Path)
     ap.add_argument("--macro-prefix", default="vpAbl", help="macro name prefix (letters only), e.g. vpAblBbh for a second dataset")
@@ -76,6 +83,21 @@ def main() -> int:
             for f in metrics:
                 r = rep.get((a.dataset, suite, f))
                 cells.append(fmt(r, ci=False))
+                if r is not None and a.macros:
+                    mult = multiple(rate, knees[a.dataset])
+                    tag = re.sub(r"[^A-Za-z]", "", name.title()) + FIELD.get(f, re.sub(r"[^A-Za-z]", "", f.title())) + WORD.get(mult, "X")
+                    macros.append(f"\\newcommand{{\\{a.macro_prefix}{tag}}}{{{signed(r['mean_pct'])}}}")
+                    # the same cell as a difference from the headline arm, in points of the
+                    # percent change: what the arm "gives up" (positive) or gains (negative)
+                    h = head.get((a.dataset, suite, f))
+                    if h is not None:
+                        macros.append(f"\\newcommand{{\\{a.macro_prefix}{tag}VsHead}}"
+                                      f"{{{r['mean_pct'] - h['mean_pct']:+.1f}}}")
+                        macros.append(f"\\newcommand{{\\{a.macro_prefix}{tag}VsHeadAbs}}"
+                                      f"{{{abs(r['mean_pct'] - h['mean_pct']):.1f}}}")
+        for name, rep in arms:
+            for f in [x for x in a.macro_only_metrics.split(",") if x]:
+                r = rep.get((a.dataset, suite, f))
                 if r is not None and a.macros:
                     mult = multiple(rate, knees[a.dataset])
                     tag = re.sub(r"[^A-Za-z]", "", name.title()) + FIELD.get(f, re.sub(r"[^A-Za-z]", "", f.title())) + WORD.get(mult, "X")

@@ -17,14 +17,20 @@ import argparse, json, re, sys
 LABELS = {"gsm8k": [("r8p25", "0.75"), ("r10p45", "0.95"), ("r13p75", "1.25")],
           "bbh_cot": [("r18p75", "0.75"), ("r23p75", "0.95"), ("r31p25", "1.25")],
           "coqa": [("r20p25", "0.75"), ("r25p65", "0.95"), ("r33p75", "1.25")]}
-NAMES = {"gsm8k": "GSM8K", "bbh_cot": "BBH-CoT", "coqa": "CoQA"}
+NAMES = {"gsm8k": "GSM8K", "bbh_cot": "BBH", "coqa": "CoQA"}   # one name per workload across every table; BBH is its CoT split, said once in the paper
 WORD = {"0.75": "Low", "0.95": "Mid", "1.25": "High"}
 MW = {"gsm8k": "Gsm", "bbh_cot": "Bbh", "coqa": "Coqa"}
-STACK = {"upstream": "Base + SGLang", "vskipper": r"FlexiDepth + \sys{}"}
+STACK = {"upstream": "Base + upstream", "vskipper": r"FlexiDepth + \sys{}"}
 
 
 def tps(rec):
     return rec["completed"] * rec["mean_out_tokens"] / rec["duration_s"]
+
+
+def signed(x: float, nd: int = 0) -> str:
+    """{:+.nf} without the signed zero: a delta that rounds to zero prints as 0."""
+    t = f"{x:+.{nd}f}"
+    return "0" if nd == 0 and t in ("-0", "+0") else ("0.0" if t in ("-0.0", "+0.0") else t)
 
 
 def main():
@@ -33,7 +39,7 @@ def main():
     ap.add_argument("--alwaysroute-lmeval", help="its lm-eval scores")
     a = ap.parse_args(); d = json.load(open(a.summary)); rows, macros = [], []
     ar = json.load(open(a.alwaysroute)) if a.alwaysroute else {}
-    lm = {}
+    lm, lm_all = {}, {}
     src = dict(json.load(open(a.lmeval)))
     if a.alwaysroute_lmeval:
         src.update(json.load(open(a.alwaysroute_lmeval)))
@@ -43,6 +49,9 @@ def main():
         sc = rec["scores"]; q = sc.get("exact_match,flexible-extract", sc.get("exact_match,get-answer", sc.get("f1")))
         arm = "alwaysroute" if (m.group(1) or "").startswith("integrated_alwaysskip") else ("upstream" if m.group(1) else "vskipper")
         lm[(arm, m.group(2), m.group(3))] = q
+        lm_all[(arm, m.group(2), m.group(3))] = sc
+    def scores_for(rec, ds, arm, lbl):
+        return lm_all.get((arm, ds, lbl), {})
     def quality(rec, ds, arm, lbl):
         return lm[(arm, ds, lbl)]
     for ds, labels in LABELS.items():
@@ -54,10 +63,10 @@ def main():
             if any((arm, ds, lbl) not in lm for arm in ("upstream", "vskipper")):
                 print(f"  {ds} {lbl}: no lm-eval score for both arms -> cell skipped", file=sys.stderr); continue
             for arm, r in (("upstream", u), ("vskipper", v)):
-                rows.append(f"{NAMES[ds] if arm == 'upstream' else ''} & {rate if arm == 'upstream' else ''} & {STACK[arm]} & {100*quality(r, ds, arm, lbl):.1f} & {r['cap_hits']} & {r['mean_out_tokens']:.0f} & {r['mean_ttft_ms']:.0f} & {r['mean_tpot_ms']:.1f} & {r['mean_e2e_s']:.1f} & {tps(r):.0f} & {r['duration_s']:.0f} \\\\")
+                rows.append(f"{NAMES[ds] if arm == 'upstream' else ''} & {rate if arm == 'upstream' else ''} & {STACK[arm]} & {r['cap_hits']} & {r['mean_out_tokens']:.0f} & {r['mean_ttft_ms']:.0f} & {r['mean_tpot_ms']:.1f} & {r['mean_e2e_s']:.1f} & {tps(r):.0f} & {r['duration_s']:.0f} \\\\")
             w = ar.get(ds, {}).get(lbl)
             if w is not None and ("alwaysroute", ds, lbl) in lm:
-                rows.append(f" & & FlexiDepth always-route & {100*quality(w, ds, 'alwaysroute', lbl):.1f} & {w['cap_hits']} & {w['mean_out_tokens']:.0f} & {w['mean_ttft_ms']:.0f} & {w['mean_tpot_ms']:.1f} & {w['mean_e2e_s']:.1f} & {tps(w):.0f} & {w['duration_s']:.0f} \\\\")
+                rows.append(f" & & FlexiDepth always-route & {w['cap_hits']} & {w['mean_out_tokens']:.0f} & {w['mean_ttft_ms']:.0f} & {w['mean_tpot_ms']:.1f} & {w['mean_e2e_s']:.1f} & {tps(w):.0f} & {w['duration_s']:.0f} \\\\")
                 tag = MW[ds] + WORD[rate]
                 macros.append(f"\\newcommand{{\\vpNatAll{tag}Qual}}{{{100*quality(w, ds, 'alwaysroute', lbl):.1f}}}")
                 macros.append(f"\\newcommand{{\\vpNatAll{tag}EtoE}}{{{w['mean_e2e_s']:.1f}}}")
@@ -67,13 +76,24 @@ def main():
             dq = 100 * (quality(v, ds, "vskipper", lbl) - quality(u, ds, "upstream", lbl)); dtps = 100 * (tps(v) - tps(u)) / tps(u)
             macros.append(f"\\newcommand{{\\vpNatUp{MW[ds] + WORD[rate]}Qual}}{{{100*quality(u, ds, 'upstream', lbl):.1f}}}")
             macros.append(f"\\newcommand{{\\vpNatHyb{MW[ds] + WORD[rate]}Qual}}{{{100*quality(v, ds, 'vskipper', lbl):.1f}}}")
-            rows.append(f" & & \\emph{{stack $\\Delta$}} & {dq:+.1f}~pp & {v['cap_hits']-u['cap_hits']:+d} & {pct('mean_out_tokens'):+.0f}\\% & {pct('mean_ttft_ms'):+.0f}\\% & {pct('mean_tpot_ms'):+.0f}\\% & {pct('mean_e2e_s'):+.0f}\\% & {dtps:+.0f}\\% & {pct('duration_s'):+.0f}\\% \\\\")
+            if ds == "gsm8k":
+                # the two published GSM8K filters, served minus upstream, for the banks appendix's divergence sentence
+                for key, tag in (("exact_match,flexible-extract", "FlexDelta"), ("exact_match,strict-match", "StrictDelta")):
+                    su, sv = scores_for(u, ds, 'upstream', lbl).get(key), scores_for(v, ds, 'vskipper', lbl).get(key)
+                    if su is None or sv is None:
+                        sys.exit(f"FATAL gsm8k {lbl}: filter {key!r} missing from the scores (upstream {su}, vskipper {sv}); "
+                                 "the banks appendix cites both filters")
+                    macros.append(f"\\newcommand{{\\vpNatGsm{WORD[rate]}{tag}}}{{{100*(sv-su):+.1f}}}")
+            rows.append(f" & & \\emph{{stack $\\Delta$}} & {v['cap_hits']-u['cap_hits']:+d} & {signed(pct('mean_out_tokens'))}\\% & {signed(pct('mean_ttft_ms'))}\\% & {signed(pct('mean_tpot_ms'))}\\% & {signed(pct('mean_e2e_s'))}\\% & {signed(dtps)}\\% & {signed(pct('duration_s'))}\\% \\\\")
             if lbl == labels[-1][0]: rows.append(r"\addlinespace")
             tag = MW[ds] + WORD[rate]
             for name, val in (("OutTok", pct("mean_out_tokens")), ("EtoE", pct("mean_e2e_s")), ("TPOT", pct("mean_tpot_ms")), ("TPS", dtps), ("Qual", dq), ("Makespan", pct("duration_s"))):
-                macros.append(f"\\newcommand{{\\vpNat{tag}{name}}}{{{val:+.0f}}}" if name != "Qual" else f"\\newcommand{{\\vpNat{tag}{name}}}{{{val:+.1f}}}")
+                macros.append(f"\\newcommand{{\\vpNat{tag}{name}}}{{{signed(val)}}}" if name != "Qual" else f"\\newcommand{{\\vpNat{tag}{name}}}{{{signed(val, 1)}}}")
+                if name == "OutTok":   # the magnitude, for prose that says "more output" (no double sign)
+                    macros.append(f"\\newcommand{{\\vpNat{tag}{name}Abs}}{{{abs(val):.0f}}}")
             macros.append(f"\\newcommand{{\\vpNat{tag}CapUp}}{{{u['cap_hits']}}}\n\\newcommand{{\\vpNat{tag}CapVs}}{{{v['cap_hits']}}}")
             macros.append(f"\\newcommand{{\\vpNat{tag}OutTokUp}}{{{u['mean_out_tokens']:.0f}}}\n\\newcommand{{\\vpNat{tag}OutTokVs}}{{{v['mean_out_tokens']:.0f}}}")
+            macros.append(f"\\newcommand{{\\vpNat{tag}TtftSUp}}{{{u['mean_ttft_ms']/1000:.0f}}}")   # upstream's mean TTFT on this lane, in seconds (the queue each cell carries)
     if rows and rows[-1] == r"\addlinespace": rows.pop()
     open(a.rows, "w").write("\n".join(rows) + "\n"); open(a.macros, "w").write("\n".join(macros) + "\n")
     print(f"natural-lane table: {sum(1 for r in rows if 'stack' in r)} cells -> {a.rows}, {len(macros)} macro lines")

@@ -20,8 +20,14 @@ import sys
 from collections import defaultdict
 
 #: (samples-file task prefix, filter, metric key) per dataset -- declared, as in summarize_2x2.
+# GSM8K uses BOTH of lm-eval's published filters under one rule (see load_arm): strict-match where
+# it parses, flexible extraction where it does not. Neither alone can compare these arms -- strict
+# cannot parse ~20 % of the BASE model's generations (no marker, or "#### $21" whose $ is outside
+# its [0-9.,] class) while flexible extraction's last-number rule is fooled by the confidence
+# epilogue the CHECKPOINT appends (~3 %, and never on the base model). The failures fall on
+# opposite arms, so either filter alone biases the comparison.
 SPEC = {
-    "gsm8k": ("samples_gsm8k_", "flexible-extract", "exact_match"),
+    "gsm8k": ("samples_gsm8k_", "__composite__", "exact_match"),
     "bbh_cot": ("samples_bbh_cot_fewshot_", "get-answer", "exact_match"),
     "coqa": ("samples_coqa_", "none", "f1"),
 }
@@ -35,6 +41,9 @@ def t_crit(df: int) -> float:
     return 1.960
 
 
+FILTER_COUNTS: dict[str, dict[str, int]] = {}   # per arm root, filled by the composite loader (App. E.2's table)
+
+
 def load_arm(root: str, dataset: str) -> dict[tuple[str, int], float]:
     prefix, flt, metric = SPEC[dataset]
     files = sorted(glob.glob(os.path.join(root, "**", f"{prefix}*.jsonl"), recursive=True))
@@ -46,6 +55,32 @@ def load_arm(root: str, dataset: str) -> dict[tuple[str, int], float]:
         task = os.path.basename(f)[len("samples_"):].rsplit("_20", 1)[0]
         newest[task] = f
     out: dict[tuple[str, int], float] = {}
+    if flt == "__composite__":
+        # collect every filter's verdict AND its extracted value per document, then combine
+        rows: dict[tuple[str, int], dict[str, dict]] = {}
+        for task, f in newest.items():
+            with open(f) as fh:
+                for line in fh:
+                    r = json.loads(line)
+                    fr = r.get("filtered_resps")
+                    # fail closed: a row without an extraction is malformed, never "parsed"
+                    if fr is None or (isinstance(fr, list) and not fr):
+                        sys.exit(f"FATAL {f}: doc {r.get('doc_id')} filter {r.get('filter')!r} has no filtered_resps")
+                    val = fr[0] if isinstance(fr, list) else fr
+                    rows.setdefault((task, int(r["doc_id"])), {})[r.get("filter", "none")] = {
+                        "ok": float(r[metric]), "val": str(val).strip()}
+        unparsed = fooled = 0
+        for key, per in rows.items():
+            if not {"strict-match", "flexible-extract"} <= set(per):
+                sys.exit(f"FATAL: {key} lacks both GSM8K filters; cannot apply the composite rule")
+            parsed = per["strict-match"]["val"] not in ("", "[invalid]")
+            out[key] = per["strict-match"]["ok"] if parsed else per["flexible-extract"]["ok"]
+            unparsed += not parsed
+            # "fooled": strict parsed the marked answer and scored it correct, flexible's last-number
+            # rule picked a different number and scored it wrong (the Confidence-epilogue failure)
+            fooled += parsed and per["strict-match"]["ok"] == 1.0 and per["flexible-extract"]["ok"] == 0.0
+        FILTER_COUNTS[root] = {"n": len(rows), "strict_unparsed": unparsed, "flexible_fooled": fooled}
+        return out
     for task, f in newest.items():
         with open(f) as fh:
             for line in fh:
@@ -102,27 +137,67 @@ def main() -> int:
           f"(B-A) {rep['B_minus_A']['mean_pp']:+.2f} ± {rep['B_minus_A']['ci95_half_pp']:.2f} pp | "
           f"(D-C) {rep['D_minus_C']['mean_pp']:+.2f} ± {rep['D_minus_C']['ci95_half_pp']:.2f} pp | "
           f"paired d-o-d {z['mean_pp']:+.2f} ± {z['ci95_half_pp']:.2f} pp -> {rep['verdict']}")
+    extra = []   # extra macros, with {macro} filled in below
+    if args.dataset == "gsm8k" and SPEC["gsm8k"][1] == "__composite__":
+        # The three readings (App. E.2): the same paired d-o-d under each published filter alone. The
+        # composite is the reported one; the two others show how much the filter choice moves the result.
+        readings = {}
+        for flt, tag in (("strict-match", "Strict"), ("flexible-extract", "Flex")):
+            saved = SPEC["gsm8k"]; SPEC["gsm8k"] = (saved[0], flt, saved[2])
+            try:
+                pf = {k: load_arm(v, "gsm8k") for k, v in arms.items()}
+            finally:
+                SPEC["gsm8k"] = saved
+            if set.intersection(*(set(v) for v in pf.values())) != keys:
+                sys.exit(f"FATAL: the {flt} reading scores a different document set")
+            df = [(pf["D"][k] - pf["C"][k]) - (pf["B"][k] - pf["A"][k]) for k in keys]
+            st = stats(df); readings[flt] = {"dod": st, "means": {q: 100 * sum(pf[q][k] for k in keys) / n for q in pf}}
+            extra += [f"\\newcommand{{\\{args.macro_prefix}{{macro}}Dod{tag}}}{{{st['mean_pp']:+.2f}}}",
+                      f"\\newcommand{{\\{args.macro_prefix}{{macro}}Dod{tag}Ci}}{{{st['ci95_half_pp']:.2f}}}"]
+        for flt, tag in (("strict-match", "Strict"), ("flexible-extract", "Flex")):
+            mm = readings[flt]["means"]
+            extra.append(f"\\newcommand{{\\{args.macro_prefix}{{macro}}BminusA{tag}}}{{{mm['B'] - mm['A']:+.2f}}}")
+            extra.append(f"\\newcommand{{\\{args.macro_prefix}{{macro}}DminusC{tag}}}{{{mm['D'] - mm['C']:+.2f}}}")
+        # App. E.2's table: per arm, rows strict-match could not parse and rows flexible extraction was
+        # fooled on, from the composite loader's pass over the same files
+        for q, root in arms.items():
+            c = FILTER_COUNTS.get(root)
+            if c is None:
+                sys.exit(f"FATAL: no filter counts recorded for arm {q} ({root})")
+            for name, k in (("StrictUnparsed", "strict_unparsed"), ("FlexFooled", "flexible_fooled")):
+                extra.append(f"\\newcommand{{\\{args.macro_prefix}{{macro}}Arm{q}{name}}}{{{c[k]}}}")
+                extra.append(f"\\newcommand{{\\{args.macro_prefix}{{macro}}Arm{q}{name}Pct}}{{{100 * c[k] / c['n']:.1f}}}")
+        rep["filter_counts"] = {q: FILTER_COUNTS[root] for q, root in arms.items()}
+        allm = [rep["dod"]["mean_pp"]] + [r["dod"]["mean_pp"] for r in readings.values()]
+        spread = max(allm) - min(allm)
+        extra.append(f"\\newcommand{{\\{args.macro_prefix}{{macro}}DodFilterSpread}}{{{spread:.2f}}}")
+        rep["readings"] = readings
+        print(f"  readings: strict {readings['strict-match']['dod']['mean_pp']:+.2f} ± {readings['strict-match']['dod']['ci95_half_pp']:.2f} | "
+              f"flexible {readings['flexible-extract']['dod']['mean_pp']:+.2f} ± {readings['flexible-extract']['dod']['ci95_half_pp']:.2f} | spread {spread:.2f} pp")
     if args.json:
         json.dump(rep, open(args.json, "w"), indent=1)
     if args.latex:
         disp = {"gsm8k": "GSM8K", "coqa": "CoQA", "bbh_cot": "BBH"}[args.dataset]
         macro = {"gsm8k": "Gsm", "coqa": "Coqa", "bbh_cot": "Bbh"}[args.dataset]
-        metric_label = {"gsm8k": "\\texttt{exact\\_match,flexible-extract}", "coqa": "\\texttt{f1,none}",
+        # one filter name across every table: the GSM8K composite (strict where it parses, flexible otherwise)
+        metric_label = {"gsm8k": "\\texttt{exact\\_match,composite}", "coqa": "\\texttt{f1,none}",
                         "bbh_cot": "\\texttt{exact\\_match,get-answer}"}[args.dataset]
         m = rep["means"]
         if args.margin is not None:
-            # A point estimate inside the margin whose interval is not is UNRESOLVED, not a failure:
-            # "FAIL" asserts the served arm is worse by more than the margin, which a wide n=1 interval
-            # does not establish. Only a point estimate beyond the margin is a failure.
+            # The standard three-outcome reading of a non-inferiority interval: PASS when the whole
+            # interval lies above -margin; FAIL only when the whole interval lies below it (inferiority
+            # shown); otherwise UNRESOLVED -- the interval crosses the margin and neither is shown.
+            # A point estimate alone never decides (external review, 2026-09-15).
+            upper = rep["dod"]["mean_pp"] + rep["dod"]["ci95_half_pp"]
             if rep["dod_lower_pp"] > -args.margin:
-                gate = "pass" + (" (served above ref.)" if rep["dod_lower_pp"] > 0 else "")
-            elif rep["D_minus_C"]["mean_pp"] - rep["B_minus_A"]["mean_pp"] > -args.margin:
-                gate = f"unresolved ($n={rep.get('n_reps', 1)}$)"
-            else:
+                gate = "pass"   # the sign is in the d-o-d column; the gate tests non-inferiority only
+            elif upper < -args.margin:
                 gate = "FAIL"
+            else:
+                gate = "unresolved (crosses $-\\epsilon$)"
         else:
             gate = "no resolved diff." if rep["verdict"].startswith("no resolved") else ("served above ref." if z["mean_pp"] > 0 else "served below ref.")
-        row = (f"{disp} & {metric_label} & {m['A']/100:.4f} & {m['B']/100:.4f} & {m['C']/100:.4f} & {m['D']/100:.4f} & "
+        row = (f"{disp} & {metric_label} & {m['A']:.2f} & {m['B']:.2f} & {m['C']:.2f} & {m['D']:.2f} & "
                f"{rep['B_minus_A']['mean_pp']:+.2f} & {rep['D_minus_C']['mean_pp']:+.2f} & "
                f"{z['mean_pp']:+.2f} $\\pm$ {z['ci95_half_pp']:.2f} & {gate} \\\\\n")
         macros = "\n".join([
@@ -134,7 +209,8 @@ def main() -> int:
             f"\\newcommand{{\\{args.macro_prefix}{macro}ArmD}}{{{m['D']/100:.4f}}}",
             f"\\newcommand{{\\{args.macro_prefix}{macro}ArmC}}{{{m['C']/100:.4f}}}",
             f"\\newcommand{{\\{args.macro_prefix}{macro}DodLower}}{{{z['mean_pp'] - z['ci95_half_pp']:+.2f}}}",
-        ]) + "\n"
+            f"\\newcommand{{\\{args.macro_prefix}{macro}ArmCPct}}{{{m['C']:.1f}}}",
+        ] + [e.replace("{macro}", macro) for e in extra]) + "\n"
         with open(args.latex, "a") as fh:
             fh.write(row)
         mpath = args.macros or os.path.join(os.path.dirname(args.latex), "quality_macros.tex")
