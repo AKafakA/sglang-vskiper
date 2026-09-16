@@ -17,7 +17,7 @@ Method, unchanged from that tool because the method was never the problem:
   * the paired unit is ONE REP's delta — a rep runs both arms on the same pinned equal-work
     suite at the same rate, so the comparison is already paired within the rep;
   * across reps, a t-based 95 % CI on those deltas;
-  * a CI containing zero is a STRADDLE, reported as parity, never as a win.
+  * a CI containing zero is a STRADDLE, reported as unresolved (no resolved difference), never as a win and never as equivalence.
 
 Gating is inherited and non-negotiable: a rep counts only with a GR-1a work-identity PASS.
 **A rep that is MISSING and a rep that FAILED must never look alike**, so an ungated
@@ -181,7 +181,7 @@ def main() -> int:
 
     print(f"paired headline — {args.treatment} vs {args.baseline}")
     print("  negative = treatment FASTER for latency; positive = treatment HIGHER for TPS")
-    print("  an interval containing zero is PARITY, reported as parity (straddle rule)\n")
+    print("  an interval containing zero is UNRESOLVED: no resolved difference, never a win and never equivalence (straddle rule)\n")
 
     report: dict = {"baseline": args.baseline, "treatment": args.treatment, "rows": []}
     unit = {"duration": "s", "drain_s": "s", "output_throughput": "tok/s", "injected_rate": "req/s"}
@@ -198,7 +198,7 @@ def main() -> int:
                 span = ""
             else:
                 lo, hi = mean - half, mean + half
-                verdict = "PARITY (straddles 0)" if lo <= 0 <= hi else (
+                verdict = "unresolved (straddles 0)" if lo <= 0 <= hi else (
                     "treatment better" if (hi < 0 and field != "output_throughput")
                     or (lo > 0 and field == "output_throughput") else "treatment worse")
                 span = f"  [{lo:+.2f}, {hi:+.2f}]"
