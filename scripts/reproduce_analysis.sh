@@ -52,7 +52,7 @@ python3 "$VP/paper_table.py" "$PACK/headline-served-banks/paired_final_3rep_p95.
 python3 "$VP/natural_lengths_table.py" "$PACK/banks/harvest-upstream" \
   --rows "$OUT/natural_lengths_rows.tex" --macros "$OUT/natural_lengths_macros.tex"
 python3 "$VP/paper_table.py" "$PACK/h100/paired_report_fp16_n3.json" --knee gsm8k=17 \
-  --emit --columns main --dataset-suffix " (H100)" > "$OUT/h100_rows.tex"
+  --emit --columns main --dataset-suffix " (H100)" --macros "$OUT/h100_macros.tex" --macro-prefix vpHundred > "$OUT/h100_rows.tex"
 
 say "3/6  ablation (three datasets)"
 for spec in "gsm8k:11:" "bbh_cot:25:Bbh" "coqa:27:Coqa"; do

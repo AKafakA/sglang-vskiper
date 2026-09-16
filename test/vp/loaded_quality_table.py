@@ -40,10 +40,10 @@ HELD_OUT = {"gsm8k": 1319, "coqa": 500, "bbh_cot": 6511}
 METRIC = {"gsm8k": "exact_match,marker-composite",
           "bbh_cot": "exact_match,get-answer",
           "coqa": "f1"}
-METRIC_TEX = {"gsm8k": r"\texttt{exact\_match,marker-composite}",
+METRIC_TEX = {"gsm8k": r"\texttt{exact\_match,composite}",
               "bbh_cot": r"\texttt{exact\_match,get-answer}",
               "coqa": r"\texttt{f1,none}"}
-ARMS = [("upstream", "Base + upstream SGLang"),
+ARMS = [("upstream", "Base + upstream"),
         ("integrated_it4", r"FlexiDepth + \sys{} (served)"),
         ("integrated_alwaysskip", "FlexiDepth + always-route")]
 ARM_MACRO = {"upstream": "Up", "integrated_it4": "Hyb", "integrated_alwaysskip": "Alw"}
@@ -162,7 +162,7 @@ def main():
                 share_col = f" & {share('integrated_it4')} / {share('integrated_alwaysskip')}"
             sweep.append(f"{NAMES[ds]} & ${rate_x}\\times Q^*$ & {body}{share_col} & {paired_col('upstream')} & {paired_col('integrated_alwaysskip')} \\\\")
             if rate_x == "0.95":
-                knee.append(f"{NAMES[ds]} & {body} \\\\")
+                knee.append(f"{NAMES[ds]} & {body}{share_col} \\\\")
             for arm, _ in ARMS:
                 if cells.get(arm):
                     macros.append(f"\\newcommand{{\\{a.macro_prefix}{MW[ds]}{RW[rate_x]}"

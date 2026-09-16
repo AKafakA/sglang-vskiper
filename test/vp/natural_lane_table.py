@@ -20,7 +20,7 @@ LABELS = {"gsm8k": [("r8p25", "0.75"), ("r10p45", "0.95"), ("r13p75", "1.25")],
 NAMES = {"gsm8k": "GSM8K", "bbh_cot": "BBH", "coqa": "CoQA"}   # one name per workload across every table; BBH is its CoT split, said once in the paper
 WORD = {"0.75": "Low", "0.95": "Mid", "1.25": "High"}
 MW = {"gsm8k": "Gsm", "bbh_cot": "Bbh", "coqa": "Coqa"}
-STACK = {"upstream": "Base + SGLang", "vskipper": r"FlexiDepth + \sys{}"}
+STACK = {"upstream": "Base + upstream", "vskipper": r"FlexiDepth + \sys{}"}
 
 
 def tps(rec):

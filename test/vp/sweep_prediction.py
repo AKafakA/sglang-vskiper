@@ -101,7 +101,7 @@ def main() -> int:
             m = ARM_RE.match(tie[0][3]); f.write(f"\\newcommand{{\\vpPredTieArm}}{{{int(m.group(1))}\\%$\\times${int(m.group(2))}\\%}}\n\\newcommand{{\\vpPredTieVstar}}{{{tie[0][0]/1e3:.0f}}}\n\\newcommand{{\\vpPredTieOcc}}{{{tie[0][2]/1e3:.0f}}}\n\\newcommand{{\\vpPredTieDelta}}{{{tie[0][1]:+.1f}}}\n")
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
     fig, ax = plt.subplots(figsize=(4.4, 2.35), dpi=200)
-    style = {"ungated": dict(marker="^", color="#7f7f7f", label="no band (always route)"), "fixed": dict(marker="o", color="#c0392b", label="fixed band (enter 200k)"), "rule": dict(marker="s", color="#1f77b4", label="own rule band")}
+    style = {"ungated": dict(marker="^", color="#7f7f7f", label="no band (a)"), "fixed": dict(marker="o", color="#c0392b", label="shared band (b)"), "rule": dict(marker="s", color="#1f77b4", label="own band (c)")}
     for label, pts in points.items():
         ax.scatter([p[0] / 1e3 for p in pts], [p[1] for p in pts], s=22, zorder=3, **style[label])
         if label == "fixed":

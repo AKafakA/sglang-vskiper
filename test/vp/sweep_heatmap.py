@@ -62,7 +62,7 @@ def main():
         im = ax.imshow(M, cmap="RdBu_r", vmin=-max(abs(lo), abs(hi)), vmax=max(abs(lo), abs(hi)), aspect="auto")
         ax.set_xticks(range(len(rates))); ax.set_xticklabels([f"{r}%" for r in rates])
         ax.set_yticks(range(len(depths))); ax.set_yticklabels([f"{d}%" for d in depths])
-        ax.set_xlabel("token skip rate"); ax.set_ylabel("skipped-depth ratio")
+        ax.set_xlabel("rows routed $r$"); ax.set_ylabel("routed layers skipped $d$")
         ax.set_title(f"{met.replace('E2E', 'E2E latency')} change vs upstream (%)", fontsize=10)
         for i in range(len(depths)):
             for j in range(len(rates)):

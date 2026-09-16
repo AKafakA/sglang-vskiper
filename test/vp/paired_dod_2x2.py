@@ -156,7 +156,8 @@ def main() -> int:
     if args.latex:
         disp = {"gsm8k": "GSM8K", "coqa": "CoQA", "bbh_cot": "BBH"}[args.dataset]
         macro = {"gsm8k": "Gsm", "coqa": "Coqa", "bbh_cot": "Bbh"}[args.dataset]
-        metric_label = {"gsm8k": "\\texttt{exact\\_match,strict$\\vert$flexible}", "coqa": "\\texttt{f1,none}",
+        # one filter name across every table: the GSM8K composite (strict where it parses, flexible otherwise)
+        metric_label = {"gsm8k": "\\texttt{exact\\_match,composite}", "coqa": "\\texttt{f1,none}",
                         "bbh_cot": "\\texttt{exact\\_match,get-answer}"}[args.dataset]
         m = rep["means"]
         if args.margin is not None:
@@ -166,11 +167,11 @@ def main() -> int:
             # A point estimate alone never decides (external review, 2026-09-15).
             upper = rep["dod"]["mean_pp"] + rep["dod"]["ci95_half_pp"]
             if rep["dod_lower_pp"] > -args.margin:
-                gate = "pass" + (" (served above ref.)" if rep["dod_lower_pp"] > 0 else "")
+                gate = "pass"   # the sign is in the d-o-d column; the gate tests non-inferiority only
             elif upper < -args.margin:
                 gate = "FAIL"
             else:
-                gate = f"unresolved ($n={rep.get('n_reps', 1)}$)"
+                gate = "unresolved (crosses $-\\epsilon$)"
         else:
             gate = "no resolved diff." if rep["verdict"].startswith("no resolved") else ("served above ref." if z["mean_pp"] > 0 else "served below ref.")
         row = (f"{disp} & {metric_label} & {m['A']:.2f} & {m['B']:.2f} & {m['C']:.2f} & {m['D']:.2f} & "

@@ -8,7 +8,7 @@ from the gated cell.
 
 Root naming decides the arm, which is how the harvest drivers named them:
     harvest-<ds>-<label>                         -> vskipper     (the served arm's own lane)
-    harvest-upstream-<ds>-<label>                -> upstream     (Base + SGLang)
+    harvest-upstream-<ds>-<label>                -> upstream     (Base + upstream)
     harvest-<arm>-<ds>-<label>                   -> alwaysroute  (step 13, arm integrated_alwaysskip)
 
 usage: natural_lane_summarize.py <harvest-root> [...] --out summary.json
