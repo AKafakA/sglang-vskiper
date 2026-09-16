@@ -122,6 +122,25 @@ def resolve_exemptions(exemptions: dict[str, dict[str, Any]], active: str) -> di
     return out
 
 
+def nested_match(served: Any, spec: dict[str, Any]) -> bool:
+    """Every dotted path in `spec` resolves inside `served` to the given value; a path ending in
+    `[max]` compares the maximum of a list (e.g. "decode.bs[max]": 1024)."""
+    for path, want in spec.items():
+        node = served
+        take_max = path.endswith("[max]")
+        for part in path.removesuffix("[max]").split("."):
+            if not isinstance(node, dict) or part not in node:
+                return False
+            node = node[part]
+        if take_max:
+            if not isinstance(node, list) or not node:
+                return False
+            node = max(node)
+        if not same(node, want):
+            return False
+    return True
+
+
 def same(served: Any, default: Any) -> bool:
     if isinstance(default, (int, float)) and isinstance(served, (int, float))\
             and not isinstance(default, bool) and not isinstance(served, bool):
@@ -141,12 +160,17 @@ def conformance(server_info: dict[str, Any], defaults: dict[str, Any],
         if same(served, default):
             continue
         rule = exemptions.get(field)
-        if rule is not None and same(served, rule["value"]):
+        if rule is not None and "accept_if" in rule and nested_match(served, rule["accept_if"]):
+            # a structured field (e.g. cuda_graph_config) declared by the properties that the
+            # decision fixes, not by its whole served value (the bucket list is derived)
+            declared.append(f"  = {field}: served satisfies {rule['accept_if']!r} default={default!r} "
+                            f"[{rule['decision']}]")
+        elif rule is not None and "accept_if" not in rule and same(served, rule["value"]):
             declared.append(f"  = {field}: served={served!r} default={default!r} "
                             f"[{rule['decision']}]")
         else:
             undeclared.append(f"  ! {field}: served={served!r} default={default!r}"
-                              + (f" (exempted value is {rule['value']!r}, not this)"
+                              + (f" (exempted value is {rule.get('value', rule.get('accept_if'))!r}, not this)"
                                  if rule is not None else ""))
     return declared, undeclared
 
@@ -166,11 +190,20 @@ def main() -> int:
                     help="the launch profile the server was booted under (design.SERVED_LAUNCH_PROFILES); "
                          "default: the design's default profile")
     ap.add_argument("--report", action="store_true")
+    ap.add_argument("--arm-exemptions", default=None,
+                    help="JSON {field: {value|accept_if, decision}} declared for ONE upstream-served arm "
+                         "launched with extra arguments (the same-ladder control, 2026-09-16)")
     args = ap.parse_args()
 
     info = json.loads(args.server_info.read_text())
     defaults = upstream_defaults(args.defaults_tree, args.model_path, args.python)
     exemptions = load_exemptions(args.design_tree, args.launch_profile, args.fallback_design_tree)
+    if args.arm_exemptions:
+        extra = json.loads(args.arm_exemptions)
+        for field, rule in extra.items():
+            if "decision" not in rule or not ({"value", "accept_if"} & set(rule)):
+                sys.exit(f"arm exemption for {field!r} needs a decision and a value/accept_if")
+        exemptions = dict(exemptions) | extra
     declared, undeclared = conformance(info, defaults, exemptions)
 
     print(f"default conformance: {len(declared)} declared, {len(undeclared)} undeclared "
