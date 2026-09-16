@@ -9,7 +9,7 @@ For each <root>/rep1/<dataset>/<arm>/cells/<suite>_qps*_rep1.jsonl with its .loa
 fd_tokens_skip_body), the attested decode skip ratio and the served band for the device. Output {tag: {arm: {suite: rec}}},
 the format sweep_prediction.py reads. Written 2026-09-14 from the inline extraction used for sweep v1/v2 (identical fields).
 """
-import argparse, glob, json, re
+import argparse, glob, json, re, sys
 
 
 def main() -> int:
@@ -32,21 +32,45 @@ def main() -> int:
                    "tokens_per_request_mean": tok, "resident_kv_p90_est": L["p90_running_requests"] * tok, "resident_kv_max_est": L["max_running_requests"] * tok,
                    "mean_e2e_latency_ms": d["mean_e2e_latency_ms"], "duration_s": d["duration"]}
             try:
-                s = json.dumps(json.load(open(base + ".server_info.after.json")))
-                pa = re.search(r"\"prod_allrun\": (\d+)", s); sb = re.search(r"\"fd_tokens_skip_body\": (\d+)", s)
-                m = re.search(r"\"decode\": \{\"layer_rows\": (\d+), \"(?:run|project)_rows\": (\d+), \"(?:project|run)_rows\": (\d+), \"skip_ratio\": ([0-9.]+)", s)
-                band = re.search(r"\"decode_kv_band_by_device\": \{\"%s\": \[(\d+), (\d+)\]" % a.device, s)
-                rec.update({"decode_passes_allrun": int(pa.group(1)) if pa else None, "decode_passes_skipbody": int(sb.group(1)) if sb else None,
-                            "decode_skip_ratio_attested": float(m.group(4)) if m else None, "band": [int(band.group(1)), int(band.group(2))] if band else None})
-            except Exception:
-                pass
+                info = json.load(open(base + ".server_info.after.json"))
+                st = info["internal_states"][0]
+                if "vp_runtime" not in st:
+                    # The upstream anchor is a separate tree with no vpipe package: no attestation to read.
+                    if name != "upstream":
+                        sys.exit(f"FATAL: routed arm {name} served without vp_runtime attestation: {base}")
+                    rec.update({"decode_passes_allrun": None, "decode_passes_skip": None, "decode_rows_skip_share": None,
+                                "decode_skip_ratio_attested": None, "band": None})
+                    out.setdefault(a.tag, {}).setdefault(name, {})[suite] = rec
+                    continue
+                vp = st["vp_runtime"]
+                # "engaged" is a share of decode PASSES, from the regime switch's own pass counters --
+                # the same quantity Table 13 prints. (An earlier version matched fd_tokens_skip_body, a
+                # ROW counter, against the pass counter and printed tokens/(tokens+passes).) Counters are
+                # the cell's own: after minus before (the warm-up's 20 passes), as loaded_shares.py reads them.
+                vp0 = json.load(open(base + ".server_info.before.json"))["internal_states"][0]["vp_runtime"]
+                dec = {k: vp["regime_switch"]["counters"]["decode"][k] - vp0["regime_switch"]["counters"]["decode"][k] for k in ("prod_allrun", "skip")}
+                c3 = {k: vp["fd_c3"]["counters"][k] - vp0["fd_c3"]["counters"][k] for k in ("fd_tokens_skip_body", "fd_tokens_prod_allrun_band", "fd_tokens_dense_overflow")}
+                rows_total = c3["fd_tokens_skip_body"] + c3["fd_tokens_prod_allrun_band"] + c3["fd_tokens_dense_overflow"]
+                bands = vp["model"]["design"].get("decode_kv_band_by_device") or {}
+                band = bands.get(a.device)
+                rec.update({"decode_passes_allrun": int(dec["prod_allrun"]), "decode_passes_skip": int(dec["skip"]),
+                            "decode_rows_skip_share": (c3["fd_tokens_skip_body"] / rows_total) if rows_total else None,
+                            "decode_skip_ratio_attested": vp["model"]["flexidepth"]["full_graph_routes"]["by_phase"]["decode"].get("skip_ratio"),
+                            "band": [int(band[0]), int(band[1])] if band else None})
+            except (OSError, KeyError, IndexError, TypeError) as exc:
+                sys.exit(f"FATAL: attestation counters unreadable for {base}: {exc!r}")
             out.setdefault(a.tag, {}).setdefault(name, {})[suite] = rec
     json.dump(out, open(a.out, "w"), indent=1)
     print(f"{a.tag}: {len(out.get(a.tag, {}))} arms -> {a.out}")
     for name, v in sorted(out.get(a.tag, {}).items()):
-        r = next(iter(v.values())); sb, ar = r.get("decode_passes_skipbody"), r.get("decode_passes_allrun")
-        eng = (100 * sb / (sb + ar)) if (sb is not None and ar) else None
-        print("  %-44s p90 ~%4.0fk band %-18s engaged %-5s E2E %6.0f ms" % (name, r["resident_kv_p90_est"] / 1e3, r.get("band"), ("%.0f%%" % eng) if eng is not None else "?", r["mean_e2e_latency_ms"]))
+        r = next(iter(v.values())); sb, ar, rs = r.get("decode_passes_skip"), r.get("decode_passes_allrun"), r.get("decode_rows_skip_share")
+        if sb is not None and ar is not None and sb + ar:
+            eng = "%.0f%% passes, %.0f%% rows" % (100 * sb / (sb + ar), 100 * rs)
+        elif rs is not None:
+            eng = "no switch, %.0f%% rows" % (100 * rs)   # always-route: the switch is not consulted; every row is in the routed body
+        else:
+            eng = "?"
+        print("  %-44s p90 ~%4.0fk band %-18s engaged %-24s E2E %6.0f ms" % (name, r["resident_kv_p90_est"] / 1e3, r.get("band"), eng, r["mean_e2e_latency_ms"]))
     return 0
 
 

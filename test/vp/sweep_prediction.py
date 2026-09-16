@@ -65,12 +65,12 @@ def main() -> int:
             row = sweeps.get(label, {}).get(arm); o = occ.get(label, {}).get(arm, {}).get(a.suite, {})
             if row is None:
                 cells += ["--"] if label == "ungated" else ["--", "--", "--"]; continue
-            p90 = o.get("resident_kv_p90_est"); sb = o.get("decode_passes_skipbody"); ar = o.get("decode_passes_allrun")
+            p90 = o.get("resident_kv_p90_est"); sb = o.get("decode_passes_skip"); ar = o.get("decode_passes_allrun"); rs = o.get("decode_rows_skip_share")
             eng = (sb / (sb + ar)) if (sb is not None and ar) else None
             if label == "ungated":   # every pass routed by construction: one column, the E2E change
                 cells += [f"{row['delta']:+.1f}"]
-            else:
-                cells += [f"{p90/1e3:.0f}k" if p90 else "--", f"{100*eng:.0f}\\%" if eng is not None else "--", f"{row['delta']:+.1f}"]
+            else:   # engaged = share of decode passes on the routed body / share of decode rows (a routed pass is a large batch)
+                cells += [f"{p90/1e3:.0f}k" if p90 else "--", f"{100*eng:.0f}/{100*rs:.0f}\\%" if (eng is not None and rs is not None) else "--", f"{row['delta']:+.1f}"]
             points.setdefault(label, []).append((v, row["delta"], p90, arm))
         lines.append(f"{int(r*100)}\\,\\% & {int(d*100)}\\,\\% & {v/1e3:.0f}k & {ex//1000}k/{en//1000}k & " + " & ".join(cells) + r" \\")
     a.rows.write_text("\n".join(lines) + "\n"); a.macros.write_text("\n".join(macros) + "\n")
@@ -80,7 +80,7 @@ def main() -> int:
     def occ_of(arm): return occ.get("fixed", {}).get(arm, {}).get(a.suite, {})
     losers = [p for p in fx if p[1] > 0]; winners = [p for p in fx if p[1] < 0]
     def eng(arm):
-        o = occ_of(arm); sb, ar = o.get("decode_passes_skipbody"), o.get("decode_passes_allrun")
+        o = occ_of(arm); sb, ar = o.get("decode_passes_skip"), o.get("decode_passes_allrun")
         return 100.0 * sb / (sb + ar) if (sb is not None and ar) else None
     up = occ.get("fixed", {}).get("upstream", {}).get(a.suite, {}).get("resident_kv_p90_est")
     tie = [p for p in above if p[1] < 0]
