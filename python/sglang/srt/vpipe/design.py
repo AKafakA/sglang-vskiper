@@ -426,6 +426,22 @@ def _mock_arm_ungated(rate: float, depth: float) -> dict[str, Any]:
     return arm
 
 
+# [plan v4 item 7, 2026-09-16] The SHARED-BAND twins of the nine mock arms (Fig. 3b, the v1.4/v1.5 "fixed band" sweep):
+# every mock served under the FlexiDepth band (A100 160k/200k) instead of its own rule band -- a DECLARED deviation
+# (`decode_kv_band_policy: "shared"`, D-778 posture), so the map shows what serving a mock under the wrong band costs.
+def _mock_arm_sharedband(rate: float, depth: float) -> dict[str, Any]:
+    arm = _mock_arm(rate, depth)
+    arm["decode_kv_band"] = dict(SERVED_DECODE_KV_BAND_BY_DEVICE)
+    arm["decode_kv_band_policy"] = "shared"
+    return arm
+
+
+ARMS.update({
+    f"integrated_randomskip_r{int(rate * 100)}_d{int(depth * 100)}_sharedband": _mock_arm_sharedband(rate, depth)
+    for rate in _SWEEP_SKIP_RATES
+    for depth in _SWEEP_DEPTH_RATIOS
+})
+
 ARMS.update({
     f"integrated_randomskip_r{int(rate * 100)}_d{int(depth * 100)}_alwaysroute": _mock_arm_ungated(rate, depth)
     for rate in _SWEEP_SKIP_RATES

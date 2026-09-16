@@ -168,3 +168,11 @@ def test_qwen3_8b_arm_band_follows_the_rule_with_its_own_inputs():
     assert abs(inp7["skip_ratio"] - 0.428) < 1e-9
     for key, band in arm7["decode_kv_band"].items():
         assert derived_kv_band(key, **inp7) == tuple(band), (key, band)
+
+
+def test_mock_sharedband_twins_serve_the_global_band_as_a_declared_deviation():
+    from sglang.srt.vpipe import design
+    arm = design.ARMS["integrated_randomskip_r50_d50_sharedband"]; own = design.ARMS["integrated_randomskip_r50_d50"]
+    assert arm["decode_kv_band_policy"] == "shared" and arm["decode_kv_band"]["NVIDIA_A100"] == (160_000, 200_000)
+    assert arm["decode_kv_band"] != own["decode_kv_band"] and arm["design_skip_ratio"] == own["design_skip_ratio"]
+    assert len([k for k in design.ARMS if k.endswith("_sharedband") and k.startswith("integrated_randomskip")]) == 9
