@@ -81,6 +81,8 @@ SERVED_DECODE_KV_BAND_BY_DEVICE: Final[dict[str, tuple[int, int]]] = {
     # V* = 126.7k; keyed by memory class, roofline.band_device_key).
     "NVIDIA_RTX_5880_Ada_Generation": (80000, 100000),
     "NVIDIA_A100_40GB": (130000, 160000),
+    # [plan v4, 2026-09-16 22:4xZ] RTX A6000 (768 GB/s GDDR6 -> V* = 62.6k): the fourth hardware point.
+    "NVIDIA_RTX_A6000": (60000, 80000),
 }
 
 SERVED_LOW_ROW_POLICY: Final[str] = "off"
