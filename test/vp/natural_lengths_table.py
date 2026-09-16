@@ -18,7 +18,8 @@ MW = {"gsm8k": "Gsm", "bbh_cot": "Bbh", "coqa": "Coqa"}
 
 def stats(path):
     L = list(json.load(open(path))["lengths"].values()); n = len(L)
-    return {"n": n, "mean": sum(L) / n, "runaway": sum(x >= 4096 for x in L), "sum": sum(L), "short": sum(x <= 5 for x in L)}
+    return {"n": n, "mean": sum(L) / n, "runaway": sum(x >= 4096 for x in L), "sum": sum(L), "short": sum(x <= 5 for x in L),
+            "runaway_tok": sum(x for x in L if x >= 4096)}
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("art"); ap.add_argument("--rows", required=True); ap.add_argument("--macros", required=True)
@@ -36,6 +37,7 @@ def main():
                 macros.append(f"\\newcommand{{\\vpNatLen{arm}RunawayPct{MW[ds]}{WORD[mult]}}}{{{100*st['runaway']/st['n']:.1f}}}")
                 macros.append(f"\\newcommand{{\\vpNatLen{arm}WorkM{MW[ds]}{WORD[mult]}}}{{{st['sum']/1e6:.2f}}}")
                 macros.append(f"\\newcommand{{\\vpNatLen{arm}ShortPct{MW[ds]}{WORD[mult]}}}{{{100*st['short']/st['n']:.0f}}}")   # generations of <= 5 tokens (Section 5's CoQA sentence)
+                macros.append(f"\\newcommand{{\\vpNatLen{arm}RunawayTokPct{MW[ds]}{WORD[mult]}}}{{{100*st['runaway_tok']/st['sum']:.0f}}}")   # share of the cell's output tokens in runaway generations
     open(a.rows, "w").write("\n".join(rows) + "\n"); open(a.macros, "w").write("\n".join(macros) + "\n")
     print("\n".join(rows)); print(f"wrote {a.rows} ({len(rows)} rows), {a.macros} ({len(macros)} macros)")
 
