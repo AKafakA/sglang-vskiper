@@ -29,6 +29,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("json", help="output of vstar_dump.py")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--attested", action="append", default=[], metavar="Label=macros.tex:\\vpMacro:Lr",
+                    help="V* by the same rule for an ATTESTED skip ratio read from a generated macro file "
+                         "(e.g. QwenAttested=generated/attested_skip_macros.tex:vpQwenSDecode:18), emitted as \\vpVstar<Label>")
     args = ap.parse_args()
 
     d = json.load(open(args.json))
@@ -51,6 +54,18 @@ def main() -> int:
     if peaks:
         lines.append(f"\\newcommand{{\\vpVstarPeakTflops}}{{{peaks[0]:.0f}}}")
         lines.append(f"\\newcommand{{\\vpVstarPeakTbps}}{{{peaks[1] / 1000:.2f}}}")
+    for spec in args.attested:
+        # V* = tau * BW / (s * Lr * b) with the dump's own tau for that Lr and its A100 bandwidth, b = 4 KB per row-layer
+        label, rest = spec.split("=", 1); path, macro, lr = rest.rsplit(":", 2); lr = int(lr)
+        hit = re.search(r"\\newcommand\{\\" + re.escape(macro) + r"\}\{([0-9.]+)\}", open(path).read())
+        if not hit:
+            raise SystemExit(f"{path}: no macro {macro}")
+        s_att = float(hit.group(1))
+        tau = {rec["Lr"]: rec["tau_ms"] for rec in d["arms"].values()}.get(lr)
+        if tau is None or not peaks:
+            raise SystemExit(f"no tau for Lr={lr} or no device peaks in {args.json}")
+        vstar = tau * 1e-3 * peaks[1] * 1e9 / (s_att * lr * 4096)
+        lines.append(f"\\newcommand{{\\vpVstar{label}}}{{{round(vstar / 1000):d}}}")
     open(args.out, "w").write("\n".join(lines) + "\n")
     print(f"  {n} V* macros -> {args.out}")
     return 0
