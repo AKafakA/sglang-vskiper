@@ -10,7 +10,15 @@ fork captured decode CUDA graphs to 1,024 rows while upstream captured to 256, b
 prefill size, memory fraction, dtype and backends, and refuses unless every cross-arm difference
 is declared in `deploy/execution_differences.json` with the expected value and a reason.
 
+[plan v3, 2026-09-16] It also checks the fork arms' REGIME-SWITCH BAND: the live decode K/V band
+(`vp_runtime.regime_switch.decode`) must equal what the roofline rule gives for the device the gate
+is told it runs on (`--device-name`/`--device-memory-mib` from nvidia-smi, the memory class deciding
+the A100 key) with that arm's attested rule inputs (`model.design.routed_layers`,
+`design_skip_ratio`), unless the arm attests `decode_kv_band_policy == "shared"` AND the declaration
+says so. A card whose band was never derived cannot pass.
+
 usage: verify_execution_differences.py --snapshots DIR --arms a,b,c --declaration FILE [--report]
+       [--device-name "NVIDIA RTX 5880 Ada Generation" --device-memory-mib 49140]
 """
 import argparse, glob, json, sys
 from pathlib import Path
@@ -39,6 +47,8 @@ def effective(info: dict) -> dict:
         bs = dec.get("bs") or []
         top, n = (max(bs) if bs else dec.get("max_bs")), len(bs)
         source = "cuda_graph_config.decode"
+    rs = (dig(vp, "regime_switch", "decode", default={}) or {}) if vp else {}
+    md = dig(info, "internal_states", 0, "vp_runtime", "model", "design", default={}) or {}
     dec_cfg = dig(info, "cuda_graph_config", "decode", default={}) or {}
     pre_cfg = dig(info, "cuda_graph_config", "prefill", default={}) or {}
     return {
@@ -52,7 +62,25 @@ def effective(info: dict) -> dict:
         "dtype": info.get("dtype"),
         "attention_backend": info.get("attention_backend"),
         "sampling_backend": info.get("sampling_backend"),
+        "decode_kv_band": [rs.get("exit_kv_tokens"), rs.get("enter_kv_tokens")] if rs else None,
+        "decode_kv_band_policy": md.get("decode_kv_band_policy"),
+        "routed_layers": md.get("routed_layers"),
+        "design_skip_ratio": md.get("design_skip_ratio"),
     }
+
+
+def rule_band(device_name: str, device_memory_mib: int, routed_layers: list, skip_ratio: float) -> tuple:
+    """The band the tree's own rule gives for this device and these arm inputs (no GPU needed)."""
+    tree = Path(__file__).resolve().parents[3]
+    sys.path.insert(0, str(tree / "python"))
+    try:
+        from sglang.srt.vpipe.kernel import canonical_device_key
+        from sglang.srt.vpipe.roofline import DECODE_BODY_TAX_MS, band_device_key, derived_kv_band
+    finally:
+        sys.path.remove(str(tree / "python"))
+    key = band_device_key(canonical_device_key(device_name), int(device_memory_mib) * 1024 * 1024)
+    n = len(routed_layers)
+    return key, derived_kv_band(key, routed_layers=n, skip_ratio=float(skip_ratio), tau_ms=DECODE_BODY_TAX_MS * n / 16.0)
 
 
 def main() -> int:
@@ -63,6 +91,8 @@ def main() -> int:
     ap.add_argument("--report", action="store_true")
     ap.add_argument("--port", default=None, help="only this campaign's snapshots (server_info.conformance.<arm>.<port>.json)")
     ap.add_argument("--since", type=float, default=None, help="refuse snapshots older than this epoch (stale files from a previous run)")
+    ap.add_argument("--device-name", default=None, help="CUDA device name of the serving GPU (nvidia-smi); enables the band check")
+    ap.add_argument("--device-memory-mib", type=int, default=None, help="its total memory in MiB (memory class selects the A100 key)")
     a = ap.parse_args()
     decl = json.loads(a.declaration.read_text())
     arms = a.arms.split(",")
@@ -113,6 +143,24 @@ def main() -> int:
             elif field in ("prefill_graph_bs",):
                 if v != vb:
                     undeclared.append(f"{arm}: {field} differs from {base} (n={len(v)} vs {len(vb)})")
+            elif field == "decode_kv_band":
+                if not e["is_fork"]:
+                    continue                                  # upstream serves no band
+                if a.device_name is None or a.device_memory_mib is None:
+                    undeclared.append(f"{arm}: {field} check needs --device-name/--device-memory-mib (band {v})"); continue
+                if e["decode_kv_band_policy"] == "shared":
+                    if expected != "shared":
+                        undeclared.append(f"{arm}: {field} served as a declared deviation (policy shared, band {v}) but the declaration says {expected!r}")
+                    continue
+                if expected != "rule":
+                    undeclared.append(f"{arm}: {field} must be declared 'rule' for a fork arm (declared {expected!r})"); continue
+                if not v or e["routed_layers"] is None or e["design_skip_ratio"] is None:
+                    undeclared.append(f"{arm}: {field} unreadable from the attestation (band {v}, layers {e['routed_layers']}, s {e['design_skip_ratio']})"); continue
+                key, want = rule_band(a.device_name, a.device_memory_mib, e["routed_layers"], e["design_skip_ratio"])
+                if tuple(v) != tuple(want):
+                    undeclared.append(f"{arm}: {field}={v} but the rule gives {list(want)} for {key} (s={e['design_skip_ratio']}, {len(e['routed_layers'])} routed layers)")
+                else:
+                    print(f"  {arm:16s} decode K/V band {v} == rule for {key} (s={e['design_skip_ratio']}, {len(e['routed_layers'])} routed layers)")
             else:
                 if v != vb and expected is None:
                     undeclared.append(f"{arm}: {field}={v!r} vs {base} {vb!r} (undeclared)")

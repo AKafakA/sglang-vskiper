@@ -14,5 +14,15 @@
   "NVIDIA_H100_NVL": {
     "peak_tflops_bf16": 835.5,
     "peak_bw_gbs": 3900.0
+  },
+  "_source_rtx_5880_ada": "nvidia.com RTX 5880 Ada datasheet (read 2026-09-16): 48 GB GDDR6, memory bandwidth 960 GB/s; 'Tensor performance 554.2 TFLOPS' is the sparse FP16-accumulate figure -> dense with FP32 accumulate = 554.2/4 = 138.6 TFLOPS (Ada halves tensor throughput under FP32 accumulation; SGLang GEMMs accumulate in FP32). Key = canonical_device_key('NVIDIA RTX 5880 Ada Generation').",
+  "NVIDIA_RTX_5880_Ada_Generation": {
+    "peak_tflops_bf16": 138.6,
+    "peak_bw_gbs": 960.0
+  },
+  "_source_a100_40gb": "nvidia.com A100 datasheet: A100 40GB SXM4 memory bandwidth 1,555 GB/s (80GB SXM4: 2,039; 80GB PCIe: 1,935); same 312 TFLOPS bf16 dense. canonical_device_key() strips the capacity token, so regime_switch_config() appends _40GB when the device reports < 60 GB (2026-09-16, CloudLab A100-40 row) so the 40 GB part gets its own band instead of the PCIe entry's.",
+  "NVIDIA_A100_40GB": {
+    "peak_tflops_bf16": 312.0,
+    "peak_bw_gbs": 1555.0
   }
 }

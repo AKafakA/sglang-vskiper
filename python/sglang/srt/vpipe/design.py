@@ -75,6 +75,12 @@ SERVED_DECODE_KV_BAND_BY_DEVICE: Final[dict[str, tuple[int, int]]] = {
     "NVIDIA_A100": (160000, 200000),
     "NVIDIA_H100_HBM3": (270000, 340000),
     "NVIDIA_H100_NVL": (320000, 400000),
+    # [plan v3, 2026-09-16] hardware-generality rows, each the rule's output for the device's
+    # published peaks (device_roofline.json), asserted at boot and by the execution-difference
+    # gate: RTX 5880 Ada (960 GB/s -> V* = 78.2k) and the A100 40 GB SXM4 part (1,555 GB/s ->
+    # V* = 126.7k; keyed by memory class, roofline.band_device_key).
+    "NVIDIA_RTX_5880_Ada_Generation": (80000, 100000),
+    "NVIDIA_A100_40GB": (130000, 160000),
 }
 
 SERVED_LOW_ROW_POLICY: Final[str] = "off"
@@ -349,7 +355,14 @@ def _rule_band(arm: Mapping[str, Any]) -> dict[str, tuple[int, int]]:
     """
     from sglang.srt.vpipe import roofline  # lazy: roofline reads this module's constants
 
-    return {"NVIDIA_A100": roofline.derived_kv_band("NVIDIA_A100", **roofline.arm_kv_rule_inputs(arm))}
+    inputs = roofline.arm_kv_rule_inputs(arm)
+    return {key: roofline.derived_kv_band(key, **inputs) for key in SERVED_DECODE_KV_BAND_BY_DEVICE}
+
+
+def _design_skip_ratio_default() -> float:
+    from sglang.srt.vpipe import roofline  # lazy: roofline reads this module's constants
+
+    return float(roofline.DESIGN_DECODE_SKIP_RATIO)
 
 
 def _mock_arm(rate: float, depth: float, **family: Any) -> dict[str, Any]:
@@ -478,6 +491,9 @@ def design_attestation() -> dict[str, Any]:
         "regime_switch": SERVED_REGIME_SWITCH,
         "low_row_policy": SERVED_LOW_ROW_POLICY,
         "routed_layers": list(arm_routed_layers()),
+        # [plan v3] the rule input the execution-difference gate needs to recompute this arm's
+        # band for the device it detects (FlexiDepth arms: the design ratio; mocks: rate x depth)
+        "design_skip_ratio": float(active_arm().get("design_skip_ratio", _design_skip_ratio_default())),
         "layer_policy": SERVED_LAYER_POLICY,
         "execution_mode": SERVED_EXECUTION_MODE,
         "compact_enabled": arm_compact_enabled(),

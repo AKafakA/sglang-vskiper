@@ -13,7 +13,8 @@
     "mem_fraction_static",
     "dtype",
     "attention_backend",
-    "sampling_backend"
+    "sampling_backend",
+    "decode_kv_band"
   ],
   "tolerances": {
     "kv_capacity_tokens_rel": 0.015
@@ -30,17 +31,21 @@
     "vskipper": {
       "decode_ladder_top": 1024,
       "kv_capacity_tokens": "smaller_ok",
-      "reason": "design: the fork captures 4x max_bs (vpipe/common.py); its router/projector weights shrink the K/V pool by <1.5 % (against the treatment)"
+      "reason": "design: the fork captures 4x max_bs (vpipe/common.py); its router/projector weights shrink the K/V pool by <1.5 % (against the treatment)",
+      "decode_kv_band": "rule"
     },
     "integrated_it4": {
       "decode_ladder_top": 1024,
       "kv_capacity_tokens": "smaller_ok",
-      "reason": "alias of vskipper"
+      "reason": "alias of vskipper",
+      "decode_kv_band": "rule"
     }
   },
   "fork_default": {
     "decode_ladder_top": 1024,
     "kv_capacity_tokens": "smaller_ok",
-    "reason": "any arm served from the fork tree (RandomSkip sweep mocks, ablation arms, Qwen arms): the same coverage ladder as vskipper and the same router/projector HBM cost"
-  }
+    "reason": "any arm served from the fork tree (RandomSkip sweep mocks, ablation arms, Qwen arms): the same coverage ladder as vskipper and the same router/projector HBM cost",
+    "decode_kv_band": "rule"
+  },
+  "_comment_decode_kv_band": "fork arms: 'rule' = the live regime-switch K/V band must equal roofline.derived_kv_band for the device the gate is told it runs on (per-device table SERVED_DECODE_KV_BAND_BY_DEVICE, every entry a rule output; A100 keyed by memory class); 'shared' = the arm attests decode_kv_band_policy shared (a declared deviation, D-778 Qwen posture). Absent for a fork arm = refused."
 }

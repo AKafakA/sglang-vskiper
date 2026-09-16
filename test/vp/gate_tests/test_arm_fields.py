@@ -133,3 +133,22 @@ def test_qwen_sharedband_arm_is_a_declared_deviation():
         assert att["decode_kv_band_policy"] == "shared" and att["decode_kv_band_by_device"]["NVIDIA_A100"] == [160_000, 200_000]
     with _serving("vskipper_qwen3_4b"):
         assert design.design_attestation()["decode_kv_band_policy"] == "rule"
+
+
+def test_every_device_band_is_the_rule_output_for_the_served_arm():
+    """[plan v3, 2026-09-16] The per-device table is never hand-picked: every entry (A100-80, H100
+    HBM3/NVL, RTX 5880 Ada, A100-40) equals roofline.derived_kv_band with the served FlexiDepth
+    arm's inputs, and the mock arms derive a band for every device the table knows."""
+    from sglang.srt.vpipe import design
+    from sglang.srt.vpipe.roofline import arm_kv_rule_inputs, band_device_key, derived_kv_band
+
+    inputs = arm_kv_rule_inputs(design.ARMS["vskipper"])
+    for key, band in design.SERVED_DECODE_KV_BAND_BY_DEVICE.items():
+        assert derived_kv_band(key, **inputs) == tuple(band), (key, band)
+    assert design.SERVED_DECODE_KV_BAND_BY_DEVICE["NVIDIA_RTX_5880_Ada_Generation"] == (80_000, 100_000)
+    assert design.SERVED_DECODE_KV_BAND_BY_DEVICE["NVIDIA_A100_40GB"] == (130_000, 160_000)
+    # memory class refines the A100 key; nothing else is touched
+    assert band_device_key("NVIDIA_A100", 40 * 1024**3) == "NVIDIA_A100_40GB"
+    assert band_device_key("NVIDIA_A100", 80 * 1024**3) == "NVIDIA_A100"
+    assert band_device_key("NVIDIA_RTX_5880_Ada_Generation", 48 * 1024**3) == "NVIDIA_RTX_5880_Ada_Generation"
+    assert set(design._rule_band(design.ARMS["vskipper"])) == set(design.SERVED_DECODE_KV_BAND_BY_DEVICE)
