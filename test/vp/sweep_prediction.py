@@ -92,6 +92,14 @@ def main() -> int:
         le = [eng(p[3]) for p in losers if eng(p[3]) is not None]; we = [eng(p[3]) for p in winners if eng(p[3]) is not None]
         if le: f.write(f"\\newcommand{{\\vpPredLoserEngMin}}{{{min(le):.0f}}}\n\\newcommand{{\\vpPredLoserEngMax}}{{{max(le):.0f}}}\n")
         if we: f.write(f"\\newcommand{{\\vpPredWinnerEngMin}}{{{min(we):.0f}}}\n\\newcommand{{\\vpPredWinnerEngMax}}{{{max(we):.0f}}}\n")
+        # the same two ranges under each arm's OWN band (panel c): the losers are held to the stock body, the
+        # winners route a few percent of decode passes and keep most of their gain (its source is prefill's)
+        def eng_rule(arm):
+            o = occ.get("rule", {}).get(arm, {}).get(a.suite, {}); sb, ar = o.get("decode_passes_skip"), o.get("decode_passes_allrun")
+            return 100.0 * sb / (sb + ar) if (sb is not None and ar) else None
+        lr = [eng_rule(p[3]) for p in losers if eng_rule(p[3]) is not None]; wr = [eng_rule(p[3]) for p in winners if eng_rule(p[3]) is not None]
+        if lr: f.write(f"\\newcommand{{\\vpPredRuleLoserEngMin}}{{{min(lr):.0f}}}\n\\newcommand{{\\vpPredRuleLoserEngMax}}{{{max(lr):.0f}}}\n")
+        if wr: f.write(f"\\newcommand{{\\vpPredRuleWinnerEngMin}}{{{min(wr):.0f}}}\n\\newcommand{{\\vpPredRuleWinnerEngMax}}{{{max(wr):.0f}}}\n")
         if up: f.write(f"\\newcommand{{\\vpPredUpstreamOcc}}{{{up/1e3:.0f}}}\n")
         if up:
             au = [p for p in fx if p[0] > up]; bu = [p for p in fx if p[0] <= up]

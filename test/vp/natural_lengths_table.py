@@ -3,7 +3,8 @@
 
 Reads harvest directories (`harvest-<ds>-<lbl>/bank.json` for the served arm, `harvest-upstream-<ds>-<lbl>/bank.json`
 for upstream) and emits LaTeX rows: n, mean tokens, runaway count (>= 4096 tokens, i.e. generations that ran to
-the context window), total pinned work; plus macros for the prose.
+the context window), total pinned work; plus macros for the prose, including the share of generations of five tokens
+or fewer (\\vpNatLen<Arm>ShortPct<Ds><Rate>).
 
 usage: natural_lengths_table.py ARTIFACT_DIR --rows out_rows.tex --macros out_macros.tex
 """
@@ -17,7 +18,7 @@ MW = {"gsm8k": "Gsm", "bbh_cot": "Bbh", "coqa": "Coqa"}
 
 def stats(path):
     L = list(json.load(open(path))["lengths"].values()); n = len(L)
-    return {"n": n, "mean": sum(L) / n, "runaway": sum(x >= 4096 for x in L), "sum": sum(L)}
+    return {"n": n, "mean": sum(L) / n, "runaway": sum(x >= 4096 for x in L), "sum": sum(L), "short": sum(x <= 5 for x in L)}
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("art"); ap.add_argument("--rows", required=True); ap.add_argument("--macros", required=True)
@@ -34,6 +35,7 @@ def main():
                 macros.append(f"\\newcommand{{\\vpNatLen{arm}Runaway{MW[ds]}{WORD[mult]}}}{{{st['runaway']}}}")
                 macros.append(f"\\newcommand{{\\vpNatLen{arm}RunawayPct{MW[ds]}{WORD[mult]}}}{{{100*st['runaway']/st['n']:.1f}}}")
                 macros.append(f"\\newcommand{{\\vpNatLen{arm}WorkM{MW[ds]}{WORD[mult]}}}{{{st['sum']/1e6:.2f}}}")
+                macros.append(f"\\newcommand{{\\vpNatLen{arm}ShortPct{MW[ds]}{WORD[mult]}}}{{{100*st['short']/st['n']:.0f}}}")   # generations of <= 5 tokens (Section 5's CoQA sentence)
     open(a.rows, "w").write("\n".join(rows) + "\n"); open(a.macros, "w").write("\n".join(macros) + "\n")
     print("\n".join(rows)); print(f"wrote {a.rows} ({len(rows)} rows), {a.macros} ({len(macros)} macros)")
 
