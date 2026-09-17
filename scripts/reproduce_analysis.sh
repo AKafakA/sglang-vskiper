@@ -176,6 +176,11 @@ say "6b natural lane (own-stop) table: upstream_g1024 harvests vs the served arm
 NL=$AN/natural-lane; rm -f generated/natural_lane_rows.tex generated/natural_lane_macros.tex
 python3 $VP/natural_lane_table.py --compact $NL/summary.json --layout v16 --lmeval $NL/lmeval_scores.json --alwaysroute $NL/alwaysroute_summary.json --alwaysroute-lmeval $NL/lmeval_scores.json --rows generated/natural_lane_rows.tex --macros generated/natural_lane_macros.tex 2>&1 | tail -2
 
+say "6f magnitude twins (\\<name>Abs) for the H100 / A6000 / Qwen row macros"
+# v1.7: magnitude twins (\<name>Abs) for the H100 / A6000 / Qwen row macros, for "falls by X %" prose
+cat generated/h100_macros.tex generated/a6000_macros.tex generated/qwen_serving_macros_v16.tex 2>/dev/null > /tmp/transfer_macros_all.tex
+python3 $VP/abs_macros.py /tmp/transfer_macros_all.tex generated/transfer_macros_abs.tex
+
 say "7  build"
 latexmk -g -pdf -interaction=nonstopmode main.tex > /dev/null 2>&1 || true
 errs=$(grep -cE '^!|Misplaced|Undefined control' main.log || true); echo "  $(pdfinfo main.pdf 2>/dev/null | awk '/Pages/{print $2}') pages, $errs error lines"
