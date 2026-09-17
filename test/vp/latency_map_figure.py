@@ -34,7 +34,10 @@ def main():
     for ax, yl, t in ((ax1, "mean E2E latency change vs upstream (%)", "mean E2E change vs upstream"), (ax2, "makespan change vs upstream (%)", "makespan change vs upstream")):
         ax.axhline(0, color="gray", lw=0.6); ax.set_xticks([0.75, 0.95, 1.25]); ax.set_xticklabels(["0.75", "0.95", "1.25"])
         ax.set_xlabel("offered load ($\\times Q^*$)"); ax.set_ylabel(yl, fontsize=8); ax.set_title(t, fontsize=9); ax.grid(alpha=0.3)
-    ax1.legend(fontsize=8); fig.tight_layout(); fig.savefig(a.pdf); print("wrote", a.pdf)
+    handles, labels = ax1.get_legend_handles_labels()   # v1.7: one legend above both panels, consistent fonts
+    fig.legend(handles, labels, fontsize=8, loc="upper center", ncol=3, frameon=False, bbox_to_anchor=(0.5, 1.02))
+    for ax in (ax1, ax2): ax.tick_params(labelsize=7.5); ax.xaxis.label.set_size(8)
+    fig.tight_layout(rect=(0, 0, 1, 0.93)); fig.savefig(a.pdf); print("wrote", a.pdf)
     macros = []
     for (ds, m), bb in sorted(bins.items()):
         vals = [sum(v * n for v, n in lst) / sum(n for _, n in lst) for lst in bb.values()]

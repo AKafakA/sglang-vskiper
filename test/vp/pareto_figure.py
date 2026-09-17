@@ -39,15 +39,21 @@ def main():
         for arm, am, _, _ in ARMS:
             macros += [f"\\newcommand{{\\vpPareto{mac}{am}Lat}}{{{lat[arm]:.1f}}}", f"\\newcommand{{\\vpPareto{mac}{am}Q}}{{{q[arm]:.1f}}}"]
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
-    fig, axes = plt.subplots(1, 3, figsize=(7.2, 2.3))
+    # v1.7: one shared legend above the three panels, nothing inside a panel; per-task y labels (the scores differ in metric).
+    fig, axes = plt.subplots(1, 3, figsize=(7.2, 2.5))
+    colors = {"upstream_g1024": "#2171b5", "vskipper": "#cb181d", "integrated_alwaysskip": "#fd8d3c"}
+    ylab = {"gsm8k": "GSM8K accuracy (%)", "bbh_cot": "BBH exact match (%)", "coqa": "CoQA F1 (%)"}
     for ax, (ds, (name, mac, metric)) in zip(axes, DS.items()):
         lat, q = pts[ds]
         for arm, am, label, marker in ARMS:
-            ax.scatter(lat[arm], q[arm], marker=marker, s=38, label=label, zorder=3)
-        ax.set_title(f"{name} at $0.95\\times Q^*$", fontsize=8); ax.set_xlabel("mean E2E latency (s)", fontsize=7); ax.tick_params(labelsize=6); ax.grid(alpha=0.3)
+            ax.scatter(lat[arm], q[arm], marker=marker, s=44, color=colors[arm], edgecolor="black", linewidth=0.5, label=label, zorder=3)
+        ax.set_title(f"{name} at the knee", fontsize=8); ax.set_xlabel("mean E2E latency (s)", fontsize=7); ax.set_ylabel(ylab[ds], fontsize=7)
+        ax.tick_params(labelsize=6.5); ax.grid(alpha=0.3)
         ys = list(q.values()); pad = max(1.0, 0.15 * (max(ys) - min(ys) + 1)); ax.set_ylim(min(ys) - pad, max(ys) + pad)
-    axes[0].set_ylabel("lm-eval score (%)", fontsize=7); axes[0].legend(fontsize=6, loc="lower left", frameon=False)
-    fig.tight_layout(); fig.savefig(a.pdf); open(a.macros, "w").write("\n".join(macros) + "\n")
+        xs = list(lat.values()); xpad = max(0.5, 0.12 * (max(xs) - min(xs) + 1)); ax.set_xlim(min(xs) - xpad, max(xs) + xpad)
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, fontsize=7, loc="upper center", ncol=3, frameon=False, bbox_to_anchor=(0.5, 1.02))
+    fig.tight_layout(rect=(0, 0, 1, 0.92)); fig.savefig(a.pdf); open(a.macros, "w").write("\n".join(macros) + "\n")
     print(f"3 panels -> {a.pdf}; {len(macros)} macros -> {a.macros}")
     for ds, (lat, q) in pts.items(): print(" ", ds, {k: (round(lat[k], 1), round(q[k], 1)) for k in lat})
 

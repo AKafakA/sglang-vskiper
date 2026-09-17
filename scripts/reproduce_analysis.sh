@@ -69,7 +69,7 @@ say "5  sweeps (Fig. 3): shared-band (b), own-band (c), ungated (a) from the nod
 for S in "sweep:vpSweep:sweep_macros.tex:sweep_heatmap.png" "sweep_v2:vpSweepTwo:sweep_macros_v2.tex:sweep_heatmap_v2.png" "sweep_ungated:vpSweepUng:sweep_macros_ungated.tex:sweep_heatmap_ungated.png"; do
   IFS=: read -r SD SP SM SPNG <<< "$S"; rm -rf generated/$SD; mkdir -p generated/$SD; cp $AN/$SD/paired_report.${BASE}__*.json generated/$SD/
   for f in generated/$SD/paired_report.${BASE}__*.json; do mv $f generated/$SD/paired_report.$(basename $f .json | sed "s/paired_report.${BASE}__//; s/_sharedband$//").json; done   # the heatmap keys arms as integrated_randomskip_r<R>_d<D>
-  python3 $VP/sweep_heatmap.py generated/$SD --dataset gsm8k --suite gsm8k_eqw_r12p35 --headline generated/paired_report.json --png figures/$SPNG --macros generated/$SM --macro-prefix $SP 2>&1 | tail -1 || echo "  $SD: FAILED"
+  python3 $VP/sweep_heatmap.py generated/$SD --dataset gsm8k --suite gsm8k_eqw_r12p35 --headline generated/paired_report.json --png figures/$SPNG --macros generated/$SM --macro-prefix $SP 2>&1 | tail -1 || echo "  $SD: FAILED"   # macros for mean + p95; the paper's App. H figure is the p95 panel below
 done
 
 say "6  quality: block B (27 cells, lm-eval filters, per-document paired intervals) + the 2x2 C/D from the same knee cells"
@@ -96,9 +96,10 @@ for tag in ("fixed", "rule", "ungated"): json.dump({tag: o[tag]}, open(f"generat
 PY
 SUITE=gsm8k_eqw_r12p35
 python3 $VP/sweep_prediction.py --sweep fixed=generated/sweep --occupancy fixed=generated/sweep_occupancy_fixed.json --sweep rule=generated/sweep_v2 --occupancy rule=generated/sweep_occupancy_rule.json --sweep ungated=generated/sweep_ungated --occupancy ungated=generated/sweep_occupancy_ungated.json --suite $SUITE --png figures/sweep_prediction.png --rows generated/sweep_cells_rows.tex --macros generated/sweep_prediction_macros.tex 2>&1 | tail -1
-python3 $VP/sweep_heatmap.py generated/sweep_v2 --dataset gsm8k --suite $SUITE --headline generated/paired_report.json --metrics "E2E mean" --png figures/sweep_heatmap_v2_mean.png --macros /tmp/sweep_v2_mean.tex --macro-prefix vpSweepTwo | tail -1
-python3 $VP/sweep_heatmap.py generated/sweep --dataset gsm8k --suite $SUITE --headline generated/paired_report.json --metrics "E2E mean" --png figures/sweep_heatmap_mean.png --macros /tmp/sweep_mean.tex | tail -1
-python3 $VP/sweep_heatmap.py generated/sweep_ungated --dataset gsm8k --suite $SUITE --headline generated/paired_report.json --metrics "E2E mean" --png figures/sweep_heatmap_ungated_mean.png --macros /tmp/sweep_ung_mean.tex --macro-prefix vpSweepUng | tail -1
+python3 $VP/sweep_heatmap.py generated/sweep_v2 --dataset gsm8k --suite $SUITE --headline generated/paired_report.json --metrics "E2E mean" --title "per-policy band" --png figures/sweep_heatmap_v2_mean.png --macros /tmp/sweep_v2_mean.tex --macro-prefix vpSweepTwo | tail -1
+python3 $VP/sweep_heatmap.py generated/sweep --dataset gsm8k --suite $SUITE --headline generated/paired_report.json --metrics "E2E mean" --title "shared band" --png figures/sweep_heatmap_mean.png --macros /tmp/sweep_mean.tex | tail -1
+python3 $VP/sweep_heatmap.py generated/sweep_ungated --dataset gsm8k --suite $SUITE --headline generated/paired_report.json --metrics "E2E mean" --title "always route" --png figures/sweep_heatmap_ungated_mean.png --macros /tmp/sweep_ung_mean.tex --macro-prefix vpSweepUng | tail -1
+python3 $VP/sweep_heatmap.py generated/sweep --dataset gsm8k --suite $SUITE --headline generated/paired_report.json --metrics "E2E p95" --title "shared band, p95" --png figures/sweep_heatmap_p95.png --macros /tmp/sweep_p95.tex | tail -1   # App. H: the p95 companion of the shared-band map
 for M in "generated/sweep:vpSweep:sweep_ttft_macros.tex" "generated/sweep_ungated:vpSweepUng:sweep_ttft_macros_ungated.tex" "generated/sweep_v2:vpSweepTwo:sweep_ttft_macros_v2.tex"; do IFS=: read -r SD SP SM <<< "$M"
   python3 $VP/sweep_heatmap.py $SD --dataset gsm8k --suite $SUITE --headline generated/paired_report.json --metrics "TTFT mean,TPOT mean" --png /tmp/sweep_ttft_$SP.png --macros generated/$SM --macro-prefix $SP | tail -1; done
 [ -f generated/sweep_vstar.json ] && python3 $VP/vstar_macros.py generated/sweep_vstar.json --out generated/sweep_vstar_macros.tex 2>&1 | tail -1
@@ -143,19 +144,16 @@ cat generated/qwen_serving_rows.tex generated/qwen8b_serving_rows.tex >> generat
 say "6d Pareto panels: block-B knee score (0.95 x Q*) vs mean E2E latency per served arm (D-829)"
 python3 $VP/pareto_figure.py --headline generated/paired_report.json --ablation-dir $AN/ablation --scores $AN/loaded_all_v16.json --knee gsm8k=r12p35 --knee bbh_cot=r32p3 --knee coqa=r23p75 --pdf figures/pareto_knee.pdf --macros generated/pareto_macros.tex | head -1
 
-say "6d2 cross-model Pareto pairs (owner 09-17): upstream -> vSkipper per model at each model's own knee, block-B quality vs mean E2E"
+say "6d2 cross-model figure (v1.7): GSM8K at each model's own knee, upstream vs vSkipper, three models, explicit keys"
 QPK=$AN/qwen/qwen8b_c5e5s10000_gsm8k_q8b/paired_report.upstream_g1024__$Q8ARM.json
 if [ -f $QPK ] && [ -f $AN/qwen_loaded_sweep.json ]; then
   python3 $VP/pareto_models_figure.py \
-    --point "Llama-3-8B GSM8K=generated/paired_report.json:gsm8k:r12p35:$AN/loaded_all_v16.json:loaded-upstream_g1024-gsm8k-r12p35/:loaded-vskipper-gsm8k-r12p35/" \
-    --point "Llama-3-8B BBH=generated/paired_report.json:bbh_cot:r32p3:$AN/loaded_all_v16.json:loaded-upstream_g1024-bbh_cot-r32p3/:loaded-vskipper-bbh_cot-r32p3/" \
-    --point "Llama-3-8B CoQA=generated/paired_report.json:coqa:r23p75:$AN/loaded_all_v16.json:loaded-upstream_g1024-coqa-r23p75/:loaded-vskipper-coqa-r23p75/" \
-    --point "Qwen3-4B GSM8K=$QW/qwen4b_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b.json:gsm8k_q4b:r16p15:$AN/qwen_loaded_v16.json:loaded-upstream_g1024-gsm8k_q4b-r16p15/:loaded-vskipper_qwen3_4b-gsm8k_q4b-r16p15/" \
-    --point "Qwen3-8B GSM8K=$QPK:gsm8k_q8b:r13p3:$AN/qwen_loaded_sweep.json:loaded-upstream_g1024-gsm8k_q8b-r13p3/:loaded-${Q8ARM}-gsm8k_q8b-r13p3/" \
-    --macro-key "Llama-3-8B GSM8K=LlamaGsm" --macro-key "Llama-3-8B BBH=LlamaBbh" --macro-key "Llama-3-8B CoQA=LlamaCoqa" --macro-key "Qwen3-4B GSM8K=QwenFour" --macro-key "Qwen3-8B GSM8K=QwenEight" \
-    --label-offset "Llama-3-8B GSM8K=1.5,-1.8" --label-offset "Llama-3-8B BBH=1.5,-0.6" --label-offset "Llama-3-8B CoQA=0.3,4.5" --label-offset "Qwen3-4B GSM8K=1.5,-0.3" --label-offset "Qwen3-8B GSM8K=-1.5,0.3" \
+    --point "Llama-3-8B=generated/paired_report.json:gsm8k:r12p35:$AN/loaded_all_v16.json:loaded-upstream_g1024-gsm8k-r12p35/:loaded-vskipper-gsm8k-r12p35/" \
+    --point "Qwen3-4B=$QW/qwen4b_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b.json:gsm8k_q4b:r16p15:$AN/qwen_loaded_v16.json:loaded-upstream_g1024-gsm8k_q4b-r16p15/:loaded-vskipper_qwen3_4b-gsm8k_q4b-r16p15/" \
+    --point "Qwen3-8B=$QPK:gsm8k_q8b:r13p3:$AN/qwen_loaded_sweep.json:loaded-upstream_g1024-gsm8k_q8b-r13p3/:loaded-${Q8ARM}-gsm8k_q8b-r13p3/" \
+    --macro-key "Llama-3-8B=LlamaGsm" --macro-key "Qwen3-4B=QwenFour" --macro-key "Qwen3-8B=QwenEight" \
     --pdf figures/pareto_models.pdf --macros generated/pareto_models_macros.tex | head -1
-else echo "  cross-model Pareto: Qwen3-8B inputs pending"; fi
+else echo "  cross-model figure: Qwen3-8B inputs pending"; fi
 
 say "6c the 2x2 gate: A/B native (v1.5 lm-eval samples, identity-preserved) + C/D = block-B knee cells, paired per document"
 Q=$PACK/identity-preserved/q2x2-all; ABB=$PACK/identity-preserved/a6000-20260910-bbh-2x2

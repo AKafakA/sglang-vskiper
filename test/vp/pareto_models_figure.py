@@ -1,28 +1,17 @@
 #!/usr/bin/env python3
-"""Cross-model Pareto figure (v1.6.1, owner 2026-09-17): every served configuration as a PAIR, upstream -> vSkipper.
+"""Cross-model figure (v1.7): GSM8K at each model's own knee, upstream SGLang vs vSkipper, one point per (model, arm).
 
-x = mean end-to-end latency at the knee (0.95 x Q*, seconds; the paired report's absolute means), y = task quality at the
-same cell (%, block-B lm-eval composite). Two colour classes: upstream SGLang in blues, vSkipper in reds, one marker shape
-per model/task, an arrow from each model's upstream point to its vSkipper point. "Wins with limited quality loss" is an
-arrow that points left (faster) with a short vertical drop; each arrow is labelled with the paired change
-(E2E %, 95 % half-width over reps; quality pp, per-document paired 95 % interval). The error bars on the vSkipper point are
-those intervals mapped onto the absolute axes (latency: the % half-width times the upstream mean).
-
-usage: pareto_models_figure.py --point "LABEL=<paired_report.json>:<dataset>:<rate label>:<scores.json>:<upstream cell needle>:<hybrid cell needle>"
-                               [--point ...] --pdf out.pdf --macros out.tex [--label-offset LABEL=dx,dy]
+x = matched-work mean E2E latency at the knee (seconds; the paired report's absolute mean of that arm over its repetitions),
+y = the served composite GSM8K accuracy of the same cell (%, block B, one scored run per arm). Model = marker shape,
+system = colour (upstream blue, vSkipper red). No lines, no arrows, no labels inside the axes; the legend sits above the plot.
+Every point is bound by explicit keys: --point "MODEL=<paired_report.json>:<dataset>:<rate label>:<scores.json>:<upstream needle>:<hybrid needle>".
+The two axes come from their own protocols (the replay lane for latency, the scored lane for accuracy) at the same load.
+Macros: \\vpPM<Key>{LatUp,LatHyb,QUp,QHyb,Lat,LatCi,Q,QCi} (Lat/Q = the paired changes, for the text).
 """
 import argparse, json, math, sys
 
-MARKERS = ["o", "s", "^", "D", "v", "P", "X"]
-BLUES = ["#08306b", "#2171b5", "#4292c6", "#6baed6", "#9ecae1"]        # upstream SGLang, one shade per model/task
-REDS = ["#67000d", "#cb181d", "#ef3b2c", "#fb6a4a", "#fc9272"]         # vSkipper, the same order
-
-
-DIGITS = {"0": "Zero", "1": "One", "2": "Two", "3": "Three", "4": "Four", "5": "Five", "6": "Six", "7": "Seven", "8": "Eight", "9": "Nine"}
-
-
-def macro_stem(label):
-    return "".join(DIGITS.get(ch, ch) for ch in label.title())
+MARKERS = ["o", "s", "^", "D", "v"]
+BLUE, RED = "#2171b5", "#cb181d"
 
 
 def t_crit(df):
@@ -47,8 +36,7 @@ def per_row(sc, needle):
 
 def quality(sc, up_needle, hyb_needle):
     u, h = per_row(sc, up_needle), per_row(sc, hyb_needle)
-    common = sorted(set(u) & set(h))
-    d = [h[k] - u[k] for k in common]; n = len(d); m = sum(d) / n
+    common = sorted(set(u) & set(h)); d = [h[k] - u[k] for k in common]; n = len(d); m = sum(d) / n
     sd = math.sqrt(sum((x - m) ** 2 for x in d) / (n - 1)); ci = t_crit(n - 1) * sd / math.sqrt(n)
     return 100 * sum(u.values()) / len(u), 100 * sum(h.values()) / len(h), 100 * m, 100 * ci, n
 
@@ -56,49 +44,46 @@ def quality(sc, up_needle, hyb_needle):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--point", action="append", required=True); ap.add_argument("--pdf", required=True); ap.add_argument("--macros", required=True)
-    ap.add_argument("--macro-prefix", default="vpPM")
-    ap.add_argument("--label-offset", action="append", default=[], help="LABEL=dx,dy (data units, from the vSkipper point) to place a pair's label by hand")
-    ap.add_argument("--macro-key", action="append", default=[], help="LABEL=Key: the macro stem for a pair (default: the label, digits spelled out, letters only)")
-    a = ap.parse_args(); offsets = {k: tuple(float(x) for x in v.split(",")) for k, v in (o.split("=", 1) for o in a.label_offset)}
-    keys = dict(o.split("=", 1) for o in a.macro_key)
+    ap.add_argument("--macro-key", action="append", default=[], help="MODEL=Key (macro stem; default: the model's letters)")
+    ap.add_argument("--macro-prefix", default="vpPM"); ap.add_argument("--ylabel", default="GSM8K accuracy at the knee (%)")
+    a = ap.parse_args(); keys = dict(o.split("=", 1) for o in a.macro_key)
     pts = []
     for spec in a.point:
-        label, rest = spec.split("=", 1); rep_path, ds, lbl, sc_path, up_needle, hyb_needle = rest.split(":")[:6]
+        model, rest = spec.split("=", 1); rep_path, ds, lbl, sc_path, up_needle, hyb_needle = rest.split(":")[:6]
         rep = json.load(open(rep_path)); sc = json.load(open(sc_path))
-        lu, lh, dx, dxci, n = e2e_row(rep, ds, lbl); qu, qh, dq, dqci, ndoc = quality(sc, up_needle, hyb_needle)
-        pts.append({"label": label, "lat_up": lu, "lat_hyb": lh, "dlat": dx, "dlat_ci": dxci, "n": n, "q_up": qu, "q_hyb": qh, "dq": dq, "dq_ci": dqci, "ndoc": ndoc})
+        lu, lh, dl, dlci, n = e2e_row(rep, ds, lbl); qu, qh, dq, dqci, ndoc = quality(sc, up_needle, hyb_needle)
+        pts.append(dict(model=model, lat_up=lu, lat_hyb=lh, dlat=dl, dlat_ci=dlci, n=n, q_up=qu, q_hyb=qh, dq=dq, dq_ci=dqci, ndoc=ndoc))
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt; from matplotlib.lines import Line2D
-    fig, ax = plt.subplots(figsize=(3.6, 2.9))
-    macros = ["% GENERATED by test/vp/pareto_models_figure.py -- cross-model Pareto pairs (E2E change %, quality change pp at 0.95 x Q*)."]
+    fig, ax = plt.subplots(figsize=(3.4, 2.6))
+    macros = ["% GENERATED by test/vp/pareto_models_figure.py -- GSM8K at each model's knee: upstream vs vSkipper (E2E s, accuracy %)."]
+    handles = []
     for i, p in enumerate(pts):
-        mk = MARKERS[i % len(MARKERS)]; cb, cr = BLUES[i % len(BLUES)], REDS[i % len(REDS)]
-        ax.annotate("", xy=(p["lat_hyb"], p["q_hyb"]), xytext=(p["lat_up"], p["q_up"]),
-                    arrowprops=dict(arrowstyle="-|>", color="#7f7f7f", lw=0.8, shrinkA=4, shrinkB=4, mutation_scale=7), zorder=2)
-        ax.errorbar(p["lat_hyb"], p["q_hyb"], xerr=p["dlat_ci"] / 100 * p["lat_up"], yerr=p["dq_ci"], fmt="none", ecolor=cr, elinewidth=0.6, capsize=1.5, alpha=0.7, zorder=3)
-        ax.scatter(p["lat_up"], p["q_up"], marker=mk, s=40, color=cb, edgecolor="black", linewidth=0.4, zorder=5)
-        ax.scatter(p["lat_hyb"], p["q_hyb"], marker=mk, s=40, color=cr, edgecolor="black", linewidth=0.4, zorder=5)
-        dx, dy = offsets.get(p["label"], (1.0, 0.6))
-        ax.annotate(f"{p['label']}\n{p['dlat']:+.1f} % E2E, {p['dq']:+.1f} pp", xy=(p["lat_hyb"], p["q_hyb"]), xytext=(p["lat_hyb"] + dx, p["q_hyb"] + dy),
-                    fontsize=5.2, color="#333333", ha=("right" if dx < 0 else "left"), va=("top" if dy < 0 else "bottom"), linespacing=1.1)
-        m = keys.get(p["label"]) or "".join(ch for ch in macro_stem(p["label"]) if ch.isalpha())
-        macros += [f"\\newcommand{{\\{a.macro_prefix}{m}Lat}}{{{p['dlat']:+.1f}}}", f"\\newcommand{{\\{a.macro_prefix}{m}LatCi}}{{{p['dlat_ci']:.1f}}}",
-                   f"\\newcommand{{\\{a.macro_prefix}{m}Q}}{{{p['dq']:+.2f}}}", f"\\newcommand{{\\{a.macro_prefix}{m}QCi}}{{{p['dq_ci']:.2f}}}",
-                   f"\\newcommand{{\\{a.macro_prefix}{m}LatUp}}{{{p['lat_up']:.1f}}}", f"\\newcommand{{\\{a.macro_prefix}{m}LatHyb}}{{{p['lat_hyb']:.1f}}}",
-                   f"\\newcommand{{\\{a.macro_prefix}{m}QUp}}{{{p['q_up']:.1f}}}", f"\\newcommand{{\\{a.macro_prefix}{m}QHyb}}{{{p['q_hyb']:.1f}}}"]
+        mk = MARKERS[i % len(MARKERS)]
+        ax.scatter(p["lat_up"], p["q_up"], marker=mk, s=46, color=BLUE, edgecolor="black", linewidth=0.5, zorder=4)
+        ax.scatter(p["lat_hyb"], p["q_hyb"], marker=mk, s=46, color=RED, edgecolor="black", linewidth=0.5, zorder=4)
+        handles.append(Line2D([], [], marker=mk, color="w", markerfacecolor="#7f7f7f", markeredgecolor="black", markeredgewidth=0.5, markersize=6, label=p["model"]))
+        m = keys.get(p["model"]) or "".join(ch for ch in p["model"].title() if ch.isalpha())
+        for suf, val, fmt in (("Lat", p["dlat"], "{:+.1f}"), ("LatCi", p["dlat_ci"], "{:.1f}"), ("Q", p["dq"], "{:+.2f}"), ("QCi", p["dq_ci"], "{:.2f}"),
+                              ("LatUp", p["lat_up"], "{:.1f}"), ("LatHyb", p["lat_hyb"], "{:.1f}"), ("QUp", p["q_up"], "{:.1f}"), ("QHyb", p["q_hyb"], "{:.1f}")):
+            macros.append(f"\\newcommand{{\\{a.macro_prefix}{m}{suf}}}{{{fmt.format(val)}}}")
+    systems = [Line2D([], [], marker="o", color="w", markerfacecolor=BLUE, markeredgecolor="black", markeredgewidth=0.5, markersize=6, label="upstream SGLang"),
+               Line2D([], [], marker="o", color="w", markerfacecolor=RED, markeredgecolor="black", markeredgewidth=0.5, markersize=6, label="vSkipper")]
+    # legend fills column-wise: interleave so row 1 = the models, row 2 = the two systems
+    order = []
+    for i in range(max(len(handles), len(systems))):
+        if i < len(handles): order.append(handles[i])
+        if i < len(systems): order.append(systems[i])
+    handles = order
     xs = [p["lat_up"] for p in pts] + [p["lat_hyb"] for p in pts]; ys = [p["q_up"] for p in pts] + [p["q_hyb"] for p in pts]
-    ax.set_xlim(min(xs) - 4, max(xs) + 8); ax.set_ylim(min(ys) - 6, max(ys) + 6)
-    ax.set_xlabel("mean E2E latency at the knee, 0.95 × Q* (s)", fontsize=7)
-    ax.set_ylabel("quality at the knee (%)", fontsize=7)
-    ax.text(0.01, 0.99, "← faster", transform=ax.transAxes, fontsize=6, color="#2ca02c", ha="left", va="top")
-    handles = [Line2D([], [], marker="o", color="w", markerfacecolor=BLUES[1], markeredgecolor="black", markeredgewidth=0.4, markersize=5, label="upstream SGLang"),
-               Line2D([], [], marker="o", color="w", markerfacecolor=REDS[1], markeredgecolor="black", markeredgewidth=0.4, markersize=5, label="vSkipper")]
-    ax.legend(handles=handles, fontsize=5.5, loc="lower right", frameon=True, framealpha=0.9, borderpad=0.4, handletextpad=0.3)
-    ax.tick_params(labelsize=6); ax.grid(alpha=0.25)
+    ax.set_xlim(min(xs) - 6, max(xs) + 6); ax.set_ylim(min(ys) - 3, max(ys) + 3)
+    ax.set_xlabel("matched-work mean E2E latency at the knee (s)", fontsize=7); ax.set_ylabel(a.ylabel, fontsize=7)
+    ax.tick_params(labelsize=6.5); ax.grid(alpha=0.25)
+    ax.legend(handles=handles, fontsize=6, loc="lower center", bbox_to_anchor=(0.5, 1.01), ncol=max(len(pts), 2), frameon=False, handletextpad=0.2, columnspacing=0.8, borderaxespad=0.0)
     fig.tight_layout(); fig.savefig(a.pdf); open(a.macros, "w").write("\n".join(macros) + "\n")
-    print(f"{len(pts)} pairs -> {a.pdf}; {len(macros)-1} macros -> {a.macros}")
+    print(f"{len(pts)} models -> {a.pdf}; {len(macros)-1} macros -> {a.macros}")
     for p in pts:
-        print(f"  {p['label']:18s} E2E {p['lat_up']:5.1f} -> {p['lat_hyb']:5.1f} s ({p['dlat']:+.1f} ± {p['dlat_ci']:.1f} %, n={p['n']})  "
-              f"quality {p['q_up']:.2f} -> {p['q_hyb']:.2f} % ({p['dq']:+.2f} ± {p['dq_ci']:.2f} pp, docs {p['ndoc']})")
+        print(f"  {p['model']:12s} E2E {p['lat_up']:5.1f} -> {p['lat_hyb']:5.1f} s ({p['dlat']:+.1f} ± {p['dlat_ci']:.1f} %, n={p['n']})  "
+              f"accuracy {p['q_up']:.2f} -> {p['q_hyb']:.2f} % ({p['dq']:+.2f} ± {p['dq_ci']:.2f} pp, docs {p['ndoc']})")
 
 
 if __name__ == "__main__": main()
