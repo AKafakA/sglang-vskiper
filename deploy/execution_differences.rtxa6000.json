@@ -17,7 +17,9 @@
     "decode_kv_band"
   ],
   "tolerances": {
-    "kv_capacity_tokens_rel": 0.015
+    "kv_capacity_tokens_rel": 0.015,
+    "kv_capacity_tokens_abs": 3840,
+    "_note": "kv_capacity_tokens_abs = the EXACT expected displacement: the treatment's router/projector weights (480 MiB, 128 KiB per K/V token for Llama-3-8B fp16) cost 3,840 K/V tokens on every card -- 0.98 % of the A100's 393,319-token pool, 2.07 % of this 48 GB card's 185,766 (judgement 1 of rtxa6000_gsm8k, 2026-09-17 11:15Z). Owner 11:3xZ: the expected trade-off (a smaller pool traded for the projector weights); the gate passes a smaller_ok pool that is at most this many tokens smaller."
   },
   "declared": {
     "upstream": {

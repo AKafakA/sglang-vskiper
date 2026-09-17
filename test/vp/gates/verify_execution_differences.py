@@ -131,8 +131,13 @@ def main() -> int:
                 rel = abs(v - vb) / max(1, vb)
                 if v > vb and expected != "larger_ok":      # a larger pool FAVOURS the treatment: never passes undeclared
                     undeclared.append(f"{arm}: {field}={v} > baseline {vb} (+{rel*100:.2f} %) undeclared")
-                elif v < vb and (expected != "smaller_ok" or rel > decl["tolerances"]["kv_capacity_tokens_rel"]):
-                    undeclared.append(f"{arm}: {field}={v} vs {vb} (-{rel*100:.2f} %, declared {expected})")
+                elif v < vb and (expected != "smaller_ok" or (rel > decl["tolerances"]["kv_capacity_tokens_rel"]
+                                                              and (vb - v) > decl["tolerances"].get("kv_capacity_tokens_abs", 0))):
+                    # smaller_ok = the treatment's router/projector weights displace K/V (owner 2026-09-17: the expected
+                    # trade-off). The cost is the SAME number of tokens on every card (3,840 = 480 MiB for Llama-3-8B fp16 on
+                    # the A100 and the RTX A6000), so a declaration may bound it in tokens (`kv_capacity_tokens_abs`) as well as
+                    # relative to the pool; either bound passes. A larger pool is still never passed undeclared (above).
+                    undeclared.append(f"{arm}: {field}={v} vs {vb} (-{rel*100:.2f} %, {vb - v} tokens, declared {expected})")
             elif field == "decode_ladder_buckets":
                 continue  # reported; the LIST below is what is gated
             elif field == "decode_ladder_bs":
