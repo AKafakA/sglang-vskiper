@@ -68,7 +68,7 @@ def main():
     macros = [f"\\newcommand{{\\{P}{mac}BminusA}}{{{rep['B_minus_A']['mean_pp']:+.2f}}}", f"\\newcommand{{\\{P}{mac}DminusC}}{{{rep['D_minus_C']['mean_pp']:+.2f}}}",
               f"\\newcommand{{\\{P}{mac}Dod}}{{{z['mean_pp']:+.2f}}}", f"\\newcommand{{\\{P}{mac}DodCi}}{{{z['ci95_half_pp']:.2f}}}",
               f"\\newcommand{{\\{P}{mac}Ndocs}}{{{len(common):,}}}", f"\\newcommand{{\\{P}{mac}ArmD}}{{{m['D']/100:.4f}}}", f"\\newcommand{{\\{P}{mac}ArmC}}{{{m['C']/100:.4f}}}",
-              f"\\newcommand{{\\{P}{mac}DodLower}}{{{rep['dod_lower_pp']:+.2f}}}", f"\\newcommand{{\\{P}{mac}ArmCPct}}{{{m['C']:.1f}}}",
+              f"\\newcommand{{\\{P}{mac}DodLower}}{{{rep['dod_lower_pp']:+.2f}}}", f"\\newcommand{{\\{P}{mac}ArmCPct}}{{{m['C']:.2f}}}",
               f"\\newcommand{{\\{P}{mac}ArmA}}{{{m['A']/100:.4f}}}", f"\\newcommand{{\\{P}{mac}ArmB}}{{{m['B']/100:.4f}}}",
               f"\\newcommand{{\\{P}{mac}ArmAPct}}{{{m['A']:.2f}}}", f"\\newcommand{{\\{P}{mac}ArmBPct}}{{{m['B']:.2f}}}", f"\\newcommand{{\\{P}{mac}ArmDPct}}{{{m['D']:.2f}}}"]
     if a.latex: open(a.latex, "a").write(row + "\n")
