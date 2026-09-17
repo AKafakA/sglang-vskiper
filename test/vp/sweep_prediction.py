@@ -33,7 +33,7 @@ def band(v: float) -> tuple[int, int]:
 def load_map(root: Path, suite: str, metric: str = "mean_e2e_latency_ms") -> dict[str, dict]:
     out = {}
     for p in sorted(root.glob("paired_report.*.json")):
-        rep = json.load(open(p)); arm = rep["treatment"]; m = ARM_RE.match(arm)
+        rep = json.load(open(p)); arm = rep["treatment"].replace("_sharedband", ""); m = ARM_RE.match(arm)   # [v1.6] the fixed-band twins carry a suffix
         if not m:
             continue
         for row in rep["rows"]:
@@ -54,7 +54,7 @@ def main() -> int:
         sweeps["ungated"] = {k.replace("_alwaysroute", ""): v for k, v in sweeps["ungated"].items()}
     occ = {}
     for k, v in (x.split("=", 1) for x in a.occupancy):
-        occ[k] = {kk.replace("_alwaysroute", ""): vv for kk, vv in next(iter(json.load(open(v)).values())).items()}
+        occ[k] = {kk.replace("_alwaysroute", "").replace("_sharedband", ""): vv for kk, vv in next(iter(json.load(open(v)).values())).items()}
     if not sweeps.get("fixed"):
         raise SystemExit("no fixed-band sweep rows found")
     lines, macros, points = [], [], {}
