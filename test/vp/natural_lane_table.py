@@ -105,6 +105,7 @@ def main():
             macros.append(f"\\newcommand{{\\vpNat{tag}CapUp}}{{{u['cap_hits']}}}\n\\newcommand{{\\vpNat{tag}CapVs}}{{{v['cap_hits']}}}")
             macros.append(f"\\newcommand{{\\vpNat{tag}OutTokUp}}{{{u['mean_out_tokens']:.0f}}}\n\\newcommand{{\\vpNat{tag}OutTokVs}}{{{v['mean_out_tokens']:.0f}}}")
             macros.append(f"\\newcommand{{\\vpNat{tag}TtftSUp}}{{{u['mean_ttft_ms']/1000:.0f}}}")   # upstream's mean TTFT on this lane, in seconds (the queue each cell carries)
+            macros.append(f"\\newcommand{{\\vpNat{tag}TtftMsUp}}{{{u['mean_ttft_ms']:,.0f}}}"); macros.append(f"\\newcommand{{\\vpNat{tag}TpotMsUp}}{{{u['mean_tpot_ms']:,.0f}}}")   # [v1.6] the two-lane comparison in App. J
     if rows and rows[-1] == r"\addlinespace": rows.pop()
     open(a.rows, "w").write("\n".join(rows) + "\n"); open(a.macros, "w").write("\n".join(macros) + "\n")
     print(f"natural-lane table: {sum(1 for r in rows if 'stack' in r)} cells -> {a.rows}, {len(macros)} macro lines")
