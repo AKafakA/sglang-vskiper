@@ -10,7 +10,9 @@ usage: latency_map_figure.py MAP_JSON --pdf out.pdf --macros out.tex
 """
 import argparse, json, statistics as st
 NAMES = {"gsm8k": "GSM8K", "bbh_cot": "BBH", "coqa": "CoQA"}   # one name per workload across every table; BBH is its CoT split, said once in the paper
-MULT = {"r8p25": 0.75, "r10p45": 0.95, "r13p75": 1.25, "r18p75": 0.75, "r23p75": 0.95, "r31p25": 1.25, "r20p25": 0.75, "r25p65": 0.95, "r33p75": 1.25}
+MULT = {"r8p25": 0.75, "r10p45": 0.95, "r13p75": 1.25, "r18p75": 0.75, "r23p75": 0.95, "r31p25": 1.25, "r20p25": 0.75, "r25p65": 0.95, "r33p75": 1.25,
+        # [v1.6, D-824] g1024 knees 13/34/25
+        "r9p75": 0.75, "r12p35": 0.95, "r16p25": 1.25, "r25p5": 0.75, "r32p3": 0.95, "r42p5": 1.25}
 MW = {"gsm8k": "Gsm", "bbh_cot": "Bbh", "coqa": "Coqa"}; WORD = {0.75: "Low", 0.95: "Mid", 1.25: "High"}
 
 def main():

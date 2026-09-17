@@ -20,6 +20,9 @@ LABELS = {"gsm8k": [("r8p25", "0.75"), ("r10p45", "0.95"), ("r13p75", "1.25")],
 NAMES = {"gsm8k": "GSM8K", "bbh_cot": "BBH", "coqa": "CoQA"}   # one name per workload across every table; BBH is its CoT split, said once in the paper
 WORD = {"0.75": "Low", "0.95": "Mid", "1.25": "High"}
 MW = {"gsm8k": "Gsm", "bbh_cot": "Bbh", "coqa": "Coqa"}
+LABELS_V16 = {"gsm8k": [("r9p75", "0.75"), ("r12p35", "0.95"), ("r16p25", "1.25")],   # [v1.6, D-824] g1024 knees 13/34/25
+              "bbh_cot": [("r25p5", "0.75"), ("r32p3", "0.95"), ("r42p5", "1.25")],
+              "coqa": [("r18p75", "0.75"), ("r23p75", "0.95"), ("r31p25", "1.25")]}
 STACK = {"upstream": "Base + upstream", "vskipper": r"FlexiDepth + \sys{}"}
 
 
@@ -37,7 +40,10 @@ def main():
     ap = argparse.ArgumentParser(); ap.add_argument("summary"); ap.add_argument("--lmeval", required=True); ap.add_argument("--rows", required=True); ap.add_argument("--macros", required=True)
     ap.add_argument("--alwaysroute", help="summary.json of the always-route natural lane (knee cells, step 13)")
     ap.add_argument("--alwaysroute-lmeval", help="its lm-eval scores")
+    ap.add_argument("--layout", default="v15", choices=["v15", "v16"])
     a = ap.parse_args(); d = json.load(open(a.summary)); rows, macros = [], []
+    global LABELS
+    if a.layout == "v16": LABELS = LABELS_V16
     ar = json.load(open(a.alwaysroute)) if a.alwaysroute else {}
     lm, lm_all = {}, {}
     src = dict(json.load(open(a.lmeval)))
@@ -45,9 +51,13 @@ def main():
         src.update(json.load(open(a.alwaysroute_lmeval)))
     for cell, rec in src.items():
         m = re.search(r"harvest-(upstream-|integrated_alwaysskip-)?(gsm8k|bbh_cot|coqa)-(r\d+p\d+)/", cell)
-        if not m: continue
+        m16 = re.search(r"(harvest-upstream_g1024|natural-vskipper|natural-integrated_alwaysskip)-(gsm8k|bbh_cot|coqa)-(r\d+p\d+)/", cell)
+        if not m and not m16: continue
         sc = rec["scores"]; q = sc.get("exact_match,flexible-extract", sc.get("exact_match,get-answer", sc.get("f1")))
-        arm = "alwaysroute" if (m.group(1) or "").startswith("integrated_alwaysskip") else ("upstream" if m.group(1) else "vskipper")
+        if m16:
+            m = m16; arm = {"harvest-upstream_g1024": "upstream", "natural-vskipper": "vskipper", "natural-integrated_alwaysskip": "alwaysroute"}[m16.group(1)]
+        else:
+            arm = "alwaysroute" if (m.group(1) or "").startswith("integrated_alwaysskip") else ("upstream" if m.group(1) else "vskipper")
         lm[(arm, m.group(2), m.group(3))] = q
         lm_all[(arm, m.group(2), m.group(3))] = sc
     def scores_for(rec, ds, arm, lbl):

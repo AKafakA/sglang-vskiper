@@ -23,11 +23,17 @@ ALWAYS = "integrated_alwaysskip"
 def classify(name: str) -> tuple[str, str, str]:
     """(arm, dataset, rate_label) from a harvest root's directory name."""
     m = re.fullmatch(r"harvest-(?:(upstream|" + ALWAYS + r")-)?(" + "|".join(DATASETS) + r")-(r[0-9p]+)", name)
+    if m:
+        prefix, ds, label = m.group(1), m.group(2), m.group(3)
+        arm = {None: "vskipper", "upstream": "upstream", ALWAYS: "alwaysroute"}[prefix]
+        return arm, ds, label
+    # [v1.6, D-824] ladder-control naming: harvest-upstream_g1024-<ds>-<lbl> (Base + upstream at the same ladder),
+    # natural-vskipper-<ds>-<lbl>, natural-integrated_alwaysskip-<ds>-<lbl>
+    m = re.fullmatch(r"(harvest-upstream_g1024|natural-vskipper|natural-" + ALWAYS + r")-(" + "|".join(DATASETS) + r")-(r[0-9p]+)", name)
     if not m:
         raise SystemExit(f"cannot classify harvest root {name!r}")
-    prefix, ds, label = m.group(1), m.group(2), m.group(3)
-    arm = {None: "vskipper", "upstream": "upstream", ALWAYS: "alwaysroute"}[prefix]
-    return arm, ds, label
+    arm = {"harvest-upstream_g1024": "upstream", "natural-vskipper": "vskipper", "natural-" + ALWAYS: "alwaysroute"}[m.group(1)]
+    return arm, m.group(2), m.group(3)
 
 
 def summarize(root: pathlib.Path) -> dict:
