@@ -13,7 +13,7 @@ A cell whose load samples are missing is fatal, never skipped.
 import argparse, glob, json, os, sys
 
 DS = {"gsm8k": "Gsm", "bbh_cot": "Bbh", "coqa": "Coqa"}
-ARM = {"upstream": "Up", "vskipper": "Vs", "integrated_it4": "Vs"}
+ARM = {"upstream": "Up", "upstream_g1024": "Up", "vskipper": "Vs", "integrated_it4": "Vs"}
 RUNG = {256: "TwoFiftySix", 1024: "OneKtwentyFour"}
 
 
@@ -25,13 +25,14 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("root"); ap.add_argument("--macros", required=True); ap.add_argument("--json")
     ap.add_argument("--reps", default="1,2,3,4,5,6"); ap.add_argument("--rung", type=int, action="append")
+    ap.add_argument("--baseline", default="upstream"); ap.add_argument("--treatment", default="integrated_it4")   # [v1.6] the same-ladder control is the baseline (D-824)
     a = ap.parse_args()
     rungs = a.rung or [256, 1024]
     reps = [int(x) for x in a.reps.split(",")]
     shares: dict[tuple[str, str, float, int], list[float]] = {}
     for rep in reps:
         for ds in DS:
-            for arm in ("upstream", "integrated_it4"):
+            for arm in (a.baseline, a.treatment):
                 files = sorted(glob.glob(f"{a.root}/rep{rep}/{ds}/{arm}/cells/*.load.jsonl"))   # every rep directory names its cells _rep1
                 if not files:
                     sys.exit(f"FATAL: no load samples for rep{rep}/{ds}/{arm} under {a.root}")
