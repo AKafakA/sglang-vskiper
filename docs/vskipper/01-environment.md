@@ -56,9 +56,27 @@ the paper's H100 row is released. On an H100, run the build step from option (a)
 ## Tile artifacts
 
 The count-GEMM path uses tile configurations tuned offline per device, in
-`python/sglang/srt/vpipe/binary_cohort_configs/<device-key>.json`. The repository ships the tuned artifacts for the
-devices the paper used. On an untuned device the runtime falls back to a default tiling and says so in its
-attestation; the fallback is correct, only slower.
+`python/sglang/srt/vpipe/binary_cohort_configs/<device-key>.json` (the key is the CUDA device name with the form-factor
+and capacity tokens stripped, so every A100 loads one artifact). The loader fails closed: a device without an artifact
+is a configuration error, not a slower fallback. The repository ships the artifacts the paper used: `NVIDIA_A100`,
+`NVIDIA_H100_HBM3`, `NVIDIA_RTX_A6000` and the `Quadro_RTX_8000` feasibility box.
+
+**Tune before you carry.** Tiles are per-SM resources. The A100 tiles need 110,592 B of shared memory per block;
+Ampere/Ada workstation parts (sm_86, sm_89: 101,376 B) cannot launch them, and a carried smaller-card artifact runs
+but costs 25--56 % per GEMM (measured on the RTX A6000 with the Quadro RTX 8000 tiles). For a new device, run the tuner
+on the card with the fork's own kernel and the model's real shapes:
+
+```bash
+PYTHONPATH=python python test/vp/tune_count_gemm_tiles.py \
+  --artifact python/sglang/srt/vpipe/binary_cohort_configs/<seed-artifact>.json \
+  --out python/sglang/srt/vpipe/binary_cohort_configs/<device-key>.json
+```
+
+It times every candidate tile that fits the device's shared memory for each `<op>@<count>` key, holds `BLOCK_K` at the
+seed's value and keeps a candidate only if its output is `torch.equal` to the seed's (so numerics do not move with the
+tune), records cuBLAS on the same rows beside it, and replaces a key only for a gain of at least 3 %. Commit the artifact
+with the tree revision that serves it; the served attestation carries the artifact's digest. The RTX A6000 artifact was
+produced this way on 2026-09-17 (19 of 20 keys replaced; 5--25 % from cuBLAS).
 
 ## Check
 
