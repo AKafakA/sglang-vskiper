@@ -39,6 +39,66 @@
       "kv_capacity_tokens": "smaller_ok",
       "reason": "alias of vskipper",
       "decode_kv_band": "rule"
+    },
+    "integrated_randomskip_r25_d25_sharedband": {
+      "decode_ladder_top": 1024,
+      "kv_capacity_tokens": "smaller_ok",
+      "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
+      "decode_kv_band": "shared"
+    },
+    "integrated_randomskip_r25_d50_sharedband": {
+      "decode_ladder_top": 1024,
+      "kv_capacity_tokens": "smaller_ok",
+      "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
+      "decode_kv_band": "shared"
+    },
+    "integrated_randomskip_r25_d75_sharedband": {
+      "decode_ladder_top": 1024,
+      "kv_capacity_tokens": "smaller_ok",
+      "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
+      "decode_kv_band": "shared"
+    },
+    "integrated_randomskip_r50_d25_sharedband": {
+      "decode_ladder_top": 1024,
+      "kv_capacity_tokens": "smaller_ok",
+      "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
+      "decode_kv_band": "shared"
+    },
+    "integrated_randomskip_r50_d50_sharedband": {
+      "decode_ladder_top": 1024,
+      "kv_capacity_tokens": "smaller_ok",
+      "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
+      "decode_kv_band": "shared"
+    },
+    "integrated_randomskip_r50_d75_sharedband": {
+      "decode_ladder_top": 1024,
+      "kv_capacity_tokens": "smaller_ok",
+      "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
+      "decode_kv_band": "shared"
+    },
+    "integrated_randomskip_r75_d25_sharedband": {
+      "decode_ladder_top": 1024,
+      "kv_capacity_tokens": "smaller_ok",
+      "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
+      "decode_kv_band": "shared"
+    },
+    "integrated_randomskip_r75_d50_sharedband": {
+      "decode_ladder_top": 1024,
+      "kv_capacity_tokens": "smaller_ok",
+      "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
+      "decode_kv_band": "shared"
+    },
+    "integrated_randomskip_r75_d75_sharedband": {
+      "decode_ladder_top": 1024,
+      "kv_capacity_tokens": "smaller_ok",
+      "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
+      "decode_kv_band": "shared"
+    },
+    "vskipper_qwen3_4b_sharedband": {
+      "decode_ladder_top": 1024,
+      "kv_capacity_tokens": "smaller_ok",
+      "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
+      "decode_kv_band": "shared"
     }
   },
   "fork_default": {
