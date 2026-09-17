@@ -10,7 +10,7 @@ usage: paired_dod_2x2_v16.py --dataset gsm8k --arm A=<native base samples dir> -
                              --scores loaded_all_v16.json --cell-c <cell key substring> --cell-d <cell key substring>
                              [--margin 1.0] [--latex rows.tex] [--macros macros.tex] [--json out.json] [--macro-prefix vpQ]
 """
-import argparse, json, math, re, sys
+import argparse, json, math, sys
 from paired_dod_2x2 import load_arm, t_crit
 
 MACRO = {"gsm8k": "Gsm", "coqa": "Coqa", "bbh_cot": "Bbh"}

@@ -17,8 +17,8 @@ usage: ladder_table.py gsm8k=<root> bbh_cot=<root> coqa=<root> --knee gsm8k=11 .
 """
 import argparse, pathlib, re, sys
 
-NAMES = {"gsm8k": "GSM8K", "bbh_cot": "BBH", "coqa": "CoQA", "h100_gsm8k": "GSM8K (H100)"}
-MW = {"gsm8k": "Gsm", "bbh_cot": "Bbh", "coqa": "Coqa", "h100_gsm8k": "HundredGsm"}
+NAMES = {"gsm8k": "GSM8K", "bbh_cot": "BBH", "coqa": "CoQA", "h100_gsm8k": "GSM8K (H100)", "a6000_gsm8k": "GSM8K (RTX A6000)"}
+MW = {"gsm8k": "Gsm", "bbh_cot": "Bbh", "coqa": "Coqa", "h100_gsm8k": "HundredGsm", "a6000_gsm8k": "AsixGsm"}
 TPS = re.compile(r"Output token throughput \(tok/s\):\s*([0-9.]+)")
 
 
