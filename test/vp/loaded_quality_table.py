@@ -49,6 +49,15 @@ ARMS = [("upstream", "Base + upstream"),
 ARM_MACRO = {"upstream": "Up", "integrated_it4": "Hyb", "integrated_alwaysskip": "Alw"}
 
 CELL = re.compile(r"harvest-(?P<arm>[a-z0-9_]+)-(?P<ds>gsm8k|bbh_cot|coqa)-(?P<rate>r[0-9p]+)/")
+# [v1.6, D-824] the ladder-control campaign: block B = loaded-<arm>-<ds>-<rate>/ cells at the g1024 knees, baseline upstream_g1024
+RATES_V16 = {"gsm8k": [("r9p75", "0.75"), ("r12p35", "0.95"), ("r16p25", "1.25")],
+             "bbh_cot": [("r25p5", "0.75"), ("r32p3", "0.95"), ("r42p5", "1.25")],
+             "coqa": [("r18p75", "0.75"), ("r23p75", "0.95"), ("r31p25", "1.25")]}
+ARMS_V16 = [("upstream_g1024", "Base + upstream"),
+            ("vskipper", r"FlexiDepth + \sys{} (served)"),
+            ("integrated_alwaysskip", "FlexiDepth + always-route")]
+ARM_MACRO_V16 = {"upstream_g1024": "Up", "vskipper": "Hyb", "integrated_alwaysskip": "Alw"}
+CELL_V16 = re.compile(r"loaded-(?P<arm>[a-z0-9_]+)-(?P<ds>gsm8k|bbh_cot|coqa)-(?P<rate>r[0-9p]+)/")
 def paired_ci(a, b):
     """Paired per-document 95% interval on the mean difference of two 0/1 vectors.
 
@@ -107,7 +116,10 @@ def main():
                     help="loaded_shares.json: the routed decode share of the served arms per cell, read "
                          "from their attestation; printed beside each sweep row so a cell whose routed "
                          "body never ran (0.0%%) is visible in the table, not only in an appendix macro")
+    ap.add_argument("--layout", default="v15", choices=["v15", "v16"])
     a = ap.parse_args()
+    global RATES, ARMS, ARM_MACRO, CELL
+    if a.layout == "v16": RATES, ARMS, ARM_MACRO, CELL = RATES_V16, ARMS_V16, ARM_MACRO_V16, CELL_V16
     shares = json.load(open(a.shares)) if a.shares else None
 
     raw = json.load(open(a.scores))
