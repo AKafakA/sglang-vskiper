@@ -56,11 +56,11 @@ COLUMN_SETS = {
 # them (an older campaign, the served-bank replay) is not refused.
 MACRO_ONLY = ["ITL mean"]
 MULTIPLIERS = (0.75, 0.95, 1.25)
-DISPLAY = {"gsm8k": "GSM8K", "bbh_cot": "BBH", "coqa": "CoQA"}
+DISPLAY = {"gsm8k": "GSM8K", "bbh_cot": "BBH", "coqa": "CoQA", "gsm8k_q4b": "GSM8K", "gsm8k_q8b": "GSM8K"}   # the Qwen rows carry their own dataset keys (v1.6)
 # A LaTeX control sequence is letters ONLY -- \vpTPSGSM8KLow and \vpE2E... are syntax
 # errors, not ugly names. So macro names get their own digit-free map; the TABLE keeps the
 # real display names. Found by the test, not by reading.
-MACRO_DISPLAY = {"gsm8k": "Gsm", "bbh_cot": "Bbh", "coqa": "Coqa"}
+MACRO_DISPLAY = {"gsm8k": "Gsm", "bbh_cot": "Bbh", "coqa": "Coqa", "gsm8k_q4b": "QwenFour", "gsm8k_q8b": "QwenEight"}   # v1.6 Qwen rows
 
 
 def rate_of(suite: str) -> float:
