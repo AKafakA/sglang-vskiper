@@ -18,6 +18,13 @@ BLUES = ["#08306b", "#2171b5", "#4292c6", "#6baed6", "#9ecae1"]        # upstrea
 REDS = ["#67000d", "#cb181d", "#ef3b2c", "#fb6a4a", "#fc9272"]         # vSkipper, the same order
 
 
+DIGITS = {"0": "Zero", "1": "One", "2": "Two", "3": "Three", "4": "Four", "5": "Five", "6": "Six", "7": "Seven", "8": "Eight", "9": "Nine"}
+
+
+def macro_stem(label):
+    return "".join(DIGITS.get(ch, ch) for ch in label.title())
+
+
 def t_crit(df):
     for k, v in ((1, 12.706), (2, 4.303), (3, 3.182), (4, 2.776), (5, 2.571), (10, 2.228), (20, 2.086), (30, 2.042), (60, 2.000), (120, 1.980)):
         if df <= k: return v
@@ -51,7 +58,9 @@ def main():
     ap.add_argument("--point", action="append", required=True); ap.add_argument("--pdf", required=True); ap.add_argument("--macros", required=True)
     ap.add_argument("--macro-prefix", default="vpPM")
     ap.add_argument("--label-offset", action="append", default=[], help="LABEL=dx,dy (data units, from the vSkipper point) to place a pair's label by hand")
+    ap.add_argument("--macro-key", action="append", default=[], help="LABEL=Key: the macro stem for a pair (default: the label, digits spelled out, letters only)")
     a = ap.parse_args(); offsets = {k: tuple(float(x) for x in v.split(",")) for k, v in (o.split("=", 1) for o in a.label_offset)}
+    keys = dict(o.split("=", 1) for o in a.macro_key)
     pts = []
     for spec in a.point:
         label, rest = spec.split("=", 1); rep_path, ds, lbl, sc_path, up_needle, hyb_needle = rest.split(":")[:6]
@@ -71,7 +80,7 @@ def main():
         dx, dy = offsets.get(p["label"], (1.0, 0.6))
         ax.annotate(f"{p['label']}\n{p['dlat']:+.1f} % E2E, {p['dq']:+.1f} pp", xy=(p["lat_hyb"], p["q_hyb"]), xytext=(p["lat_hyb"] + dx, p["q_hyb"] + dy),
                     fontsize=5.2, color="#333333", ha=("right" if dx < 0 else "left"), va=("top" if dy < 0 else "bottom"), linespacing=1.1)
-        m = "".join(ch for ch in p["label"].title() if ch.isalpha())
+        m = keys.get(p["label"]) or "".join(ch for ch in macro_stem(p["label"]) if ch.isalpha())
         macros += [f"\\newcommand{{\\{a.macro_prefix}{m}Lat}}{{{p['dlat']:+.1f}}}", f"\\newcommand{{\\{a.macro_prefix}{m}LatCi}}{{{p['dlat_ci']:.1f}}}",
                    f"\\newcommand{{\\{a.macro_prefix}{m}Q}}{{{p['dq']:+.2f}}}", f"\\newcommand{{\\{a.macro_prefix}{m}QCi}}{{{p['dq_ci']:.2f}}}",
                    f"\\newcommand{{\\{a.macro_prefix}{m}LatUp}}{{{p['lat_up']:.1f}}}", f"\\newcommand{{\\{a.macro_prefix}{m}LatHyb}}{{{p['lat_hyb']:.1f}}}",

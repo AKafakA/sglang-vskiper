@@ -42,6 +42,7 @@ Raw per-request arrays are not in the pack; they are the **full data** tier (`va
 | Llama block-B quality table and 2×2 | `loaded_quality_table.py --layout v16`, `paired_dod_2x2_v16.py` | `analysis/loaded_all_v16.json`, `identity-preserved/q2x2-all/` |
 | natural-lane stacks table | `natural_lane_table.py` | `analysis/natural-lane/` |
 | Pareto figure | `pareto_figure.py` | `paired_report.json`, `analysis/ablation/`, `loaded_all_v16.json` |
+| cross-model Pareto pairs figure (upstream → vSkipper per model at its own knee) | `pareto_models_figure.py` | the three paired reports + `loaded_all_v16.json`, `qwen_loaded_{v16,sweep}.json` |
 | kernel-headroom table | `tile_ratio_table.py` | the committed tile artifacts under `python/sglang/srt/vpipe/binary_cohort_configs/` |
 
 The GSM8K composite reading (`exact_match,marker-composite`: strict-match where the marker parses, flexible extraction otherwise)

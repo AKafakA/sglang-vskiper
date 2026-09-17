@@ -144,6 +144,7 @@ if [ -f $QPK ] && [ -f $AN/qwen_loaded_sweep.json ]; then
     --point "Llama-3-8B CoQA=generated/paired_report.json:coqa:r23p75:$AN/loaded_all_v16.json:loaded-upstream_g1024-coqa-r23p75/:loaded-vskipper-coqa-r23p75/" \
     --point "Qwen3-4B GSM8K=$QW/qwen4b_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b.json:gsm8k_q4b:r16p15:$AN/qwen_loaded_v16.json:loaded-upstream_g1024-gsm8k_q4b-r16p15/:loaded-vskipper_qwen3_4b-gsm8k_q4b-r16p15/" \
     --point "Qwen3-8B GSM8K=$QPK:gsm8k_q8b:r13p3:$AN/qwen_loaded_sweep.json:loaded-upstream_g1024-gsm8k_q8b-r13p3/:loaded-${Q8ARM}-gsm8k_q8b-r13p3/" \
+    --macro-key "Llama-3-8B GSM8K=LlamaGsm" --macro-key "Llama-3-8B BBH=LlamaBbh" --macro-key "Llama-3-8B CoQA=LlamaCoqa" --macro-key "Qwen3-4B GSM8K=QwenFour" --macro-key "Qwen3-8B GSM8K=QwenEight" \
     --label-offset "Llama-3-8B GSM8K=1.5,-1.8" --label-offset "Llama-3-8B BBH=1.5,-0.6" --label-offset "Llama-3-8B CoQA=0.3,4.5" --label-offset "Qwen3-4B GSM8K=1.5,-0.3" --label-offset "Qwen3-8B GSM8K=-1.5,0.3" \
     --pdf figures/pareto_models.pdf --macros generated/pareto_models_macros.tex | head -1
 else echo "  cross-model Pareto: Qwen3-8B inputs pending"; fi

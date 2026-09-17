@@ -349,6 +349,8 @@ ARMS["vskipper_qwen3_8b_s7500_alwaysroute"] = {
 # PENALTY 4e-4 (coef 1e-4) at steps 8750 / 10000 and PENALTY 2e-4 (coef 5e-5) at 10000. `design_skip_ratio` = the chat-template
 # skip the on-node gate attested; bands by the rule (L_r = 18, tau scaled 18/16). Which one the paper serves is decided by the
 # native composite GSM8K score (base - 10 pp) then the served knee cell -- D-843.
+# RESULT (D-843, 2026-09-17): the paper serves `vskipper_qwen3_8b_c5e5s10000` (native 75.21 vs base 80.97; served knee 76.42 vs
+# upstream 80.52); c1e4s8750 / c1e4s10000 read 68.99 / 64.29 native and 67.78 / 67.17 served and stay here as the selection record.
 for _tag, _s, _bands in (
     ("c1e4s10000", 0.516, {"NVIDIA_A100": (150000, 190000), "NVIDIA_H100_HBM3": (260000, 330000), "NVIDIA_A100_40GB": (120000, 150000)}),
     ("c1e4s8750", 0.481, {"NVIDIA_A100": (160000, 200000), "NVIDIA_H100_HBM3": (280000, 350000), "NVIDIA_A100_40GB": (130000, 160000)}),
