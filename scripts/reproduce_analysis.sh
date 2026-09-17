@@ -135,6 +135,19 @@ cat generated/qwen_serving_rows.tex generated/qwen8b_serving_rows.tex >> generat
 say "6d Pareto panels: block-B knee score (0.95 x Q*) vs mean E2E latency per served arm (D-829)"
 python3 $VP/pareto_figure.py --headline generated/paired_report.json --ablation-dir $AN/ablation --scores $AN/loaded_all_v16.json --knee gsm8k=r12p35 --knee bbh_cot=r32p3 --knee coqa=r23p75 --pdf figures/pareto_knee.pdf --macros generated/pareto_macros.tex | head -1
 
+say "6d2 cross-model Pareto pairs (owner 09-17): upstream -> vSkipper per model at each model's own knee, block-B quality vs mean E2E"
+QPK=$AN/qwen/qwen8b_c5e5s10000_gsm8k_q8b/paired_report.upstream_g1024__$Q8ARM.json
+if [ -f $QPK ] && [ -f $AN/qwen_loaded_sweep.json ]; then
+  python3 $VP/pareto_models_figure.py \
+    --point "Llama-3-8B GSM8K=generated/paired_report.json:gsm8k:r12p35:$AN/loaded_all_v16.json:loaded-upstream_g1024-gsm8k-r12p35/:loaded-vskipper-gsm8k-r12p35/" \
+    --point "Llama-3-8B BBH=generated/paired_report.json:bbh_cot:r32p3:$AN/loaded_all_v16.json:loaded-upstream_g1024-bbh_cot-r32p3/:loaded-vskipper-bbh_cot-r32p3/" \
+    --point "Llama-3-8B CoQA=generated/paired_report.json:coqa:r23p75:$AN/loaded_all_v16.json:loaded-upstream_g1024-coqa-r23p75/:loaded-vskipper-coqa-r23p75/" \
+    --point "Qwen3-4B GSM8K=$QW/qwen4b_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b.json:gsm8k_q4b:r16p15:$AN/qwen_loaded_v16.json:loaded-upstream_g1024-gsm8k_q4b-r16p15/:loaded-vskipper_qwen3_4b-gsm8k_q4b-r16p15/" \
+    --point "Qwen3-8B GSM8K=$QPK:gsm8k_q8b:r13p3:$AN/qwen_loaded_sweep.json:loaded-upstream_g1024-gsm8k_q8b-r13p3/:loaded-${Q8ARM}-gsm8k_q8b-r13p3/" \
+    --label-offset "Llama-3-8B GSM8K=1.5,-1.8" --label-offset "Llama-3-8B BBH=1.5,-0.6" --label-offset "Llama-3-8B CoQA=0.3,4.5" --label-offset "Qwen3-4B GSM8K=1.5,-0.3" --label-offset "Qwen3-8B GSM8K=-1.5,0.3" \
+    --pdf figures/pareto_models.pdf --macros generated/pareto_models_macros.tex | head -1
+else echo "  cross-model Pareto: Qwen3-8B inputs pending"; fi
+
 say "6c the 2x2 gate: A/B native (v1.5 lm-eval samples, identity-preserved) + C/D = block-B knee cells, paired per document"
 Q=$PACK/identity-preserved/q2x2-all; ABB=$PACK/identity-preserved/a6000-20260910-bbh-2x2
 rm -f generated/quality_rows.tex generated/quality_macros.tex
