@@ -120,8 +120,13 @@ if [ -f $QL ]; then
   Q4=$PACK/identity-preserved/qwen-quality-ab-bf16
   # 6e2 native composite readings, one line per native run (the same rule as the served cells; never computed by hand): the 4B and 8B
   # A/B halves, plus the D-843 checkpoint-selection runs when the pack holds them (`qwen8b-selection/<label>/gsm8k`, skip shares in SKIPS).
-  SEL=$PACK/qwen8b-selection; RUNS="--run Qwen3-8B-base=$SEL/base/gsm8k"; SKIPS=""
-  [ -f $SEL/SKIPS.txt ] && for d in $SEL/*/gsm8k; do l=$(basename $(dirname $d)); [ "$l" = base ] && continue; RUNS="$RUNS --run $l=$d"; sk=$(grep "^$l=" $SEL/SKIPS.txt | cut -d= -f2); [ -n "$sk" ] && SKIPS="$SKIPS --skip $l=$sk"; done
+  # Each candidate also gets its SERVED knee reading (block B, the same scorer) beside the native one: the label `c<coef>-step<N>`
+  # maps to the fork arm `vskipper_qwen3_8b_c<coef>s<N>`; the base maps to the upstream cell. Macro stems spell the digits out.
+  SEL=$PACK/qwen8b-selection; RUNS="--run Qwen3-8B-base=$SEL/base/gsm8k --served Qwen3-8B-base=$QS:loaded-upstream_g1024-gsm8k_q8b-r13p3/ --macro-key Qwen3-8B-base=Base"; SKIPS=""
+  [ -f $SEL/SKIPS.txt ] && for d in $SEL/*/gsm8k; do l=$(basename $(dirname $d)); [ "$l" = base ] && continue; RUNS="$RUNS --run $l=$d"
+    arm=vskipper_qwen3_8b_$(echo $l | sed 's/-step/s/'); python3 -c "import json,sys; d=json.load(open('$QS'))['__per_row__']; sys.exit(0 if any('loaded-$arm-gsm8k_q8b-r13p3/' in k for k in d) else 1)" && RUNS="$RUNS --served $l=$QS:loaded-$arm-gsm8k_q8b-r13p3/"
+    key=$(echo $l | sed 's/c1e4/CoefOneEFour/; s/c5e5/CoefFiveEFive/; s/c25e6/CoefTwoFiveESix/; s/-step10000/StepTenK/; s/-step8750/StepEightK/; s/-step7500/StepSevenK/; s/-step5000/StepFiveK/; s/[^A-Za-z]//g'); RUNS="$RUNS --macro-key $l=$key"
+    sk=$(grep "^$l=" $SEL/SKIPS.txt | cut -d= -f2); [ -n "$sk" ] && SKIPS="$SKIPS --skip $l=$sk"; done
   python3 $VP/native_composite.py $RUNS $SKIPS --base Qwen3-8B-base --rows generated/qwen_native_rows.tex --macros generated/qwen_native_macros.tex --macro-prefix vpNatQ --json generated/qwen_native.json | tail -n 6
   python3 $VP/paired_dod_2x2_v16.py --dataset gsm8k --arm A=$Q4/qwen_base/gsm8k --arm B=$Q4/qwen_fd/gsm8k --scores $QL --cell-c "loaded-upstream_g1024-gsm8k_q4b-r16p15/" --cell-d "loaded-vskipper_qwen3_4b_alwaysroute-gsm8k_q4b-r16p15/" --margin 1.0 --latex generated/qwen_quality_rows.tex --macros generated/qwen_quality_macros.tex --macro-prefix vpQwenFour --json generated/paired_dod_qwen4b.json | tail -1
   python3 $VP/paired_dod_2x2_v16.py --dataset gsm8k --arm A=$SEL/base/gsm8k --arm B=$SEL/c5e5-step10000/gsm8k --scores $QS --cell-c "loaded-upstream_g1024-gsm8k_q8b-r13p3/" --cell-d "loaded-${Q8ARM}_alwaysroute-gsm8k_q8b-r13p3/" --margin 1.0 --latex generated/qwen_quality_rows.tex --macros generated/qwen_quality_macros.tex --macro-prefix vpQwenEight --json generated/paired_dod_qwen8b.json | tail -1
