@@ -117,6 +117,7 @@ def main():
                          "from their attestation; printed beside each sweep row so a cell whose routed "
                          "body never ran (0.0%%) is visible in the table, not only in an appendix macro")
     ap.add_argument("--layout", default="v15", choices=["v15", "v16"])
+    ap.add_argument("--no-filter-col", action="store_true", help="omit the filter and docs columns (named in a table note instead)")
     a = ap.parse_args()
     global RATES, ARMS, ARM_MACRO, CELL
     if a.layout == "v16": RATES, ARMS, ARM_MACRO, CELL = RATES_V16, ARMS_V16, ARM_MACRO_V16, CELL_V16
@@ -156,7 +157,7 @@ def main():
                 return f"{v[0]:.2f}" if v else "--"
             # the sweep carries the rate column; the knee block does not -- it is one rate,
             # named in the caption, so a constant column would be noise in the main table.
-            body = (f"{METRIC_TEX[ds]} & {n[0]} & {cell(UP)} & "
+            body = (("" if a.no_filter_col else f"{METRIC_TEX[ds]} & {n[0]} & ") + f"{cell(UP)} & "
                     f"{cell(HYB)} & {cell(ALW)}")
             # the sweep rows also carry the hybrid's two paired differences with their intervals
             # (E.4 promises "each cell's interval is reported with it"); the knee block keeps them in prose

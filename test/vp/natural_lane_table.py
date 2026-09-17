@@ -41,6 +41,7 @@ def main():
     ap.add_argument("--alwaysroute", help="summary.json of the always-route natural lane (knee cells, step 13)")
     ap.add_argument("--alwaysroute-lmeval", help="its lm-eval scores")
     ap.add_argument("--layout", default="v15", choices=["v15", "v16"])
+    ap.add_argument("--compact", action="store_true", help="v1.7 rows: Workload & Load & Stack & out & cap & E2E s & makespan s (no TTFT/TPOT/TPS, no delta row)")
     a = ap.parse_args(); d = json.load(open(a.summary)); rows, macros = [], []
     global LABELS
     if a.layout == "v16": LABELS = LABELS_V16
@@ -73,11 +74,17 @@ def main():
             if any((arm, ds, lbl) not in lm for arm in ("upstream", "vskipper")):
                 print(f"  {ds} {lbl}: no lm-eval score for both arms -> cell skipped", file=sys.stderr); continue
             for arm, r in (("upstream", u), ("vskipper", v)):
-                rows.append(f"{NAMES[ds] if arm == 'upstream' else ''} & {rate if arm == 'upstream' else ''} & {STACK[arm]} & {r['cap_hits']} & {r['mean_out_tokens']:.0f} & {r['mean_ttft_ms']:.0f} & {r['mean_tpot_ms']:.1f} & {r['mean_e2e_s']:.1f} & {tps(r):.0f} & {r['duration_s']:.0f} \\\\")
+                if a.compact:
+                    rows.append(f"{NAMES[ds] if arm == 'upstream' else ''} & {rate if arm == 'upstream' else ''} & {STACK[arm]} & {r['mean_out_tokens']:.0f} & {r['cap_hits']} & {r['mean_e2e_s']:.1f} & {r['duration_s']:.0f} \\\\")
+                else:
+                    rows.append(f"{NAMES[ds] if arm == 'upstream' else ''} & {rate if arm == 'upstream' else ''} & {STACK[arm]} & {r['cap_hits']} & {r['mean_out_tokens']:.0f} & {r['mean_ttft_ms']:.0f} & {r['mean_tpot_ms']:.1f} & {r['mean_e2e_s']:.1f} & {tps(r):.0f} & {r['duration_s']:.0f} \\\\")
             w = ar.get(ds, {}).get(lbl)
             if isinstance(w, dict) and "alwaysroute" in w: w = w["alwaysroute"]   # the summariser nests by arm
             if w is not None and ("alwaysroute", ds, lbl) in lm:
-                rows.append(f" & & FlexiDepth always-route & {w['cap_hits']} & {w['mean_out_tokens']:.0f} & {w['mean_ttft_ms']:.0f} & {w['mean_tpot_ms']:.1f} & {w['mean_e2e_s']:.1f} & {tps(w):.0f} & {w['duration_s']:.0f} \\\\")
+                if a.compact:
+                    rows.append(f" & & FlexiDepth always-route & {w['mean_out_tokens']:.0f} & {w['cap_hits']} & {w['mean_e2e_s']:.1f} & {w['duration_s']:.0f} \\\\")
+                else:
+                    rows.append(f" & & FlexiDepth always-route & {w['cap_hits']} & {w['mean_out_tokens']:.0f} & {w['mean_ttft_ms']:.0f} & {w['mean_tpot_ms']:.1f} & {w['mean_e2e_s']:.1f} & {tps(w):.0f} & {w['duration_s']:.0f} \\\\")
                 tag = MW[ds] + WORD[rate]
                 macros.append(f"\\newcommand{{\\vpNatAll{tag}Qual}}{{{100*quality(w, ds, 'alwaysroute', lbl):.1f}}}")
                 macros.append(f"\\newcommand{{\\vpNatAll{tag}EtoE}}{{{w['mean_e2e_s']:.1f}}}")
@@ -95,7 +102,8 @@ def main():
                         sys.exit(f"FATAL gsm8k {lbl}: filter {key!r} missing from the scores (upstream {su}, vskipper {sv}); "
                                  "the banks appendix cites both filters")
                     macros.append(f"\\newcommand{{\\vpNatGsm{WORD[rate]}{tag}}}{{{100*(sv-su):+.1f}}}")
-            rows.append(f" & & \\emph{{stack $\\Delta$}} & {v['cap_hits']-u['cap_hits']:+d} & {signed(pct('mean_out_tokens'))}\\% & {signed(pct('mean_ttft_ms'))}\\% & {signed(pct('mean_tpot_ms'))}\\% & {signed(pct('mean_e2e_s'))}\\% & {signed(dtps)}\\% & {signed(pct('duration_s'))}\\% \\\\")
+            if not a.compact:
+                rows.append(f" & & \\emph{{stack $\\Delta$}} & {v['cap_hits']-u['cap_hits']:+d} & {signed(pct('mean_out_tokens'))}\\% & {signed(pct('mean_ttft_ms'))}\\% & {signed(pct('mean_tpot_ms'))}\\% & {signed(pct('mean_e2e_s'))}\\% & {signed(dtps)}\\% & {signed(pct('duration_s'))}\\% \\\\")
             if lbl == labels[-1][0]: rows.append(r"\addlinespace")
             tag = MW[ds] + WORD[rate]
             for name, val in (("OutTok", pct("mean_out_tokens")), ("EtoE", pct("mean_e2e_s")), ("TPOT", pct("mean_tpot_ms")), ("TPS", dtps), ("Qual", dq), ("Makespan", pct("duration_s"))):

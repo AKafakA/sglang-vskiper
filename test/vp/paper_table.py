@@ -260,6 +260,8 @@ def main() -> int:
     ap.add_argument("--dataset-suffix", default="",
                     help="appended to the dataset name in emitted rows (e.g. ' (served-arm banks)') so a "
                          "companion table's rows are not read as headline rows by --verify")
+    ap.add_argument("--dataset-label", default="",
+                    help="replaces the dataset name in emitted rows (v1.7: short row labels such as 'H100' or 'Qwen3-8B')")
     ap.add_argument("--columns", default="all", choices=sorted(COLUMN_SETS),
                     help="column set for the emitted rows (macros always cover every column)")
     ap.add_argument("--tol", type=float, default=0.05,
@@ -299,6 +301,8 @@ def main() -> int:
     if args.emit:
         if args.dataset_suffix:
             table_only = [dict(r, dataset=DISPLAY.get(r["dataset"], r["dataset"]) + args.dataset_suffix) for r in table_only]
+        if args.dataset_label:
+            table_only = [dict(r, dataset=args.dataset_label) for r in table_only]
         print(latex_rows(table_only, COLUMN_SETS[args.columns]))
         if args.macros:
             args.macros.write_text(macros(rows, args.macro_prefix))

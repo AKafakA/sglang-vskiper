@@ -38,7 +38,7 @@ def main():
     d_up, ci_up = paired(rows["hyb"], rows["up"]); d_alw, ci_alw = paired(rows["hyb"], rows["alw"]); d_alwup, ci_alwup = paired(rows["alw"], rows["up"])
     sh = {r: routed_share(a.raw, arms[r], a.ds, a.knee) for r in ("hyb", "alw")}
     shs = " / ".join("--" if sh[r] is None else f"{sh[r]:.0f}" for r in ("hyb", "alw"))
-    row = f"{a.label} & \\texttt{{exact\\_match,composite}} & {n} & {q['up']:.2f} & {q['hyb']:.2f} & {q['alw']:.2f} & {shs} & ${d_up:+.2f} \\pm {ci_up:.2f}$ & ${d_alw:+.2f} \\pm {ci_alw:.2f}$ \\\\"
+    row = f"{a.label} & {q['up']:.2f} & {q['hyb']:.2f} & {q['alw']:.2f} & {shs} & ${d_up:+.2f} \\pm {ci_up:.2f}$ & ${d_alw:+.2f} \\pm {ci_alw:.2f}$ \\\\"   # v1.7: filter and docs named in the table note
     M = a.macro; mac = [f"\\newcommand{{\\vpLq{M}Up}}{{{q['up']:.2f}}}", f"\\newcommand{{\\vpLq{M}Hyb}}{{{q['hyb']:.2f}}}", f"\\newcommand{{\\vpLq{M}Alw}}{{{q['alw']:.2f}}}",
            f"\\newcommand{{\\vpLq{M}DeltaUp}}{{{d_up:+.2f}}}", f"\\newcommand{{\\vpLq{M}DeltaUpCi}}{{{ci_up:.2f}}}", f"\\newcommand{{\\vpLq{M}Delta}}{{{d_alw:+.2f}}}", f"\\newcommand{{\\vpLq{M}DeltaCi}}{{{ci_alw:.2f}}}",
            f"\\newcommand{{\\vpLq{M}AlwDeltaUp}}{{{d_alwup:+.2f}}}", f"\\newcommand{{\\vpLq{M}AlwDeltaUpCi}}{{{ci_alwup:.2f}}}", f"\\newcommand{{\\vpLq{M}Ndocs}}{{{n:,}}}"]

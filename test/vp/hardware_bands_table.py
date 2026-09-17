@@ -27,6 +27,7 @@ def band_table() -> dict:
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--rows", required=True); ap.add_argument("--macros", required=True)
     ap.add_argument("--knee", action="append", default=[]); ap.add_argument("--used", default="")
+    ap.add_argument("--only-used", action="store_true", help="v1.7: emit only the devices that carry a row (the rest stay in deploy/hosts)")
     a = ap.parse_args(); knees = dict(x.split("=") for x in a.knee); used = set(a.used.split(",")) if a.used else set()
     table = band_table(); rows, macros = [], []
     for key, (exit_t, enter_t) in table.items():
@@ -34,7 +35,11 @@ def main():
         if rule != (exit_t, enter_t): sys.exit(f"FATAL {key}: table band {(exit_t, enter_t)} is not the rule's {rule}")
         name, mac = NAMES.get(key, (key.replace("_", " "), re.sub(r"[^A-Za-z]", "", key)))
         knee = knees.get(key, "--"); mark = "yes" if key in used else ""
-        rows.append(f"{name} & {bw:,.0f} & {tflops:,.0f} & {v/1e3:.1f}k & {exit_t//1000}k / {enter_t//1000}k & {knee} & {mark} \\\\")
+        if a.only_used and key not in used: continue
+        if a.only_used:
+            rows.append(f"{name} & {bw:,.0f} & {tflops:,.0f} & {v/1e3:.1f}k & {exit_t//1000}k / {enter_t//1000}k & {knee} \\\\")
+        else:
+            rows.append(f"{name} & {bw:,.0f} & {tflops:,.0f} & {v/1e3:.1f}k & {exit_t//1000}k / {enter_t//1000}k & {knee} & {mark} \\\\")
         macros += [f"\\newcommand{{\\vpBand{mac}Exit}}{{{exit_t//1000}}}", f"\\newcommand{{\\vpBand{mac}Enter}}{{{enter_t//1000}}}", f"\\newcommand{{\\vpBand{mac}Vstar}}{{{v/1e3:.1f}}}", f"\\newcommand{{\\vpBand{mac}Bw}}{{{bw:,.0f}}}"]
     macros += [f"\\newcommand{{\\vpBandTauMs}}{{{roofline.DECODE_BODY_TAX_MS}}}", f"\\newcommand{{\\vpBandSkipRatio}}{{{roofline.DESIGN_DECODE_SKIP_RATIO}}}", f"\\newcommand{{\\vpBandEnterFactor}}{{{roofline.KV_BAND_ENTER_FACTOR}}}"]
     open(a.rows, "w").write("\n".join(rows) + "\n"); open(a.macros, "w").write("\n".join(macros) + "\n")

@@ -41,9 +41,9 @@ grep -c '\\\\' generated/headline_rows.tex | xargs printf '  %s headline rows\n'
 say "3  transfer rows: H100 500 W (Q*=14), RTX A6000, A100-40 (each from its own paired report when present)"
 rm -f generated/h100_rows.tex generated/h100_macros.tex generated/a6000_rows.tex generated/a6000_macros.tex
 H=$EV/h100-500w/ladder/h100_gsm8k/paired_report.upstream_g1024__vskipper.json
-[ -f $H ] && python3 $VP/paper_table.py $H --knee gsm8k=14 --emit --columns main --dataset-suffix " (H100)" --macros generated/h100_macros.tex --macro-prefix vpHone > generated/h100_rows.tex && echo "  H100: $(grep -c '\\\\' generated/h100_rows.tex) rows"
+[ -f $H ] && python3 $VP/paper_table.py $H --knee gsm8k=14 --emit --columns main --dataset-label "H100" --macros generated/h100_macros.tex --macro-prefix vpHone > generated/h100_rows.tex && echo "  H100: $(grep -c '\\\\' generated/h100_rows.tex) rows"
 A6=$AN/rtxa6000/paired_report.upstream_g128__vskipper.json   # 48 GB card: the same-ladder control is upstream_g128 (D-824 on this device)
-[ -f $A6 ] && python3 $VP/paper_table.py $A6 --knee gsm8k=$(cat $AN/rtxa6000/qstar.txt) --emit --columns main --dataset-suffix " (RTX A6000)" --macros generated/a6000_macros.tex --macro-prefix vpAsix > generated/a6000_rows.tex && echo "  A6000: $(grep -c '\\\\' generated/a6000_rows.tex) rows" || echo "  A6000 row pending"
+[ -f $A6 ] && python3 $VP/paper_table.py $A6 --knee gsm8k=$(cat $AN/rtxa6000/qstar.txt) --emit --columns main --dataset-label "RTX A6000" --macros generated/a6000_macros.tex --macro-prefix vpAsix > generated/a6000_rows.tex && echo "  A6000: $(grep -c '\\\\' generated/a6000_rows.tex) rows" || echo "  A6000 row pending"
 
 say "3b ladders of the transfer devices (rung logs pulled from the CSD3 mirror)"
 LH=$EV/h100-500w/ladder/ladder-gsm8k-upstream_g1024; rm -f generated/ladder_h100_rows.tex generated/ladder_h100_macros.tex
@@ -56,7 +56,7 @@ python3 $VP/tile_ratio_table.py --device NVIDIA_A100=A100 --device "NVIDIA_RTX_A
 
 say "3c hardware-band appendix table (every device's band = the rule's output)"
 A6K=$( [ -f $AN/rtxa6000/qstar.txt ] && cat $AN/rtxa6000/qstar.txt || echo 6 )
-python3 $VP/hardware_bands_table.py --rows generated/hardware_bands_rows.tex --macros generated/hardware_bands_macros.tex --knee NVIDIA_A100=13 --knee NVIDIA_H100_HBM3=14 --knee NVIDIA_RTX_A6000=$A6K --used NVIDIA_A100,NVIDIA_H100_HBM3,NVIDIA_RTX_A6000 | tail -1
+python3 $VP/hardware_bands_table.py --only-used --rows generated/hardware_bands_rows.tex --macros generated/hardware_bands_macros.tex --knee NVIDIA_A100=13 --knee NVIDIA_H100_HBM3=14 --knee NVIDIA_RTX_A6000=$A6K --used NVIDIA_A100,NVIDIA_H100_HBM3,NVIDIA_RTX_A6000 | tail -1
 
 say "4  ablation (per dataset, from the node's paired reports; arms vdec_fd / vpre_binarycohort / integrated_alwaysskip vs $BASE)"
 for DSK in "gsm8k:13:" "bbh_cot:34:_bbh_cot" "coqa:25:_coqa"; do IFS=: read -r ADS AK SFX <<< "$DSK"
@@ -73,7 +73,7 @@ for S in "sweep:vpSweep:sweep_macros.tex:sweep_heatmap.png" "sweep_v2:vpSweepTwo
 done
 
 say "6  quality: block B (27 cells, lm-eval filters, per-document paired intervals) + the 2x2 C/D from the same knee cells"
-[ -f $AN/loaded_all_v16.json ] && python3 $VP/loaded_quality_table.py $AN/loaded_all_v16.json --layout v16 --shares generated/loaded_shares.json --rows generated/loaded_quality_rows.tex --sweep-rows generated/loaded_quality_sweep.tex --macros generated/loaded_quality_macros.tex | tail -1 || echo "  block-B scores pending"
+[ -f $AN/loaded_all_v16.json ] && python3 $VP/loaded_quality_table.py $AN/loaded_all_v16.json --layout v16 --no-filter-col --shares generated/loaded_shares.json --rows generated/loaded_quality_rows.tex --sweep-rows generated/loaded_quality_sweep.tex --macros generated/loaded_quality_macros.tex | tail -1 || echo "  block-B scores pending"
 
 say "5b sweep occupancy (node-computed), the roofline prediction figure/table and the per-panel mean/TTFT macros"
 python3 - $AN/sweep-occ <<'PY'
@@ -106,10 +106,10 @@ for M in "generated/sweep:vpSweep:sweep_ttft_macros.tex" "generated/sweep_ungate
 
 say "5c Qwen rows (D-830, o8192 budget D-834): Qwen3-4B hybrid (3 reps, Q*=17) + shared Llama band (1 rep); Qwen3-8B hybrid (3 reps, Q*=14)"
 QW=$AN/qwen; rm -f generated/qwen_serving_rows.tex generated/qwen_sharedband_rows.tex generated/qwen8b_serving_rows.tex generated/qwen_serving_macros_v16.tex
-[ -f $QW/qwen4b_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b.json ] && python3 $VP/paper_table.py $QW/qwen4b_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b.json --knee gsm8k_q4b=17 --emit --columns main --dataset-suffix " (Qwen3-4B)" --macros /tmp/qwen4b_macros.tex --macro-prefix vpQwenFour > generated/qwen_serving_rows.tex && cat /tmp/qwen4b_macros.tex >> generated/qwen_serving_macros_v16.tex && echo "  Qwen3-4B: $(grep -c '\\\\' generated/qwen_serving_rows.tex) rows"
-[ -f $QW/qwen4b_shared_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b_sharedband.json ] && python3 $VP/paper_table.py $QW/qwen4b_shared_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b_sharedband.json --knee gsm8k_q4b=17 --emit --columns main --dataset-suffix " (Qwen3-4B, shared Llama band)" --macros /tmp/qwen4bs_macros.tex --macro-prefix vpQwenFourShr > generated/qwen_sharedband_rows.tex && cat /tmp/qwen4bs_macros.tex >> generated/qwen_serving_macros_v16.tex && echo "  Qwen3-4B shared band: $(grep -c '\\\\' generated/qwen_sharedband_rows.tex) rows"
+[ -f $QW/qwen4b_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b.json ] && python3 $VP/paper_table.py $QW/qwen4b_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b.json --knee gsm8k_q4b=17 --emit --columns main --dataset-label "Qwen3-4B" --macros /tmp/qwen4b_macros.tex --macro-prefix vpQwenFour > generated/qwen_serving_rows.tex && cat /tmp/qwen4b_macros.tex >> generated/qwen_serving_macros_v16.tex && echo "  Qwen3-4B: $(grep -c '\\\\' generated/qwen_serving_rows.tex) rows"
+[ -f $QW/qwen4b_shared_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b_sharedband.json ] && python3 $VP/paper_table.py $QW/qwen4b_shared_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b_sharedband.json --knee gsm8k_q4b=17 --emit --columns main --dataset-label "Qwen3-4B, Llama band" --macros /tmp/qwen4bs_macros.tex --macro-prefix vpQwenFourShr > generated/qwen_sharedband_rows.tex && cat /tmp/qwen4bs_macros.tex >> generated/qwen_serving_macros_v16.tex && echo "  Qwen3-4B shared band: $(grep -c '\\\\' generated/qwen_sharedband_rows.tex) rows"
 Q8ROOT=$QW/qwen8b_c5e5s10000_gsm8k_q8b; Q8ARM=vskipper_qwen3_8b_c5e5s10000   # v1.6.1: the ONE Qwen3-8B checkpoint (D-843 pick); the 5000/7500 roots stay in the pack as history
-[ -f $Q8ROOT/paired_report.upstream_g1024__$Q8ARM.json ] && python3 $VP/paper_table.py $Q8ROOT/paired_report.upstream_g1024__$Q8ARM.json --knee gsm8k_q8b=14 --emit --columns main --dataset-suffix " (Qwen3-8B)" --macros /tmp/qwen8b_macros.tex --macro-prefix vpQwenEight > generated/qwen8b_serving_rows.tex && cat /tmp/qwen8b_macros.tex >> generated/qwen_serving_macros_v16.tex && echo "  Qwen3-8B: $(grep -c '\\\\' generated/qwen8b_serving_rows.tex) rows"
+[ -f $Q8ROOT/paired_report.upstream_g1024__$Q8ARM.json ] && python3 $VP/paper_table.py $Q8ROOT/paired_report.upstream_g1024__$Q8ARM.json --knee gsm8k_q8b=14 --emit --columns main --dataset-label "Qwen3-8B" --macros /tmp/qwen8b_macros.tex --macro-prefix vpQwenEight > generated/qwen8b_serving_rows.tex && cat /tmp/qwen8b_macros.tex >> generated/qwen_serving_macros_v16.tex && echo "  Qwen3-8B: $(grep -c '\\\\' generated/qwen8b_serving_rows.tex) rows"
 
 say "6e Qwen quality: block-B knee rows (qwen_quality_v16) + the 2x2 per checkpoint (A/B native: 4B from v1.5, 8B from CloudLab; C/D = block B)"
 rm -f generated/qwen_blockb_rows.tex generated/qwen_blockb_macros.tex generated/qwen_quality_rows.tex generated/qwen_quality_macros.tex
@@ -129,18 +129,14 @@ if [ -f $QL ]; then
     key=$(echo $l | sed 's/c1e4/CoefOneEFour/; s/c5e5/CoefFiveEFive/; s/c25e6/CoefTwoFiveESix/; s/-step10000/StepTenK/; s/-step8750/StepEightK/; s/-step7500/StepSevenK/; s/-step5000/StepFiveK/; s/[^A-Za-z]//g'); RUNS="$RUNS --macro-key $l=$key"
     sk=$(grep "^$l=" $SEL/SKIPS.txt | cut -d= -f2); [ -n "$sk" ] && SKIPS="$SKIPS --skip $l=$sk"; done
   python3 $VP/native_composite.py $RUNS $SKIPS --base Qwen3-8B-base --rows generated/qwen_native_rows.tex --macros generated/qwen_native_macros.tex --macro-prefix vpNatQ --json generated/qwen_native.json | tail -n 6
-  python3 $VP/paired_dod_2x2_v16.py --dataset gsm8k --arm A=$Q4/qwen_base/gsm8k --arm B=$Q4/qwen_fd/gsm8k --scores $QL --cell-c "loaded-upstream_g1024-gsm8k_q4b-r16p15/" --cell-d "loaded-vskipper_qwen3_4b_alwaysroute-gsm8k_q4b-r16p15/" --margin 1.0 --latex generated/qwen_quality_rows.tex --macros generated/qwen_quality_macros.tex --macro-prefix vpQwenFour --json generated/paired_dod_qwen4b.json | tail -1
-  python3 $VP/paired_dod_2x2_v16.py --dataset gsm8k --arm A=$SEL/base/gsm8k --arm B=$SEL/c5e5-step10000/gsm8k --scores $QS --cell-c "loaded-upstream_g1024-gsm8k_q8b-r13p3/" --cell-d "loaded-${Q8ARM}_alwaysroute-gsm8k_q8b-r13p3/" --margin 1.0 --latex generated/qwen_quality_rows.tex --macros generated/qwen_quality_macros.tex --macro-prefix vpQwenEight --json generated/paired_dod_qwen8b.json | tail -1
-  sed -i '1s/^[^&]*&/Qwen3-4B GSM8K \&/; 2s/^[^&]*&/Qwen3-8B GSM8K \&/' generated/qwen_quality_rows.tex   # row 1 = 4B, row 2 = 8B (the first sed used to hit both lines)
+  python3 $VP/paired_dod_2x2_v16.py --no-filter-col --dataset gsm8k --arm A=$Q4/qwen_base/gsm8k --arm B=$Q4/qwen_fd/gsm8k --scores $QL --cell-c "loaded-upstream_g1024-gsm8k_q4b-r16p15/" --cell-d "loaded-vskipper_qwen3_4b_alwaysroute-gsm8k_q4b-r16p15/" --margin 1.0 --latex generated/qwen_quality_rows.tex --macros generated/qwen_quality_macros.tex --macro-prefix vpQwenFour --json generated/paired_dod_qwen4b.json | tail -1
+  python3 $VP/paired_dod_2x2_v16.py --no-filter-col --dataset gsm8k --arm A=$SEL/base/gsm8k --arm B=$SEL/c5e5-step10000/gsm8k --scores $QS --cell-c "loaded-upstream_g1024-gsm8k_q8b-r13p3/" --cell-d "loaded-${Q8ARM}_alwaysroute-gsm8k_q8b-r13p3/" --margin 1.0 --latex generated/qwen_quality_rows.tex --macros generated/qwen_quality_macros.tex --macro-prefix vpQwenEight --json generated/paired_dod_qwen8b.json | tail -1
+  sed -i '1s/^[^&]*&/Qwen3-4B \&/; 2s/^[^&]*&/Qwen3-8B \&/' generated/qwen_quality_rows.tex   # row 1 = 4B, row 2 = 8B (the first sed used to hit both lines)
 else echo "  Qwen block-B scores pending"; fi
 
 rm -f generated/qwen8b_s7500_rows.tex   # v1.6.1: the 7,500 row is gone (one Qwen3-8B checkpoint, D-843)
 
-say "6c2 GSM8K-only latency table, headline format, all three models (owner 16:0xZ Sep 17)"
-rm -f generated/gsm8k_models_rows.tex
-python3 $VP/paper_table.py generated/paired_report.json "${KNEES[@]}" --emit --columns main --exclude-datasets bbh_cot,coqa --dataset-suffix " (Llama-3-8B)" --macros /tmp/gsm8k_llama_macros.tex --macro-prefix vpGsmLlama > generated/gsm8k_models_rows.tex
-cat generated/qwen_serving_rows.tex generated/qwen8b_serving_rows.tex >> generated/gsm8k_models_rows.tex 2>/dev/null; echo "  GSM8K all-models: $(grep -c '\\\\' generated/gsm8k_models_rows.tex) rows"
-
+# (v1.7: the GSM8K all-models table was removed from the paper (owner); the cross-model figure of step 6d2 carries that view)
 say "6d Pareto panels: block-B knee score (0.95 x Q*) vs mean E2E latency per served arm (D-829)"
 python3 $VP/pareto_figure.py --headline generated/paired_report.json --ablation-dir $AN/ablation --scores $AN/loaded_all_v16.json --knee gsm8k=r12p35 --knee bbh_cot=r32p3 --knee coqa=r23p75 --pdf figures/pareto_knee.pdf --macros generated/pareto_macros.tex | head -1
 
@@ -159,7 +155,7 @@ say "6c the 2x2 gate: A/B native (v1.5 lm-eval samples, identity-preserved) + C/
 Q=$PACK/identity-preserved/q2x2-all; ABB=$PACK/identity-preserved/a6000-20260910-bbh-2x2
 rm -f generated/quality_rows.tex generated/quality_macros.tex
 for spec in "gsm8k:$Q/q2x2-gsm8k/A:$Q/q2x2-gsm8k/B:r12p35" "coqa:$Q/q2x2-coqa/A:$Q/q2x2-coqa/B:r23p75" "bbh_cot:$ABB/q2x2-bbh-raw/A:$ABB/q2x2-bbh-raw/B:r32p3"; do IFS=: read -r ds qa qb r <<< "$spec"
-  python3 $VP/paired_dod_2x2_v16.py --dataset $ds --arm A=$qa --arm B=$qb --scores $AN/loaded_all_v16.json --cell-c "loaded-upstream_g1024-$ds-$r/" --cell-d "loaded-integrated_alwaysskip-$ds-$r/" --margin 1.0 --latex generated/quality_rows.tex --macros generated/quality_macros.tex --json generated/paired_dod_$ds.json | tail -1; done
+  python3 $VP/paired_dod_2x2_v16.py --no-filter-col --dataset $ds --arm A=$qa --arm B=$qb --scores $AN/loaded_all_v16.json --cell-c "loaded-upstream_g1024-$ds-$r/" --cell-d "loaded-integrated_alwaysskip-$ds-$r/" --margin 1.0 --latex generated/quality_rows.tex --macros generated/quality_macros.tex --json generated/paired_dod_$ds.json | tail -1; done
 
 # App. E.2's answer-extraction diagnostic (per-arm strict/flexible filter counts) is a property of the checkpoint's epilogue, read
 # from the v1.5 lm-eval client cells (identity-preserved, paper snapshot 075d49b); only the macros the v1.6 gate does not emit are carried.
@@ -174,7 +170,7 @@ PY
 
 say "6b natural lane (own-stop) table: upstream_g1024 harvests vs the served arm's natural cells (+ always-route at the knee), lm-eval scores"
 NL=$AN/natural-lane; rm -f generated/natural_lane_rows.tex generated/natural_lane_macros.tex
-python3 $VP/natural_lane_table.py $NL/summary.json --layout v16 --lmeval $NL/lmeval_scores.json --alwaysroute $NL/alwaysroute_summary.json --alwaysroute-lmeval $NL/lmeval_scores.json --rows generated/natural_lane_rows.tex --macros generated/natural_lane_macros.tex 2>&1 | tail -2
+python3 $VP/natural_lane_table.py --compact $NL/summary.json --layout v16 --lmeval $NL/lmeval_scores.json --alwaysroute $NL/alwaysroute_summary.json --alwaysroute-lmeval $NL/lmeval_scores.json --rows generated/natural_lane_rows.tex --macros generated/natural_lane_macros.tex 2>&1 | tail -2
 
 say "7  build"
 latexmk -g -pdf -interaction=nonstopmode main.tex > /dev/null 2>&1 || true
