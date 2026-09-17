@@ -159,6 +159,11 @@ for cell in cells:
                 per.append(float(r["exact_match"]))
             results.setdefault("__per_row__", {})[cell] = {"metric": "exact_match,marker-composite",
                                                           "ok": per, "ids": list(ids)}
+            # [v1.6] the two published filters' per-document verdicts and whether strict-match parsed, for App. E.2's
+            # residual count (rows strict-match parses and gets wrong where flexible extraction would have been right)
+            parsed = [str(sm[i][0] if isinstance(sm[i], list) else sm[i]).strip() not in ("", "[invalid]") for i in range(n)]
+            results.setdefault("__per_filter__", {})[cell] = {"strict": per_filter["strict-match"], "flex": per_filter["flexible-extract"],
+                                                             "strict_parsed": parsed, "ids": list(ids)}
     elif ds == "bbh_cot":
         fr = filtered.get("get-answer")
         if fr:
