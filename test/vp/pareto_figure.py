@@ -8,7 +8,7 @@ block-B scores (one repetition, per-document interval). Emits the PDF and macros
 usage: pareto_figure.py --headline paired_report.json --ablation-dir <dir with <ds>/paired_report.upstream_g1024__integrated_alwaysskip.json>
                         --scores loaded_all_v16.json --knee gsm8k=r12p35 --knee bbh_cot=r32p3 --knee coqa=r23p75 --pdf out.pdf --macros out.tex
 """
-import argparse, json, os, re, sys
+import argparse, json, os, sys
 DS = {"gsm8k": ("GSM8K", "Gsm", "exact_match,marker-composite"), "bbh_cot": ("BBH", "Bbh", "exact_match,get-answer"), "coqa": ("CoQA", "Coqa", "f1")}
 ARMS = [("upstream_g1024", "Up", "base + upstream", "o"), ("vskipper", "Hyb", "hybrid (served)", "s"), ("integrated_alwaysskip", "Alw", "always-route", "^")]
 

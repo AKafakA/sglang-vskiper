@@ -6,7 +6,7 @@ rule constants; emits one LaTeX row per device (peak bandwidth, V*, exit/enter b
 usage: hardware_bands_table.py --rows out.tex --macros out.tex [--knee NVIDIA_A100=13 ...] [--used NVIDIA_A100,NVIDIA_H100_HBM3,NVIDIA_RTX_A6000]
 Runs without torch: imports roofline.py and design.py's band table by path.
 """
-import argparse, ast, json, os, re, sys
+import argparse, ast, os, re, sys
 HERE = os.path.dirname(os.path.abspath(__file__)); VP = os.path.join(HERE, "..", "..", "python", "sglang", "srt", "vpipe")
 sys.path.insert(0, VP)
 import roofline  # noqa: E402

@@ -14,7 +14,7 @@ usage: tune_count_gemm_tiles.py --artifact python/sglang/srt/vpipe/binary_cohort
 """
 from __future__ import annotations
 
-import argparse, itertools, json, statistics, time
+import argparse, json, statistics, time
 from pathlib import Path
 
 import torch
