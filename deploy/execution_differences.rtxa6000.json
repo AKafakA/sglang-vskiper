@@ -21,8 +21,8 @@
   },
   "declared": {
     "upstream": {
-      "decode_ladder_top": 256,
-      "reason": "literal SGLang default ladder on 80 GB (T1 column)"
+      "decode_ladder_top": 32,
+      "reason": "literal SGLang default ladder on this 48 GB card"
     },
     "vskipper": {
       "decode_ladder_top": 128,
