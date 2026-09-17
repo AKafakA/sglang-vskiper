@@ -51,6 +51,8 @@ COLUMN_SETS = {
     "tails": ["E2E p50", "E2E p99", "TPOT p50", "TPOT p99", "TTFT p50", "TTFT p99"],
     # The served-arm-bank campaign (D-749 backup): E2E and makespan only (owner, 2026-09-13).
     "backup": ["E2E mean", "E2E p95", "makespan"],
+    # v1.7 body tables: the four means only (the appendix carries the p95 companions)
+    "means": ["E2E mean", "TPOT mean", "TTFT mean", "makespan"],
 }
 # Metrics that get MACROS when the report carries them but are never table columns: a report without
 # them (an older campaign, the served-bank replay) is not refused.
@@ -112,7 +114,7 @@ def table_rows(report: dict[str, Any], knees: dict[str, float]) -> list[dict[str
     return out
 
 
-def latex_rows(rows: list[dict[str, Any]], columns: list[str] = COLUMNS) -> str:
+def latex_rows(rows: list[dict[str, Any]], columns: list[str] = COLUMNS, n_col: bool = True) -> str:
     lines = []
     for row in rows:
         cells = []
@@ -122,7 +124,7 @@ def latex_rows(rows: list[dict[str, Any]], columns: list[str] = COLUMNS) -> str:
                          else f"{mean:+.1f} $\\pm$ {half:.1f}")
         lines.append(
             f"{DISPLAY.get(row['dataset'], row['dataset'])} & "
-            f"${row['multiplier']:g}\\times Q^*$ & {row['n']} & "
+            f"${row['multiplier']:g}\\times Q^*$ & " + (f"{row['n']} & " if n_col else "")
             + " & ".join(cells) + r" \\"
         )
     # Trailing `%` so the file swallows its own final newline. Without it, \input inside a
@@ -260,6 +262,9 @@ def main() -> int:
     ap.add_argument("--dataset-suffix", default="",
                     help="appended to the dataset name in emitted rows (e.g. ' (served-arm banks)') so a "
                          "companion table's rows are not read as headline rows by --verify")
+    ap.add_argument("--dataset-label", default="",
+                    help="replaces the dataset name in emitted rows (v1.7: short row labels such as 'H100' or 'Qwen3-8B')")
+    ap.add_argument("--no-n-col", action="store_true", help="omit the n column from emitted rows (v1.7 body tables name n in the caption)")
     ap.add_argument("--columns", default="all", choices=sorted(COLUMN_SETS),
                     help="column set for the emitted rows (macros always cover every column)")
     ap.add_argument("--tol", type=float, default=0.05,
@@ -299,7 +304,9 @@ def main() -> int:
     if args.emit:
         if args.dataset_suffix:
             table_only = [dict(r, dataset=DISPLAY.get(r["dataset"], r["dataset"]) + args.dataset_suffix) for r in table_only]
-        print(latex_rows(table_only, COLUMN_SETS[args.columns]))
+        if args.dataset_label:
+            table_only = [dict(r, dataset=args.dataset_label) for r in table_only]
+        print(latex_rows(table_only, COLUMN_SETS[args.columns], n_col=not args.no_n_col))
         if args.macros:
             args.macros.write_text(macros(rows, args.macro_prefix))
             print(f"\n% wrote {len(rows) * len(COLUMNS)} macros to {args.macros}",

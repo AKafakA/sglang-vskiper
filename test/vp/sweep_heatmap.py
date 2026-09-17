@@ -49,7 +49,11 @@ def main():
     import matplotlib; matplotlib.use("Agg")
     import matplotlib.pyplot as plt, numpy as np
     mets = a.metrics.split(",")
-    fig, axes = plt.subplots(1, len(mets), figsize=(4.6 * len(mets), 3.9), dpi=200)
+    # v1.7: a single-metric panel is drawn compact and large-typed (it is placed three-across in the paper); no text tag on the
+    # colour bar (the served arm's value is only a line there, named in the caption).
+    single = len(mets) == 1
+    fig, axes = plt.subplots(1, len(mets), figsize=((3.4, 3.1) if single else (4.6 * len(mets), 3.9)), dpi=200)
+    fs_cell, fs_tick, fs_label, fs_title = (14, 11, 11, 11) if single else (9, 9, 10, 10)
     axes = np.atleast_1d(axes)
     macros = []
     for ax, met in zip(axes, mets):
@@ -60,20 +64,18 @@ def main():
                 if v is not None: M[i, j] = v
         lo = min(np.nanmin(M), served.get(met, 0) or 0, 0.0); hi = max(np.nanmax(M), 0.0)
         im = ax.imshow(M, cmap="RdBu_r", vmin=-max(abs(lo), abs(hi)), vmax=max(abs(lo), abs(hi)), aspect="auto")
-        ax.set_xticks(range(len(rates))); ax.set_xticklabels([f"{r}%" for r in rates])
-        ax.set_yticks(range(len(depths))); ax.set_yticklabels([f"{d}%" for d in depths])
-        ax.set_xlabel("rows routed $r$"); ax.set_ylabel("routed layers skipped $d$")
-        ax.set_title(f"{met.replace('E2E', 'E2E latency')} change vs upstream (%)", fontsize=10)
+        ax.set_xticks(range(len(rates))); ax.set_xticklabels([f"{r}%" for r in rates], fontsize=fs_tick)
+        ax.set_yticks(range(len(depths))); ax.set_yticklabels([f"{d}%" for d in depths], fontsize=fs_tick)
+        ax.set_xlabel("rows routed $r$", fontsize=fs_label); ax.set_ylabel("routed layers skipped $d$", fontsize=fs_label)
+        ax.set_title(a.title if (single and a.title) else f"{met} change vs upstream (%)", fontsize=fs_title)
         for i in range(len(depths)):
             for j in range(len(rates)):
                 if not np.isnan(M[i, j]):
-                    ax.text(j, i, f"{M[i, j]:+.1f}", ha="center", va="center", fontsize=9,
+                    ax.text(j, i, f"{M[i, j]:+.1f}", ha="center", va="center", fontsize=fs_cell,
                             color="white" if abs(M[i, j]) > 0.55 * max(abs(lo), abs(hi)) else "black")
-        cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04); cb.ax.tick_params(labelsize=fs_tick - 1)
         if met in served and served[met] is not None:
             cb.ax.axhline(served[met], color="#1f5fbf", lw=2)
-            cb.ax.text(1.3, served[met], f"vSkipper\n{served[met]:+.1f}%", color="#1f5fbf", fontsize=7, va="center",
-                       transform=cb.ax.get_yaxis_transform(), bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#1f5fbf", lw=0.6))
         tag = (met.replace("E2E ", "EtoE").replace("TTFT ", "Ttft").replace("TPOT ", "Tpot")
                .replace("mean", "Mean").replace("p95", "Pninetyfive"))
         if not tag.isalpha(): sys.exit(f"FATAL: metric {met!r} has no macro-safe name")
@@ -89,7 +91,7 @@ def main():
             macros.append(f"\\newcommand{{\\{a.macro_prefix}{tag}WorstCell}}{{r{worst[1][0]}\\,d{worst[1][1]}}}")
         if met in served and served[met] is not None:
             macros.append(f"\\newcommand{{\\{a.macro_prefix}{tag}Served}}{{{served[met]:+.1f}}}")
-    if a.title: fig.suptitle(a.title, fontsize=10)
+    if a.title and not single: fig.suptitle(a.title, fontsize=10)
     fig.tight_layout(); fig.savefig(a.png); print("wrote", a.png)
     open(a.macros, "w").write("\n".join(macros) + "\n"); print("wrote", a.macros, f"({len(macros)} macros)")
 
