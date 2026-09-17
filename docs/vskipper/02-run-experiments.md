@@ -52,7 +52,20 @@ tree and every downstream gate still passed.
 
 ## 3. Refuse to measure the wrong system
 
-Once a server is up:
+Two gates, both fail-closed. The **execution-difference gate** compares what the two servers *execute* — decode
+and prefill graph ladders (top and bucket list), K/V pool size, chunk size, backends, the treatment's regime-switch
+band against the roofline rule for the device — from their `/server_info` snapshots against the declaration in
+`deploy/execution_differences*.json`; anything undeclared refuses the cell. A larger treatment K/V pool never passes;
+a smaller one passes within the declared tolerance (relative, or the exact token displacement the treatment's weights
+cost). The chain scripts run it on every repetition's boot snapshots and kill the driver on refusal:
+
+```bash
+python test/vp/gates/verify_execution_differences.py --snapshots <dir> --arms upstream_g1024,vskipper \
+       --declaration deploy/execution_differences.json --port 32051 --device-name "$(nvidia-smi --query-gpu=name --format=csv,noheader)" \
+       --device-memory-mib "$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits)"
+```
+
+The **served-design gate**, once a server is up:
 
 ```bash
 python test/vp/gates/verify_served_design.py --base-url http://127.0.0.1:32051 --arm <arm-name>
@@ -71,9 +84,13 @@ mean of the rates below it:
 python test/vp/qstar_int.py --cells <ladder-root>/cells
 ```
 
-A ladder that never plateaus yields no Q\*: extend it rather than declaring one. The paper's knees are GSM8K 11,
-BBH 25 and CoQA 27 requests per second, and every headline cell is served at 0.75, 0.95 and 1.25 times its own
-dataset's knee.
+A ladder that never plateaus yields no Q\*: extend it rather than declaring one. The rule counts a rung as growth only
+when it and the next rung both exceed the running maximum by at least 1 % (sustained growth). The baseline that sets the
+knee is upstream **at the same decode-graph ladder the treatment captures** (`--cuda-graph-max-bs 1024` on an A100/H100;
+`128` on a 48 GB card, where the fork captures 4 × 32): a knee taken on a smaller ladder measured the baseline outside
+graph capture on a large share of its batches (the 2026-09-16 incident). The paper's knees on that control are GSM8K 13,
+BBH 34 and CoQA 25 requests per second on the A100 (H100 14, RTX A6000 6; Qwen3-4B 17, Qwen3-8B 14 under the 8,192-token
+output budget), and every headline cell is served at 0.75, 0.95 and 1.25 times its own dataset's knee.
 
 ## 5. Pin the banks from a natural-lane harvest
 
@@ -95,7 +112,10 @@ python test/vp/run_paired_campaign.py --spec my_spec.json --out-dir <root> --rep
 ```
 
 Add `--start-rep N` to resume. Each cell writes a `command.json` recording the exact commands, the artifact
-hashes, the gates that ran and the status.
+hashes, the gates that ran and the status. The campaign's chain scripts (ladder → harvests → paired reps, per dataset
+and per GPU, with the mirror step) are recorded with the paper's evidence under the campaign directory of the
+documentation repository; `training/qwen3-flexidepth/` holds the Qwen3 training tooling and `scripts/reproduce_analysis.sh`
+the analysis stage.
 
 ## Check
 
