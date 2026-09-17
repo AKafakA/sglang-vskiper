@@ -82,7 +82,7 @@ def main() -> int:
     def eng(arm):
         o = occ_of(arm); sb, ar = o.get("decode_passes_skip"), o.get("decode_passes_allrun")
         return 100.0 * sb / (sb + ar) if (sb is not None and ar) else None
-    up = occ.get("fixed", {}).get("upstream", {}).get(a.suite, {}).get("resident_kv_p90_est")
+    upd = occ.get("fixed", {}); up = (upd.get("upstream") or upd.get("upstream_g1024") or {}).get(a.suite, {}).get("resident_kv_p90_est")   # [v1.6] same-ladder control
     tie = [p for p in above if p[1] < 0]
     with open(a.macros, "a") as f:
         f.write(f"\\newcommand{{\\vpPredAboveN}}{{{len(above)}}}\n\\newcommand{{\\vpPredAboveLost}}{{{sum(1 for p in above if p[1] > 0)}}}\n")
