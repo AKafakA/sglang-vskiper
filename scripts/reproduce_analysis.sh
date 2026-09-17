@@ -31,7 +31,7 @@ PY
 printf '\\vpUpstreamBanks%s\n' true > generated/bank_policy.tex
 
 say "2  headline rows + macros (main / tails), absolutes, latency-map figure"
-python3 $VP/paper_table.py generated/paired_report.json "${KNEES[@]}" --emit --columns main --macros generated/headline_macros.tex > generated/headline_rows.tex
+python3 $VP/paper_table.py generated/paired_report.json "${KNEES[@]}" --emit --columns main --macros generated/headline_macros.tex --group-rows --no-n-col --order gsm8k,bbh_cot,coqa > generated/headline_rows.tex   # v1.7 rc5: grouped by workload, n in the caption
 python3 $VP/abs_macros.py generated/headline_macros.tex generated/headline_macros_abs.tex
 python3 $VP/paper_table.py generated/paired_report.json "${KNEES[@]}" --emit --columns tails > generated/tails_rows.tex
 python3 $VP/absolutes_table.py generated/paired_report.json "${KNEES[@]}" --out generated/absolute_rows.tex --macros generated/absolute_macros.tex
@@ -185,4 +185,10 @@ say "7  build"
 latexmk -g -pdf -interaction=nonstopmode main.tex > /dev/null 2>&1 || true
 errs=$(grep -cE '^!|Misplaced|Undefined control' main.log || true); echo "  $(pdfinfo main.pdf 2>/dev/null | awk '/Pages/{print $2}') pages, $errs error lines"
 say "8  MECHANICAL CHECK -- the paper against the artifacts"
-python3 $VP/paper_table.py generated/paired_report.json "${KNEES[@]}" --verify main.tex || echo "  (verify reports the v1.5 literals still in main.tex until the text is rewritten)"
+# Each paired report verifies its own rows in main.tex; the other reports' rows are named to --ignore-datasets.
+OTHERS="H100,RTX A6000,Qwen3-4B,Qwen3-8B"
+python3 $VP/paper_table.py generated/paired_report.json "${KNEES[@]}" --verify main.tex --ignore-datasets "$OTHERS" || echo "  A100 VERIFY FAILED"
+[ -f $H ] && { python3 $VP/paper_table.py $H --knee gsm8k=14 --dataset-label "H100" --verify main.tex --ignore-datasets "GSM8K,BBH,CoQA,RTX A6000,Qwen3-4B,Qwen3-8B" || echo "  H100 VERIFY FAILED"; }
+[ -f $A6 ] && { python3 $VP/paper_table.py $A6 --knee gsm8k=$(cat $AN/rtxa6000/qstar.txt) --dataset-label "RTX A6000" --verify main.tex --ignore-datasets "GSM8K,BBH,CoQA,H100,Qwen3-4B,Qwen3-8B" || echo "  A6000 VERIFY FAILED"; }
+[ -f $Q8ROOT/paired_report.upstream_g1024__$Q8ARM.json ] && { python3 $VP/paper_table.py $Q8ROOT/paired_report.upstream_g1024__$Q8ARM.json --knee gsm8k_q8b=14 --dataset-label "Qwen3-8B" --verify main.tex --ignore-datasets "GSM8K,BBH,CoQA,H100,RTX A6000,Qwen3-4B" || echo "  QWEN3-8B VERIFY FAILED"; }
+[ -f $QW/qwen4b_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b.json ] && { python3 $VP/paper_table.py $QW/qwen4b_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b.json --knee gsm8k_q4b=17 --dataset-label "Qwen3-4B" --verify main.tex --ignore-datasets "GSM8K,BBH,CoQA,H100,RTX A6000,Qwen3-8B" || echo "  QWEN3-4B VERIFY FAILED"; }

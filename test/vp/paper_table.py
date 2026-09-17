@@ -114,17 +114,34 @@ def table_rows(report: dict[str, Any], knees: dict[str, float]) -> list[dict[str
     return out
 
 
-def latex_rows(rows: list[dict[str, Any]], columns: list[str] = COLUMNS, n_col: bool = True) -> str:
+GROUP_MARK = "% paper_table group"   # marks a group header this script emitted, so --verify knows whose rows follow
+
+
+def latex_rows(rows: list[dict[str, Any]], columns: list[str] = COLUMNS, n_col: bool = True,
+               group: bool = False, order: list[str] | None = None) -> str:
+    """`group=True` (v1.7 body tables): one italic group header per dataset, rows carry the rate only;
+    `order` lists dataset keys in the wanted group order (unlisted datasets follow, alphabetically)."""
+    if order:
+        rows = sorted(rows, key=lambda r: (order.index(r["dataset"]) if r["dataset"] in order else len(order),
+                                           r["dataset"], r["multiplier"]))
     lines = []
+    current = None
     for row in rows:
+        display = DISPLAY.get(row['dataset'], row['dataset'])
+        if group and display != current:
+            if current is not None:
+                lines.append(r"\midrule")
+            width = len(columns) + 1 + (1 if n_col else 0)
+            lines.append(f"\\multicolumn{{{width}}}{{l}}{{\\textit{{{display}}}}} \\\\ {GROUP_MARK}")
+            current = display
         cells = []
         by_name = {c[0]: c for c in row["cells"]}
         for _, mean, half in [by_name[name] for name in columns]:  # in the column set's order
             cells.append(f"{mean:+.1f}" if half is None
                          else f"{mean:+.1f} $\\pm$ {half:.1f}")
         lines.append(
-            f"{DISPLAY.get(row['dataset'], row['dataset'])} & "
-            f"${row['multiplier']:g}\\times Q^*$ & " + (f"{row['n']} & " if n_col else "")
+            ("" if group else f"{display} & ")
+            + f"${row['multiplier']:g}\\times Q^*$ & " + (f"{row['n']} & " if n_col else "")
             + " & ".join(cells) + r" \\"
         )
     # Trailing `%` so the file swallows its own final newline. Without it, \input inside a
@@ -160,13 +177,16 @@ def macros(rows: list[dict[str, Any]], prefix: str = "vp") -> str:
 
 
 ROW_RE = re.compile(
-    r"^(?P<ds>[A-Za-z0-9]+)\s*&\s*\$(?P<mult>[0-9.]+)\\times Q\^\*\$\s*&\s*(?P<n>\d+)\s*&"
+    r"^(?P<ds>[A-Za-z0-9][A-Za-z0-9 -]*?)\s*&\s*\$(?P<mult>[0-9.]+)\\times Q\^\*\$\s*&\s*(?P<n>\d+)\s*&"
     # `%?` because the generated file ends its last row with a comment character to swallow
     # the newline that would otherwise open a phantom row inside the tabular.
     r"(?P<cells>.+?)\\\\%?\s*$",
     re.M,
 )
 CELL_RE = re.compile(r"([+-]?\d+\.\d+)(?:\s*\$\\pm\$\s*(\d+\.\d+))?")
+GROUP_RE = re.compile(r"\\multicolumn\{\d+\}\{l\}\{\\textit\{(?P<ds>[A-Za-z0-9 -]+)\}\}")
+GROUPED_ROW_RE = re.compile(
+    r"^\s*\$(?P<mult>[0-9.]+)\\times Q\^\*\$\s*&\s*(?:(?P<n>\d+)\s*&\s*)?(?P<cells>.+?)\\\\%?\s*$")
 
 
 # Both LaTeX's \input and any wrapper around the TeX primitive (the paper defines
@@ -187,21 +207,43 @@ def expand_inputs(tex: str, base: Path) -> str:
         name = match.group(1)
         for candidate in (base / name, base / f"{name}.tex"):
             if candidate.is_file():
-                return candidate.read_text()
+                # On its own lines: the paper wraps \inputrows in \IfFileExists{...}{...}{} on one line,
+                # and a row spliced mid-line would never match the line-anchored ROW_RE.
+                return "\n" + candidate.read_text() + "\n"
         return match.group(0)
     return INPUT_RE.sub(_splice, tex)
 
 
 def verify(rows: list[dict[str, Any]], tex: str, tol: float,
-           placeholder: set[str] | None = None) -> list[str]:
+           placeholder: set[str] | None = None, ignore: set[str] | None = None) -> list[str]:
     """Diff the paper's paired-form rows against the artifacts. Both directions.
-    Rows of a `placeholder` dataset are skipped (interim tables only; the caller names them)."""
+    Rows of a `placeholder` dataset are skipped (interim tables only; the caller names them);
+    rows of an `ignore` dataset belong to another report and are verified by that report's own call."""
     problems: list[str] = []
     seen: set[tuple[str, float]] = set()
-    placeholder = placeholder or set()
+    placeholder = (placeholder or set()) | (ignore or set())
     expected = {(DISPLAY.get(r["dataset"], r["dataset"]), r["multiplier"]): r for r in rows}
-    for match in ROW_RE.finditer(tex):
-        key = (match.group("ds"), float(match.group("mult")))
+    # Two row shapes: the classic `DS & rate & n & cells` row, and (v1.7 body tables) a rate-only row
+    # under a group header that THIS script emitted (GROUP_MARK); a group header without the mark
+    # (the ablation table's, hand-written) ends any open group so its rows are never mis-read.
+    matches: list[tuple[tuple[str, float], str | None, str]] = []
+    group: str | None = None
+    for line in tex.splitlines():
+        header = GROUP_RE.search(line)
+        if header:
+            group = header.group("ds") if GROUP_MARK in line else None
+            continue
+        if r"\bottomrule" in line:
+            group = None
+        match = ROW_RE.match(line)
+        if match:
+            matches.append(((match.group("ds"), float(match.group("mult"))), match.group("n"), match.group("cells")))
+            continue
+        if group is not None:
+            match = GROUPED_ROW_RE.match(line)
+            if match:
+                matches.append(((group, float(match.group("mult"))), match.group("n"), match.group("cells")))
+    for key, n_text, cells_text in matches:
         if key[0] in placeholder:
             continue
         if key not in expected:
@@ -209,9 +251,9 @@ def verify(rows: list[dict[str, Any]], tex: str, tol: float,
             continue
         seen.add(key)
         row = expected[key]
-        if int(match.group("n")) != row["n"]:
-            problems.append(f"{key}: n={match.group('n')} in main.tex, {row['n']} measured")
-        found = CELL_RE.findall(match.group("cells"))
+        if n_text is not None and int(n_text) != row["n"]:
+            problems.append(f"{key}: n={n_text} in main.tex, {row['n']} measured")
+        found = CELL_RE.findall(cells_text)
         # The paper carries the same (dataset, rate) row in more than one table (the headline
         # with COLUMN_SETS["main"], the tails appendix with COLUMN_SETS["tails"]); a tex row is
         # checked against the column set whose width it has. A width matching no declared set
@@ -255,6 +297,10 @@ def main() -> int:
                     help="comma list of datasets whose report rows are NOT emitted and NOT "
                          "expected in main.tex (their macros are still emitted). Used for an "
                          "interim table whose rows for that dataset come from elsewhere.")
+    ap.add_argument("--ignore-datasets", default="",
+                    help="comma list of display names whose main.tex rows come from ANOTHER report "
+                         "(H100, RTX A6000, Qwen3-4B, Qwen3-8B); verify skips them here and each is "
+                         "verified by its own report's --verify call in the regeneration script")
     ap.add_argument("--placeholder-datasets", default="",
                     help="comma list of datasets whose main.tex rows are placeholders: verify "
                          "skips them instead of refusing. Interim use only; the flag lives in "
@@ -265,6 +311,10 @@ def main() -> int:
     ap.add_argument("--dataset-label", default="",
                     help="replaces the dataset name in emitted rows (v1.7: short row labels such as 'H100' or 'Qwen3-8B')")
     ap.add_argument("--no-n-col", action="store_true", help="omit the n column from emitted rows (v1.7 body tables name n in the caption)")
+    ap.add_argument("--group-rows", action="store_true",
+                    help="emit one italic group header per dataset and rate-only rows (v1.7 headline table)")
+    ap.add_argument("--order", default="",
+                    help="comma-separated dataset keys in the wanted group order, e.g. gsm8k,bbh_cot,coqa")
     ap.add_argument("--columns", default="all", choices=sorted(COLUMN_SETS),
                     help="column set for the emitted rows (macros always cover every column)")
     ap.add_argument("--tol", type=float, default=0.05,
@@ -301,12 +351,13 @@ def main() -> int:
     excluded = {d for d in args.exclude_datasets.split(",") if d}
     placeholder = {DISPLAY.get(d, d) for d in args.placeholder_datasets.split(",") if d}
     table_only = [r for r in rows if r["dataset"] not in excluded]
+    if args.dataset_suffix:
+        table_only = [dict(r, dataset=DISPLAY.get(r["dataset"], r["dataset"]) + args.dataset_suffix) for r in table_only]
+    if args.dataset_label:   # the label names the rows in the paper for emit AND verify (H100, RTX A6000, Qwen3-4B, ...)
+        table_only = [dict(r, dataset=args.dataset_label) for r in table_only]
     if args.emit:
-        if args.dataset_suffix:
-            table_only = [dict(r, dataset=DISPLAY.get(r["dataset"], r["dataset"]) + args.dataset_suffix) for r in table_only]
-        if args.dataset_label:
-            table_only = [dict(r, dataset=args.dataset_label) for r in table_only]
-        print(latex_rows(table_only, COLUMN_SETS[args.columns], n_col=not args.no_n_col))
+        print(latex_rows(table_only, COLUMN_SETS[args.columns], n_col=not args.no_n_col,
+                         group=args.group_rows, order=[k for k in args.order.split(",") if k]))
         if args.macros:
             args.macros.write_text(macros(rows, args.macro_prefix))
             print(f"\n% wrote {len(rows) * len(COLUMNS)} macros to {args.macros}",
@@ -314,7 +365,7 @@ def main() -> int:
     if args.verify:
         problems = verify(
             table_only, expand_inputs(args.verify.read_text(), args.verify.parent), args.tol,
-            placeholder,
+            placeholder, {d for d in args.ignore_datasets.split(",") if d},
         )
         if problems:
             print(f"\nMISMATCH — {len(problems)} problem(s) between {args.verify} "
