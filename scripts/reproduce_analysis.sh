@@ -48,6 +48,10 @@ A6=$AN/rtxa6000/paired_report.upstream_g128__vskipper.json   # 48 GB card: the s
 say "3b ladders of the transfer devices (rung logs pulled from the CSD3 mirror)"
 LH=$EV/h100-500w/ladder/ladder-gsm8k-upstream_g1024; rm -f generated/ladder_h100_rows.tex generated/ladder_h100_macros.tex
 [ -d $LH ] && python3 $VP/ladder_table.py h100_gsm8k=$LH --knee h100_gsm8k=14 --rows generated/ladder_h100_rows.tex --macros generated/ladder_h100_macros.tex | tail -1
+# v1.7 body: the compact transfer table (means only), H100 then RTX A6000, without the n column
+rm -f generated/transfer_body_rows.tex
+[ -f $H ] && python3 $VP/paper_table.py $H --knee gsm8k=14 --emit --columns means --dataset-label "H100" --macros /tmp/transfer_h.tex --no-n-col >> generated/transfer_body_rows.tex
+[ -f $A6 ] && python3 $VP/paper_table.py $A6 --knee gsm8k=$(cat $AN/rtxa6000/qstar.txt) --emit --columns means --dataset-label "RTX A6000" --macros /tmp/transfer_a.tex --no-n-col >> generated/transfer_body_rows.tex
 LA=$AN/rtxa6000/ladder-gsm8k-upstream_g128; rm -f generated/ladder_a6000_rows.tex generated/ladder_a6000_macros.tex
 [ -d $LA ] && python3 $VP/ladder_table.py a6000_gsm8k=$LA --knee a6000_gsm8k=$(cat $AN/rtxa6000/qstar.txt) --rows generated/ladder_a6000_rows.tex --macros generated/ladder_a6000_macros.tex | tail -1
 
