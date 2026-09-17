@@ -162,6 +162,23 @@ def served_arm(port: int) -> str:
         ) from error
 
 
+def upstream_arms(spec: dict[str, Any]) -> dict[str, list[str]]:
+    """The upstream-served arms of this campaign: arm name -> EXTRA launch arguments.
+
+    Default = the single literal `upstream` arm with no extra arguments. The ladder-control
+    campaign (2026-09-16, incident `incident-graph-ladder-confound-20260916`) adds a second
+    upstream-served arm, `upstream_g1024` = the SAME upstream checkout launched with
+    `--cuda-graph-max-bs 1024`, so the baseline captures the decode ladder the fork captures.
+    Declared in the campaign spec as `"upstream_arms": {"upstream": [], "upstream_g1024":
+    ["--cuda-graph-max-bs", "1024"]}`; every extra argument must also be declared to Gate E
+    through `upstream_arm_exemptions` (below), or the boot is refused.
+    """
+    declared = spec.get("upstream_arms")
+    if declared is None:
+        return {spec.get("upstream_arm_name", "upstream"): []}
+    return {name: list(extra) for name, extra in declared.items()}
+
+
 def arm_is_upstream(spec: dict[str, Any], arm: str) -> bool:
     """Is this arm GENUINE upstream SGLang, served from its own tree?
 
@@ -169,7 +186,7 @@ def arm_is_upstream(spec: dict[str, Any], arm: str) -> bool:
     (owner order D-587), NOT ARMS["stock"] -- which is this fork with the skipper off and
     whose own comment falsely claimed to be upstream for months.
     """
-    return arm == spec.get("upstream_arm_name", "upstream")
+    return arm in upstream_arms(spec)
 
 
 def serving_pythonpath(spec: dict[str, Any], arm: str) -> Path:
@@ -233,6 +250,9 @@ class Server:
             "--attention-backend=triton",
             "--prefill-attention-backend=triton",
             "--decode-attention-backend=triton",
+            # per-arm extra launch arguments exist ONLY for upstream-served arms (the same-ladder
+            # control); fork arms are selected in the tree and take no per-arm flags.
+            *(upstream_arms(self.spec).get(self.arm, []) if self.upstream else []),
         ]
 
     def __enter__(self) -> Server:
@@ -340,9 +360,18 @@ def default_conformance_gate(spec: dict[str, Any], arm: str, port: int) -> None:
          "--model-path", spec["model_path"], "--defaults-tree", spec["upstream_tree"],
          "--design-tree", spec["tree"], "--python", spec["python"],
          "--fallback-design-tree", str(Path(__file__).resolve().parents[2]),
-         *(["--launch-profile", launch_profile_name(spec)] if launch_profile_name(spec) else [])],
+         *(["--launch-profile", launch_profile_name(spec)] if launch_profile_name(spec) else []),
+         # an upstream-served arm launched with extra arguments must declare EVERY resolved
+         # field those arguments change (spec["upstream_arm_exemptions"][arm]); otherwise the
+         # gate holds it to the defaults and refuses -- the ladder-control lesson made a gate.
+         *(["--arm-exemptions", json.dumps(spec["upstream_arm_exemptions"][arm])]
+           if arm in spec.get("upstream_arm_exemptions", {}) else [])],
         capture_output=True, text=True,
     )
+    if upstream_arms(spec).get(arm) and arm not in spec.get("upstream_arm_exemptions", {}):
+        raise RuntimeError(
+            f"arm {arm!r} is launched with extra arguments {upstream_arms(spec)[arm]} but the spec "
+            "declares no upstream_arm_exemptions for it; refusing (undeclared execution difference)")
     for line in done.stdout.splitlines():
         log(f"      {line}")
     if done.returncode != 0:

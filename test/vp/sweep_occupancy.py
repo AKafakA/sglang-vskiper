@@ -36,7 +36,7 @@ def main() -> int:
                 st = info["internal_states"][0]
                 if "vp_runtime" not in st:
                     # The upstream anchor is a separate tree with no vpipe package: no attestation to read.
-                    if name != "upstream":
+                    if name not in ("upstream", "upstream_g1024"):   # [v1.6] the same-ladder control is upstream too
                         sys.exit(f"FATAL: routed arm {name} served without vp_runtime attestation: {base}")
                     rec.update({"decode_passes_allrun": None, "decode_passes_skip": None, "decode_rows_skip_share": None,
                                 "decode_skip_ratio_attested": None, "band": None})

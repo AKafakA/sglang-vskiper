@@ -1,0 +1,322 @@
+{
+ "gateup@205": {
+  "cublas_ms": null,
+  "best_ms": null,
+  "ratio": null,
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "tuner": "carried from Quadro_RTX_8000 (sm_75 tiles, 64 KB-class shared memory) on 2026-09-17: the A100 tiles the fourth-hardware-point port carried need 110,592 B of shared memory per block, above the RTX A6000's (sm_86) 101,376 B limit, so the fork failed at prefill capture (rtxa6000_gsm8k reps 1-3, all vskipper arms); no per-device tuning was run"
+ },
+ "gateup@512": {
+  "cublas_ms": null,
+  "best_ms": null,
+  "ratio": null,
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "tuner": "carried from Quadro_RTX_8000 (sm_75 tiles, 64 KB-class shared memory) on 2026-09-17: the A100 tiles the fourth-hardware-point port carried need 110,592 B of shared memory per block, above the RTX A6000's (sm_86) 101,376 B limit, so the fork failed at prefill capture (rtxa6000_gsm8k reps 1-3, all vskipper arms); no per-device tuning was run"
+ },
+ "gateup@1024": {
+  "cublas_ms": null,
+  "best_ms": null,
+  "ratio": null,
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "tuner": "carried from Quadro_RTX_8000 (sm_75 tiles, 64 KB-class shared memory) on 2026-09-17: the A100 tiles the fourth-hardware-point port carried need 110,592 B of shared memory per block, above the RTX A6000's (sm_86) 101,376 B limit, so the fork failed at prefill capture (rtxa6000_gsm8k reps 1-3, all vskipper arms); no per-device tuning was run"
+ },
+ "gateup@2048": {
+  "cublas_ms": null,
+  "best_ms": null,
+  "ratio": null,
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "tuner": "carried from Quadro_RTX_8000 (sm_75 tiles, 64 KB-class shared memory) on 2026-09-17: the A100 tiles the fourth-hardware-point port carried need 110,592 B of shared memory per block, above the RTX A6000's (sm_86) 101,376 B limit, so the fork failed at prefill capture (rtxa6000_gsm8k reps 1-3, all vskipper arms); no per-device tuning was run"
+ },
+ "gateup@4096": {
+  "cublas_ms": null,
+  "best_ms": null,
+  "ratio": null,
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "tuner": "carried from Quadro_RTX_8000 (sm_75 tiles, 64 KB-class shared memory) on 2026-09-17: the A100 tiles the fourth-hardware-point port carried need 110,592 B of shared memory per block, above the RTX A6000's (sm_86) 101,376 B limit, so the fork failed at prefill capture (rtxa6000_gsm8k reps 1-3, all vskipper arms); no per-device tuning was run"
+ },
+ "down@205": {
+  "cublas_ms": null,
+  "best_ms": null,
+  "ratio": null,
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "tuner": "carried from Quadro_RTX_8000 (sm_75 tiles, 64 KB-class shared memory) on 2026-09-17: the A100 tiles the fourth-hardware-point port carried need 110,592 B of shared memory per block, above the RTX A6000's (sm_86) 101,376 B limit, so the fork failed at prefill capture (rtxa6000_gsm8k reps 1-3, all vskipper arms); no per-device tuning was run"
+ },
+ "down@512": {
+  "cublas_ms": null,
+  "best_ms": null,
+  "ratio": null,
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "tuner": "carried from Quadro_RTX_8000 (sm_75 tiles, 64 KB-class shared memory) on 2026-09-17: the A100 tiles the fourth-hardware-point port carried need 110,592 B of shared memory per block, above the RTX A6000's (sm_86) 101,376 B limit, so the fork failed at prefill capture (rtxa6000_gsm8k reps 1-3, all vskipper arms); no per-device tuning was run"
+ },
+ "down@1024": {
+  "cublas_ms": null,
+  "best_ms": null,
+  "ratio": null,
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "tuner": "carried from Quadro_RTX_8000 (sm_75 tiles, 64 KB-class shared memory) on 2026-09-17: the A100 tiles the fourth-hardware-point port carried need 110,592 B of shared memory per block, above the RTX A6000's (sm_86) 101,376 B limit, so the fork failed at prefill capture (rtxa6000_gsm8k reps 1-3, all vskipper arms); no per-device tuning was run"
+ },
+ "down@2048": {
+  "cublas_ms": null,
+  "best_ms": null,
+  "ratio": null,
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "tuner": "carried from Quadro_RTX_8000 (sm_75 tiles, 64 KB-class shared memory) on 2026-09-17: the A100 tiles the fourth-hardware-point port carried need 110,592 B of shared memory per block, above the RTX A6000's (sm_86) 101,376 B limit, so the fork failed at prefill capture (rtxa6000_gsm8k reps 1-3, all vskipper arms); no per-device tuning was run"
+ },
+ "down@4096": {
+  "cublas_ms": null,
+  "best_ms": null,
+  "ratio": null,
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "tuner": "carried from Quadro_RTX_8000 (sm_75 tiles, 64 KB-class shared memory) on 2026-09-17: the A100 tiles the fourth-hardware-point port carried need 110,592 B of shared memory per block, above the RTX A6000's (sm_86) 101,376 B limit, so the fork failed at prefill capture (rtxa6000_gsm8k reps 1-3, all vskipper arms); no per-device tuning was run"
+ },
+ "projgd@205": {
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "prev_config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "bk_fixed": 32,
+  "identical_to_prev": true,
+  "tuner": "carried from Quadro_RTX_8000 (sm_75 tiles, 64 KB-class shared memory) on 2026-09-17: the A100 tiles the fourth-hardware-point port carried need 110,592 B of shared memory per block, above the RTX A6000's (sm_86) 101,376 B limit, so the fork failed at prefill capture (rtxa6000_gsm8k reps 1-3, all vskipper arms); no per-device tuning was run"
+ },
+ "projgd@512": {
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "prev_config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "bk_fixed": 32,
+  "identical_to_prev": true,
+  "tuner": "carried from Quadro_RTX_8000 (sm_75 tiles, 64 KB-class shared memory) on 2026-09-17: the A100 tiles the fourth-hardware-point port carried need 110,592 B of shared memory per block, above the RTX A6000's (sm_86) 101,376 B limit, so the fork failed at prefill capture (rtxa6000_gsm8k reps 1-3, all vskipper arms); no per-device tuning was run"
+ },
+ "projgd@1024": {
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "prev_config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "bk_fixed": 32,
+  "identical_to_prev": true,
+  "tuner": "carried from Quadro_RTX_8000 (sm_75 tiles, 64 KB-class shared memory) on 2026-09-17: the A100 tiles the fourth-hardware-point port carried need 110,592 B of shared memory per block, above the RTX A6000's (sm_86) 101,376 B limit, so the fork failed at prefill capture (rtxa6000_gsm8k reps 1-3, all vskipper arms); no per-device tuning was run"
+ },
+ "projgd@2048": {
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "prev_config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "bk_fixed": 32,
+  "identical_to_prev": true,
+  "tuner": "carried from Quadro_RTX_8000 (sm_75 tiles, 64 KB-class shared memory) on 2026-09-17: the A100 tiles the fourth-hardware-point port carried need 110,592 B of shared memory per block, above the RTX A6000's (sm_86) 101,376 B limit, so the fork failed at prefill capture (rtxa6000_gsm8k reps 1-3, all vskipper arms); no per-device tuning was run"
+ },
+ "projgd@4096": {
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "prev_config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "bk_fixed": 32,
+  "identical_to_prev": true,
+  "tuner": "carried from Quadro_RTX_8000 (sm_75 tiles, 64 KB-class shared memory) on 2026-09-17: the A100 tiles the fourth-hardware-point port carried need 110,592 B of shared memory per block, above the RTX A6000's (sm_86) 101,376 B limit, so the fork failed at prefill capture (rtxa6000_gsm8k reps 1-3, all vskipper arms); no per-device tuning was run"
+ },
+ "projup@205": {
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "prev_config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "bk_fixed": 32,
+  "identical_to_prev": true,
+  "tuner": "carried from Quadro_RTX_8000 (sm_75 tiles, 64 KB-class shared memory) on 2026-09-17: the A100 tiles the fourth-hardware-point port carried need 110,592 B of shared memory per block, above the RTX A6000's (sm_86) 101,376 B limit, so the fork failed at prefill capture (rtxa6000_gsm8k reps 1-3, all vskipper arms); no per-device tuning was run"
+ },
+ "projup@512": {
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "prev_config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "bk_fixed": 32,
+  "identical_to_prev": true,
+  "tuner": "carried from Quadro_RTX_8000 (sm_75 tiles, 64 KB-class shared memory) on 2026-09-17: the A100 tiles the fourth-hardware-point port carried need 110,592 B of shared memory per block, above the RTX A6000's (sm_86) 101,376 B limit, so the fork failed at prefill capture (rtxa6000_gsm8k reps 1-3, all vskipper arms); no per-device tuning was run"
+ },
+ "projup@1024": {
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "prev_config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "bk_fixed": 32,
+  "identical_to_prev": true,
+  "tuner": "carried from Quadro_RTX_8000 (sm_75 tiles, 64 KB-class shared memory) on 2026-09-17: the A100 tiles the fourth-hardware-point port carried need 110,592 B of shared memory per block, above the RTX A6000's (sm_86) 101,376 B limit, so the fork failed at prefill capture (rtxa6000_gsm8k reps 1-3, all vskipper arms); no per-device tuning was run"
+ },
+ "projup@2048": {
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "prev_config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "bk_fixed": 32,
+  "identical_to_prev": true,
+  "tuner": "carried from Quadro_RTX_8000 (sm_75 tiles, 64 KB-class shared memory) on 2026-09-17: the A100 tiles the fourth-hardware-point port carried need 110,592 B of shared memory per block, above the RTX A6000's (sm_86) 101,376 B limit, so the fork failed at prefill capture (rtxa6000_gsm8k reps 1-3, all vskipper arms); no per-device tuning was run"
+ },
+ "projup@4096": {
+  "config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "prev_config": [
+   64,
+   64,
+   32,
+   4,
+   2
+  ],
+  "bk_fixed": 32,
+  "identical_to_prev": true,
+  "tuner": "carried from Quadro_RTX_8000 (sm_75 tiles, 64 KB-class shared memory) on 2026-09-17: the A100 tiles the fourth-hardware-point port carried need 110,592 B of shared memory per block, above the RTX A6000's (sm_86) 101,376 B limit, so the fork failed at prefill capture (rtxa6000_gsm8k reps 1-3, all vskipper arms); no per-device tuning was run"
+ }
+}

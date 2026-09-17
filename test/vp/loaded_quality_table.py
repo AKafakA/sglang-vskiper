@@ -49,6 +49,15 @@ ARMS = [("upstream", "Base + upstream"),
 ARM_MACRO = {"upstream": "Up", "integrated_it4": "Hyb", "integrated_alwaysskip": "Alw"}
 
 CELL = re.compile(r"harvest-(?P<arm>[a-z0-9_]+)-(?P<ds>gsm8k|bbh_cot|coqa)-(?P<rate>r[0-9p]+)/")
+# [v1.6, D-824] the ladder-control campaign: block B = loaded-<arm>-<ds>-<rate>/ cells at the g1024 knees, baseline upstream_g1024
+RATES_V16 = {"gsm8k": [("r9p75", "0.75"), ("r12p35", "0.95"), ("r16p25", "1.25")],
+             "bbh_cot": [("r25p5", "0.75"), ("r32p3", "0.95"), ("r42p5", "1.25")],
+             "coqa": [("r18p75", "0.75"), ("r23p75", "0.95"), ("r31p25", "1.25")]}
+ARMS_V16 = [("upstream_g1024", "Base + upstream"),
+            ("vskipper", r"FlexiDepth + \sys{} (served)"),
+            ("integrated_alwaysskip", "FlexiDepth + always-route")]
+ARM_MACRO_V16 = {"upstream_g1024": "Up", "vskipper": "Hyb", "integrated_alwaysskip": "Alw"}
+CELL_V16 = re.compile(r"loaded-(?P<arm>[a-z0-9_]+)-(?P<ds>gsm8k|bbh_cot|coqa)-(?P<rate>r[0-9p]+)/")
 def paired_ci(a, b):
     """Paired per-document 95% interval on the mean difference of two 0/1 vectors.
 
@@ -107,7 +116,11 @@ def main():
                     help="loaded_shares.json: the routed decode share of the served arms per cell, read "
                          "from their attestation; printed beside each sweep row so a cell whose routed "
                          "body never ran (0.0%%) is visible in the table, not only in an appendix macro")
+    ap.add_argument("--layout", default="v15", choices=["v15", "v16"])
     a = ap.parse_args()
+    global RATES, ARMS, ARM_MACRO, CELL
+    if a.layout == "v16": RATES, ARMS, ARM_MACRO, CELL = RATES_V16, ARMS_V16, ARM_MACRO_V16, CELL_V16
+    UP, HYB, ALW = ARMS[0][0], ARMS[1][0], ARMS[2][0]   # role -> arm name (v1.5: upstream / integrated_it4 / integrated_alwaysskip)
     shares = json.load(open(a.shares)) if a.shares else None
 
     raw = json.load(open(a.scores))
@@ -143,13 +156,13 @@ def main():
                 return f"{v[0]:.2f}" if v else "--"
             # the sweep carries the rate column; the knee block does not -- it is one rate,
             # named in the caption, so a constant column would be noise in the main table.
-            body = (f"{METRIC_TEX[ds]} & {n[0]} & {cell('upstream')} & "
-                    f"{cell('integrated_it4')} & {cell('integrated_alwaysskip')}")
+            body = (f"{METRIC_TEX[ds]} & {n[0]} & {cell(UP)} & "
+                    f"{cell(HYB)} & {cell(ALW)}")
             # the sweep rows also carry the hybrid's two paired differences with their intervals
             # (E.4 promises "each cell's interval is reported with it"); the knee block keeps them in prose
             def paired_col(other):
-                h, w = cells.get("integrated_it4"), cells.get(other)
-                hv, wv = rows_by_key.get((ds, "integrated_it4", rate_lbl)), rows_by_key.get((ds, other, rate_lbl))
+                h, w = cells.get(HYB), cells.get(other)
+                hv, wv = rows_by_key.get((ds, HYB, rate_lbl)), rows_by_key.get((ds, other, rate_lbl))
                 if not (h and w and hv and wv) or len(hv) != len(wv): return "--"
                 d, ci = paired_ci(hv, wv); return f"${d:+.2f} \\pm {ci:.2f}$"
             share_col = ""
@@ -159,8 +172,8 @@ def main():
                     if rec is None:
                         sys.exit(f"FATAL {ds}@{rate_x}: no routed share for {arm} in {a.shares}")
                     return f"{rec['routed_share_pct']:.0f}"
-                share_col = f" & {share('integrated_it4')} / {share('integrated_alwaysskip')}"
-            sweep.append(f"{NAMES[ds]} & ${rate_x}\\times Q^*$ & {body}{share_col} & {paired_col('upstream')} & {paired_col('integrated_alwaysskip')} \\\\")
+                share_col = f" & {share(HYB)} / {share(ALW)}"
+            sweep.append(f"{NAMES[ds]} & ${rate_x}\\times Q^*$ & {body}{share_col} & {paired_col(UP)} & {paired_col(ALW)} \\\\")
             if rate_x == "0.95":
                 knee.append(f"{NAMES[ds]} & {body}{share_col} \\\\")
             for arm, _ in ARMS:
@@ -170,22 +183,22 @@ def main():
             # hybrid minus always-route, and hybrid minus upstream, with PAIRED per-document
             # intervals. Valid at one repetition only because every arm scores the same documents
             # in the same order; they quantify document sampling and NOT run-to-run variance.
-            for other, tag in (("integrated_alwaysskip", "Delta"), ("upstream", "DeltaUp")):
-                h, w = cells.get("integrated_it4"), cells.get(other)
+            for other, tag in ((ALW, "Delta"), (UP, "DeltaUp")):
+                h, w = cells.get(HYB), cells.get(other)
                 if not (h and w):
                     continue
                 macros.append(f"\\newcommand{{\\{a.macro_prefix}{MW[ds]}{RW[rate_x]}{tag}}}"
                               f"{{{h[0] - w[0]:+.2f}}}")
-                hv = rows_by_key.get((ds, "integrated_it4", rate_lbl))
+                hv = rows_by_key.get((ds, HYB, rate_lbl))
                 wv = rows_by_key.get((ds, other, rate_lbl))
                 if hv and wv:
                     # The pairing is by document. When the scorer recorded ids, require them equal;
                     # the length check alone cannot tell two orderings apart.
-                    hi, wi = ids_by_key.get((ds, "integrated_it4", rate_lbl)), ids_by_key.get((ds, other, rate_lbl))
+                    hi, wi = ids_by_key.get((ds, HYB, rate_lbl)), ids_by_key.get((ds, other, rate_lbl))
                     if hi is not None and wi is not None and hi != wi:
-                        sys.exit(f"FATAL {ds} {rate_lbl}: document ids differ between integrated_it4 and {other}")
+                        sys.exit(f"FATAL {ds} {rate_lbl}: document ids differ between {HYB} and {other}")
                     if len(hv) != len(wv):
-                        sys.exit(f"FATAL {ds} {rate_lbl}: {len(hv)} vs {len(wv)} scored documents for integrated_it4 vs {other}")
+                        sys.exit(f"FATAL {ds} {rate_lbl}: {len(hv)} vs {len(wv)} scored documents for {HYB} vs {other}")
                     d, ci = paired_ci(hv, wv)
                     macros.append(f"\\newcommand{{\\{a.macro_prefix}{MW[ds]}{RW[rate_x]}{tag}Ci}}"
                                   f"{{{ci:.2f}}}")
@@ -194,8 +207,7 @@ def main():
     # the rungs it is reported at. The hybrid's spread is the regime switch's signature and the
     # switch-free arms' spreads are the contrast, so neither may drift from the table above it.
     for ds in ("gsm8k", "coqa", "bbh_cot"):
-        for arm, tag in (("upstream", "Up"), ("integrated_it4", "Hyb"),
-                         ("integrated_alwaysskip", "Alw")):
+        for arm, tag in ((UP, "Up"), (HYB, "Hyb"), (ALW, "Alw")):
             vals = [idx[(ds, arm, r)][0] for r, _ in RATES[ds] if (ds, arm, r) in idx]
             if len(vals) >= 2:
                 macros.append(f"\\newcommand{{\\{a.macro_prefix}{MW[ds]}{tag}Spread}}"

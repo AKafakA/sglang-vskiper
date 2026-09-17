@@ -133,3 +133,48 @@ def test_qwen_sharedband_arm_is_a_declared_deviation():
         assert att["decode_kv_band_policy"] == "shared" and att["decode_kv_band_by_device"]["NVIDIA_A100"] == [160_000, 200_000]
     with _serving("vskipper_qwen3_4b"):
         assert design.design_attestation()["decode_kv_band_policy"] == "rule"
+
+
+def test_every_device_band_is_the_rule_output_for_the_served_arm():
+    """[plan v3, 2026-09-16] The per-device table is never hand-picked: every entry (A100-80, H100
+    HBM3/NVL, RTX 5880 Ada, A100-40) equals roofline.derived_kv_band with the served FlexiDepth
+    arm's inputs, and the mock arms derive a band for every device the table knows."""
+    from sglang.srt.vpipe import design
+    from sglang.srt.vpipe.roofline import arm_kv_rule_inputs, band_device_key, derived_kv_band
+
+    inputs = arm_kv_rule_inputs(design.ARMS["vskipper"])
+    for key, band in design.SERVED_DECODE_KV_BAND_BY_DEVICE.items():
+        assert derived_kv_band(key, **inputs) == tuple(band), (key, band)
+    assert design.SERVED_DECODE_KV_BAND_BY_DEVICE["NVIDIA_RTX_5880_Ada_Generation"] == (80_000, 100_000)
+    assert design.SERVED_DECODE_KV_BAND_BY_DEVICE["NVIDIA_A100_40GB"] == (130_000, 160_000)
+    assert design.SERVED_DECODE_KV_BAND_BY_DEVICE["NVIDIA_RTX_A6000"] == (60000, 80000)
+    assert design.SERVED_DECODE_KV_BAND_BY_DEVICE["NVIDIA_L40S"] == (70000, 90000)
+    # memory class refines the A100 key; nothing else is touched
+    assert band_device_key("NVIDIA_A100", 40 * 1024**3) == "NVIDIA_A100_40GB"
+    assert band_device_key("NVIDIA_A100", 80 * 1024**3) == "NVIDIA_A100"
+    assert band_device_key("NVIDIA_RTX_5880_Ada_Generation", 48 * 1024**3) == "NVIDIA_RTX_5880_Ada_Generation"
+    assert set(design._rule_band(design.ARMS["vskipper"])) == set(design.SERVED_DECODE_KV_BAND_BY_DEVICE)
+
+
+def test_qwen3_8b_arm_band_follows_the_rule_with_its_own_inputs():
+    """[D-830] the third model's band is the rule's output for its attested skip (0.383) on every declared device."""
+    from sglang.srt.vpipe import design
+    from sglang.srt.vpipe.roofline import arm_kv_rule_inputs, derived_kv_band
+
+    arm = design.ARMS["vskipper_qwen3_8b"]; inputs = arm_kv_rule_inputs(arm)
+    assert inputs["routed_layers"] == 18 and abs(inputs["skip_ratio"] - 0.383) < 1e-9
+    for key, band in arm["decode_kv_band"].items():
+        assert derived_kv_band(key, **inputs) == tuple(band), (key, band)
+    assert design.ARMS["vskipper_qwen3_8b_alwaysroute"]["regime_switch"] is False
+    arm7 = design.ARMS["vskipper_qwen3_8b_s7500"]; inp7 = arm_kv_rule_inputs(arm7)
+    assert abs(inp7["skip_ratio"] - 0.428) < 1e-9
+    for key, band in arm7["decode_kv_band"].items():
+        assert derived_kv_band(key, **inp7) == tuple(band), (key, band)
+
+
+def test_mock_sharedband_twins_serve_the_global_band_as_a_declared_deviation():
+    from sglang.srt.vpipe import design
+    arm = design.ARMS["integrated_randomskip_r50_d50_sharedband"]; own = design.ARMS["integrated_randomskip_r50_d50"]
+    assert arm["decode_kv_band_policy"] == "shared" and arm["decode_kv_band"]["NVIDIA_A100"] == (160_000, 200_000)
+    assert arm["decode_kv_band"] != own["decode_kv_band"] and arm["design_skip_ratio"] == own["design_skip_ratio"]
+    assert len([k for k in design.ARMS if k.endswith("_sharedband") and k.startswith("integrated_randomskip")]) == 9

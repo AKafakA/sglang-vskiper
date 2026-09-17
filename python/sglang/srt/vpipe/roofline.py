@@ -81,6 +81,21 @@ def device_peaks(device_key: str) -> tuple[float, float]:
     return float(entry["peak_tflops_bf16"]), float(entry["peak_bw_gbs"])
 
 
+#: A100 parts share one tuned-artifact key (kernel.canonical_device_key strips the capacity
+#: token) but the 40 GB SXM4 part has a different memory system (1,555 GB/s vs 1,935 PCIe-80 /
+#: 2,039 SXM4-80), so its roofline entry and band are its own. 60 GB splits the two classes.
+A100_MEMORY_CLASS_SPLIT_BYTES = 60 * 1024**3
+
+
+def band_device_key(canonical_key: str, total_memory_bytes: int) -> str:
+    """The roofline/band key for a device: the canonical tile key, refined by memory class where
+    one canonical key covers parts with different memory systems (2026-09-16, plan v3: the
+    A100-40 point must not silently inherit the 80 GB entry's band)."""
+    if canonical_key == "NVIDIA_A100" and int(total_memory_bytes) < A100_MEMORY_CLASS_SPLIT_BYTES:
+        return "NVIDIA_A100_40GB"
+    return canonical_key
+
+
 def ridge_rows(device_key: str) -> float:
     """The device's machine balance, in decode rows (intensity = M, so FLOP/byte = rows)."""
     tflops, bw_gbs = device_peaks(device_key)

@@ -53,7 +53,7 @@ _PHASES = {"both": ["decode", "prefill"], "decode": ["decode"], "prefill": ["pre
 
 def expectation(arm: str) -> dict:
     """What `/server_info` must report for this arm, derived from the design."""
-    if arm == "upstream":
+    if arm == "upstream" or arm.startswith("upstream_"):  # every upstream-served arm (incl. the same-ladder control) has no vpipe attestation
         # Genuine upstream SGLang has no vpipe package, so there is no attestation block at
         # all. Its ABSENCE is the assertion (D-587/D-646).
         return {"attestation": "absent"}

@@ -20,6 +20,11 @@ RUNGS = {"gsm8k": [("r8p25", "Low"), ("r10p45", "Mid"), ("r12p65", "Probe"), ("r
          "coqa": [("r20p25", "Low"), ("r25p65", "Mid"), ("r33p75", "High")]}
 MW = {"gsm8k": "Gsm", "bbh_cot": "Bbh", "coqa": "Coqa"}
 ARMS = {"integrated_it4": "Hyb", "integrated_alwaysskip": "Alw"}
+# [v1.6, D-824] the ladder-control campaign: block B at the g1024 knees, cells under loaded-<arm>-<ds>-<rate>/cell, arms vskipper / always-route
+RUNGS_V16 = {"gsm8k": [("r9p75", "Low"), ("r12p35", "Mid"), ("r16p25", "High")],
+             "bbh_cot": [("r25p5", "Low"), ("r32p3", "Mid"), ("r42p5", "High")],
+             "coqa": [("r18p75", "Low"), ("r23p75", "Mid"), ("r31p25", "High")]}
+ARMS_V16 = {"vskipper": "Hyb", "integrated_alwaysskip": "Alw"}
 
 def counters(path):
     vp = json.load(open(path))["internal_states"][0]["vp_runtime"]
@@ -28,12 +33,15 @@ def counters(path):
             "overflow": c["fd_tokens_dense_overflow"], "passes": bc["decode_passes"]}
 
 def main():
-    ap = argparse.ArgumentParser(); ap.add_argument("--raw", required=True); ap.add_argument("--macros", required=True); ap.add_argument("--json")
+    ap = argparse.ArgumentParser(); ap.add_argument("--raw", required=True); ap.add_argument("--macros", required=True); ap.add_argument("--json"); ap.add_argument("--layout", default="v15", choices=["v15", "v16"])
     a = ap.parse_args(); out, macros = {}, []
+    global RUNGS, ARMS
+    prefix = "harvest"
+    if a.layout == "v16": RUNGS, ARMS, prefix = RUNGS_V16, ARMS_V16, "loaded"
     for ds, rungs in RUNGS.items():
         for rate, rw in rungs:
             for arm, aw in ARMS.items():
-                root = os.path.join(a.raw, f"harvest-{arm}-{ds}-{rate}")
+                root = os.path.join(a.raw, f"{prefix}-{arm}-{ds}-{rate}")
                 after = glob.glob(os.path.join(root, "cell", f"{ds}.qual_*_rep1.server_info.after.json"))
                 if len(after) != 1:
                     sys.exit(f"FATAL: {len(after)} attestation snapshots for {arm} {ds} {rate} under {root} (need exactly one)")

@@ -15,6 +15,11 @@ LABELS = {"gsm8k": [("r8p25", "0.75"), ("r10p45", "0.95"), ("r13p75", "1.25")],
 NAMES = {"gsm8k": "GSM8K", "bbh_cot": "BBH", "coqa": "CoQA"}   # one name per workload across every table; BBH is its CoT split, said once in the paper
 WORD = {"0.75": "Low", "0.95": "Mid", "1.25": "High"}
 MW = {"gsm8k": "Gsm", "bbh_cot": "Bbh", "coqa": "Coqa"}
+# [v1.6, D-824] ladder-control campaign: g1024 knees; upstream harvests under harvest-upstream_g1024-<ds>-<lbl>, the served arm's
+# own-stop cells under natural-vskipper-<ds>-<lbl> (bank.json made from the cell artifact with make_bank.py)
+LABELS_V16 = {"gsm8k": [("r9p75", "0.75"), ("r12p35", "0.95"), ("r16p25", "1.25")],
+              "bbh_cot": [("r25p5", "0.75"), ("r32p3", "0.95"), ("r42p5", "1.25")],
+              "coqa": [("r18p75", "0.75"), ("r23p75", "0.95"), ("r31p25", "1.25")]}
 
 def stats(path):
     L = list(json.load(open(path))["lengths"].values()); n = len(L)
@@ -22,11 +27,14 @@ def stats(path):
             "runaway_tok": sum(x for x in L if x >= 4096)}
 
 def main():
-    ap = argparse.ArgumentParser(); ap.add_argument("art"); ap.add_argument("--rows", required=True); ap.add_argument("--macros", required=True)
+    ap = argparse.ArgumentParser(); ap.add_argument("art"); ap.add_argument("--rows", required=True); ap.add_argument("--macros", required=True); ap.add_argument("--layout", default="v15", choices=["v15", "v16"])
     a = ap.parse_args(); rows = []; macros = []
+    global LABELS
+    up, served = "harvest-upstream-{ds}-{lbl}", "harvest-{ds}-{lbl}"
+    if a.layout == "v16": LABELS, up, served = LABELS_V16, "harvest-upstream_g1024-{ds}-{lbl}", "natural-vskipper-{ds}-{lbl}"
     for ds, labels in LABELS.items():
         for lbl, mult in labels:
-            u = os.path.join(a.art, f"harvest-upstream-{ds}-{lbl}", "bank.json"); s = os.path.join(a.art, f"harvest-{ds}-{lbl}", "bank.json")
+            u = os.path.join(a.art, up.format(ds=ds, lbl=lbl), "bank.json"); s = os.path.join(a.art, served.format(ds=ds, lbl=lbl), "bank.json")
             if not (os.path.exists(u) and os.path.exists(s)): raise SystemExit(f"missing bank for {ds} {lbl}: {u if not os.path.exists(u) else s}")
             U, S = stats(u), stats(s)
             rows.append(f"{NAMES[ds]} & {mult}$\\times$ & {U['n']} & {U['mean']:.0f} & {U['runaway']} ({100*U['runaway']/U['n']:.1f}\\%) & {U['sum']/1e6:.2f} & "

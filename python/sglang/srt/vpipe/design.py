@@ -75,6 +75,16 @@ SERVED_DECODE_KV_BAND_BY_DEVICE: Final[dict[str, tuple[int, int]]] = {
     "NVIDIA_A100": (160000, 200000),
     "NVIDIA_H100_HBM3": (270000, 340000),
     "NVIDIA_H100_NVL": (320000, 400000),
+    # [plan v3, 2026-09-16] hardware-generality rows, each the rule's output for the device's
+    # published peaks (device_roofline.json), asserted at boot and by the execution-difference
+    # gate: RTX 5880 Ada (960 GB/s -> V* = 78.2k) and the A100 40 GB SXM4 part (1,555 GB/s ->
+    # V* = 126.7k; keyed by memory class, roofline.band_device_key).
+    "NVIDIA_RTX_5880_Ada_Generation": (80000, 100000),
+    "NVIDIA_A100_40GB": (130000, 160000),
+    # [plan v4, 2026-09-16 22:4xZ] RTX A6000 (768 GB/s GDDR6 -> V* = 62.6k): the fourth hardware point.
+    "NVIDIA_RTX_A6000": (60000, 80000),
+    # [plan v4, 2026-09-16 23:2xZ] L40S (864 GB/s GDDR6 -> V* = 70.4k): the fourth hardware point (the A6000 box could not run the cu13 substrate).
+    "NVIDIA_L40S": (70000, 90000),
 }
 
 SERVED_LOW_ROW_POLICY: Final[str] = "off"
@@ -305,6 +315,36 @@ ARMS["vskipper_qwen3_4b_sharedband"] = {
     "decode_kv_band_policy": "shared",
 }
 
+# [D-830, 2026-09-16] The third model: FlexiDepth-Qwen3-8B, our alignment-only `ste_hard` checkpoint
+# (coef 2.5e-5; CloudLab d8545 campaign 2026-09-16, model of record = the last checkpoint that passed
+# the on-node quality gate, D-828). Same family port as Qwen3-4B (36 layers, routed 18..35, 8 K/V heads
+# x 128 = 4 KB/token/layer). `design_skip_ratio` = the chat-template skip the gate attested on the
+# served checkpoint (0.383 at step 5,000); `decode_kv_band` = the rule with this arm's inputs
+# (L_r = 18, s = 0.383, tau scaled 18/16): A100 V* = 206k -> 210k/260k; H100 HBM3 -> 360k/450k;
+# A100-40 -> 170k/210k. Asserted at boot; served GSM8K only (owner 18:5xZ), on the A100 node.
+ARMS["vskipper_qwen3_8b"] = {
+    "skipper": "flexidepth", "phases": "both", "regime_switch": True,
+    "gate_mode": "hard_mask", "compact": False, "routed_layers": tuple(range(18, 36)),
+    "weights_key": "flexidepth_weights_qwen3_8b", "design_skip_ratio": 0.383,
+    "decode_kv_band": {"NVIDIA_A100": (210000, 260000), "NVIDIA_H100_HBM3": (360000, 450000), "NVIDIA_A100_40GB": (170000, 210000)},
+}
+ARMS["vskipper_qwen3_8b_alwaysroute"] = {
+    "skipper": "flexidepth", "phases": "both", "regime_switch": False,
+    "gate_mode": "hard_mask", "compact": False, "routed_layers": tuple(range(18, 36)),
+    "weights_key": "flexidepth_weights_qwen3_8b", "design_skip_ratio": 0.383,
+}
+
+# [D-832 add., owner 2026-09-16 22:0xZ] The same model's checkpoint-7500 (chat skip 0.428; its 100-doc gate read gsm8k
+# -11 pp, inside the gate's noise): served under the rule "highest skip whose quality holds", decided by block B's full
+# lm-eval score at the knee. Band by the rule with s = 0.428: A100 180k/230k.
+ARMS["vskipper_qwen3_8b_s7500"] = {
+    **ARMS["vskipper_qwen3_8b"], "weights_key": "flexidepth_weights_qwen3_8b_s7500", "design_skip_ratio": 0.428,
+    "decode_kv_band": {"NVIDIA_A100": (180000, 230000), "NVIDIA_H100_HBM3": (320000, 400000), "NVIDIA_A100_40GB": (150000, 190000)},
+}
+ARMS["vskipper_qwen3_8b_s7500_alwaysroute"] = {
+    **ARMS["vskipper_qwen3_8b_alwaysroute"], "weights_key": "flexidepth_weights_qwen3_8b_s7500", "design_skip_ratio": 0.428,
+}
+
 # THE SKIP-RATE x DEPTH SWEEP (plan item 3; owner scope 2026-09-10: gsm8k only, ALL 12 points,
 # one rate, 3 reps, with the upstream anchor interleaved in the same session).
 #
@@ -349,7 +389,14 @@ def _rule_band(arm: Mapping[str, Any]) -> dict[str, tuple[int, int]]:
     """
     from sglang.srt.vpipe import roofline  # lazy: roofline reads this module's constants
 
-    return {"NVIDIA_A100": roofline.derived_kv_band("NVIDIA_A100", **roofline.arm_kv_rule_inputs(arm))}
+    inputs = roofline.arm_kv_rule_inputs(arm)
+    return {key: roofline.derived_kv_band(key, **inputs) for key in SERVED_DECODE_KV_BAND_BY_DEVICE}
+
+
+def _design_skip_ratio_default() -> float:
+    from sglang.srt.vpipe import roofline  # lazy: roofline reads this module's constants
+
+    return float(roofline.DESIGN_DECODE_SKIP_RATIO)
 
 
 def _mock_arm(rate: float, depth: float, **family: Any) -> dict[str, Any]:
@@ -382,6 +429,22 @@ def _mock_arm_ungated(rate: float, depth: float) -> dict[str, Any]:
     del arm["decode_kv_band"]
     return arm
 
+
+# [plan v4 item 7, 2026-09-16] The SHARED-BAND twins of the nine mock arms (Fig. 3b, the v1.4/v1.5 "fixed band" sweep):
+# every mock served under the FlexiDepth band (A100 160k/200k) instead of its own rule band -- a DECLARED deviation
+# (`decode_kv_band_policy: "shared"`, D-778 posture), so the map shows what serving a mock under the wrong band costs.
+def _mock_arm_sharedband(rate: float, depth: float) -> dict[str, Any]:
+    arm = _mock_arm(rate, depth)
+    arm["decode_kv_band"] = dict(SERVED_DECODE_KV_BAND_BY_DEVICE)
+    arm["decode_kv_band_policy"] = "shared"
+    return arm
+
+
+ARMS.update({
+    f"integrated_randomskip_r{int(rate * 100)}_d{int(depth * 100)}_sharedband": _mock_arm_sharedband(rate, depth)
+    for rate in _SWEEP_SKIP_RATES
+    for depth in _SWEEP_DEPTH_RATIOS
+})
 
 ARMS.update({
     f"integrated_randomskip_r{int(rate * 100)}_d{int(depth * 100)}_alwaysroute": _mock_arm_ungated(rate, depth)
@@ -468,6 +531,9 @@ def design_attestation() -> dict[str, Any]:
         "regime_switch": SERVED_REGIME_SWITCH,
         "low_row_policy": SERVED_LOW_ROW_POLICY,
         "routed_layers": list(arm_routed_layers()),
+        # [plan v3] the rule input the execution-difference gate needs to recompute this arm's
+        # band for the device it detects (FlexiDepth arms: the design ratio; mocks: rate x depth)
+        "design_skip_ratio": float(active_arm().get("design_skip_ratio", _design_skip_ratio_default())),
         "layer_policy": SERVED_LAYER_POLICY,
         "execution_mode": SERVED_EXECUTION_MODE,
         "compact_enabled": arm_compact_enabled(),

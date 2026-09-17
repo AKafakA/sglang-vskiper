@@ -1,0 +1,111 @@
+{
+  "_comment": "What the campaign's arms EXECUTE differently, declared BEFORE any paper cell (incident-graph-ladder-confound-20260916, rule 1). verify_execution_differences.py reads every arm's boot snapshot and refuses the campaign on any difference not listed here. Values are per arm; a field absent from an arm's entry must be equal across all arms.",
+  "fields_compared": [
+    "decode_ladder_top",
+    "decode_ladder_buckets",
+    "decode_ladder_bs",
+    "decode_graph_backend",
+    "decode_tc_compiler",
+    "prefill_graph_backend",
+    "prefill_graph_bs",
+    "kv_capacity_tokens",
+    "chunked_prefill_size",
+    "mem_fraction_static",
+    "dtype",
+    "attention_backend",
+    "sampling_backend",
+    "decode_kv_band"
+  ],
+  "tolerances": {
+    "kv_capacity_tokens_rel": 0.015
+  },
+  "declared": {
+    "upstream": {
+      "decode_ladder_top": 256,
+      "reason": "literal SGLang default ladder on 80 GB (T1 column)"
+    },
+    "upstream_g1024": {
+      "decode_ladder_top": 1024,
+      "reason": "same-ladder control: --cuda-graph-max-bs 1024 (T2 column, D-824)"
+    },
+    "vskipper": {
+      "decode_ladder_top": 1024,
+      "kv_capacity_tokens": "smaller_ok",
+      "reason": "design: the fork captures 4x max_bs (vpipe/common.py); its router/projector weights shrink the K/V pool by <1.5 % (against the treatment)",
+      "decode_kv_band": "rule"
+    },
+    "integrated_it4": {
+      "decode_ladder_top": 1024,
+      "kv_capacity_tokens": "smaller_ok",
+      "reason": "alias of vskipper",
+      "decode_kv_band": "rule"
+    },
+    "integrated_randomskip_r25_d25_sharedband": {
+      "decode_ladder_top": 1024,
+      "kv_capacity_tokens": "smaller_ok",
+      "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
+      "decode_kv_band": "shared"
+    },
+    "integrated_randomskip_r25_d50_sharedband": {
+      "decode_ladder_top": 1024,
+      "kv_capacity_tokens": "smaller_ok",
+      "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
+      "decode_kv_band": "shared"
+    },
+    "integrated_randomskip_r25_d75_sharedband": {
+      "decode_ladder_top": 1024,
+      "kv_capacity_tokens": "smaller_ok",
+      "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
+      "decode_kv_band": "shared"
+    },
+    "integrated_randomskip_r50_d25_sharedband": {
+      "decode_ladder_top": 1024,
+      "kv_capacity_tokens": "smaller_ok",
+      "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
+      "decode_kv_band": "shared"
+    },
+    "integrated_randomskip_r50_d50_sharedband": {
+      "decode_ladder_top": 1024,
+      "kv_capacity_tokens": "smaller_ok",
+      "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
+      "decode_kv_band": "shared"
+    },
+    "integrated_randomskip_r50_d75_sharedband": {
+      "decode_ladder_top": 1024,
+      "kv_capacity_tokens": "smaller_ok",
+      "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
+      "decode_kv_band": "shared"
+    },
+    "integrated_randomskip_r75_d25_sharedband": {
+      "decode_ladder_top": 1024,
+      "kv_capacity_tokens": "smaller_ok",
+      "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
+      "decode_kv_band": "shared"
+    },
+    "integrated_randomskip_r75_d50_sharedband": {
+      "decode_ladder_top": 1024,
+      "kv_capacity_tokens": "smaller_ok",
+      "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
+      "decode_kv_band": "shared"
+    },
+    "integrated_randomskip_r75_d75_sharedband": {
+      "decode_ladder_top": 1024,
+      "kv_capacity_tokens": "smaller_ok",
+      "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
+      "decode_kv_band": "shared"
+    },
+    "vskipper_qwen3_4b_sharedband": {
+      "decode_ladder_top": 1024,
+      "kv_capacity_tokens": "smaller_ok",
+      "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
+      "decode_kv_band": "shared"
+    }
+  },
+  "fork_default": {
+    "decode_ladder_top": 1024,
+    "kv_capacity_tokens": "smaller_ok",
+    "reason": "any arm served from the fork tree (RandomSkip sweep mocks, ablation arms, Qwen arms): the same coverage ladder as vskipper and the same router/projector HBM cost",
+    "decode_kv_band": "rule"
+  },
+  "_comment_decode_kv_band": "fork arms: 'rule' = the live regime-switch K/V band must equal roofline.derived_kv_band for the device the gate is told it runs on (per-device table SERVED_DECODE_KV_BAND_BY_DEVICE, every entry a rule output; A100 keyed by memory class); 'shared' = the arm attests decode_kv_band_policy shared (a declared deviation, D-778 Qwen posture). Absent for a fork arm = refused."
+}

@@ -1202,7 +1202,12 @@ def regime_switch_config(
         from sglang.srt.vpipe.design import SERVED_DECODE_KV_BAND_BY_DEVICE
         from sglang.srt.vpipe.kernel import canonical_device_key
 
-        key = canonical_device_key(torch.cuda.get_device_name(0))
+        from sglang.srt.vpipe.roofline import band_device_key
+
+        key = band_device_key(
+            canonical_device_key(torch.cuda.get_device_name(0)),
+            torch.cuda.get_device_properties(0).total_memory,
+        )
         # [v1.5] an arm may declare its own per-device band (a different checkpoint's rule inputs);
         # the boot assertion checks it against the rule with that arm's inputs.
         band = dict(active_arm().get("decode_kv_band", {})).get(key) or SERVED_DECODE_KV_BAND_BY_DEVICE.get(key)
