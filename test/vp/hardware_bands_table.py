@@ -11,7 +11,7 @@ HERE = os.path.dirname(os.path.abspath(__file__)); VP = os.path.join(HERE, "..",
 sys.path.insert(0, VP)
 import roofline  # noqa: E402
 
-NAMES = {"NVIDIA_A100": ("A100-SXM4-80GB (PCIe tuned)", "A100"), "NVIDIA_A100_40GB": ("A100-SXM4-40GB", "AHundredForty"),
+NAMES = {"NVIDIA_A100": ("A100-SXM4-80GB (PCIe tuned)", "AHundred"), "NVIDIA_A100_40GB": ("A100-SXM4-40GB", "AHundredForty"),
          "NVIDIA_H100_HBM3": ("H100 80\\,GB HBM3", "Hundred"), "NVIDIA_H100_NVL": ("H100 NVL", "HundredNvl"),
          "NVIDIA_RTX_A6000": ("RTX A6000 48\\,GB GDDR6", "Asix"), "NVIDIA_L40S": ("L40S 48\\,GB GDDR6", "Lforty"),
          "NVIDIA_RTX_5880_Ada_Generation": ("RTX 5880 Ada 48\\,GB", "Fivethousand")}
