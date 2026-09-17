@@ -16,6 +16,9 @@ KNEES=(--knee gsm8k=13 --knee bbh_cot=34 --knee coqa=25)   # g1024 knees, D-827 
 say(){ printf '\n=== %s ===\n' "$*"; }
 mkdir -p generated figures
 
+say "0  identity-preserved generated files carried from v1.5 (App. G attribution, attested skip, client equivalence, F1 probe, sweep V*) -> generated/"
+if [ -d $PACK/identity-preserved/paper-carried ]; then cp $PACK/identity-preserved/paper-carried/*.tex $PACK/identity-preserved/paper-carried/*.json generated/; echo "  carried $(ls $PACK/identity-preserved/paper-carried | grep -c -v README) files"; else echo "  (no paper-carried/ in the pack: the v1.5 identity-preserved macros must already be in generated/)"; fi
+
 say "1  node-computed analyses -> generated/ (paired report over 6 reps, latency map, graph coverage, cache share, engagement, loaded shares, natural lengths, suite, ladders)"
 for f in paired_report.json latency_map.json graph_coverage.json graph_coverage_macros.tex cache_share_macros.tex engagement_rows.tex engagement_macros.tex \
          loaded_shares.json loaded_shares_macros.tex natural_lengths_rows.tex natural_lengths_macros.tex suite_macros.tex ladder_rows.tex ladder_macros.tex; do
@@ -117,8 +120,13 @@ if [ -f $QL ]; then
   Q4=$PACK/identity-preserved/qwen-quality-ab-bf16
   # 6e2 native composite readings, one line per native run (the same rule as the served cells; never computed by hand): the 4B and 8B
   # A/B halves, plus the D-843 checkpoint-selection runs when the pack holds them (`qwen8b-selection/<label>/gsm8k`, skip shares in SKIPS).
-  SEL=$PACK/qwen8b-selection; RUNS="--run Qwen3-8B-base=$SEL/base/gsm8k"; SKIPS=""
-  [ -f $SEL/SKIPS.txt ] && for d in $SEL/*/gsm8k; do l=$(basename $(dirname $d)); [ "$l" = base ] && continue; RUNS="$RUNS --run $l=$d"; sk=$(grep "^$l=" $SEL/SKIPS.txt | cut -d= -f2); [ -n "$sk" ] && SKIPS="$SKIPS --skip $l=$sk"; done
+  # Each candidate also gets its SERVED knee reading (block B, the same scorer) beside the native one: the label `c<coef>-step<N>`
+  # maps to the fork arm `vskipper_qwen3_8b_c<coef>s<N>`; the base maps to the upstream cell. Macro stems spell the digits out.
+  SEL=$PACK/qwen8b-selection; RUNS="--run Qwen3-8B-base=$SEL/base/gsm8k --served Qwen3-8B-base=$QS:loaded-upstream_g1024-gsm8k_q8b-r13p3/ --macro-key Qwen3-8B-base=Base"; SKIPS=""
+  [ -f $SEL/SKIPS.txt ] && for d in $SEL/*/gsm8k; do l=$(basename $(dirname $d)); [ "$l" = base ] && continue; RUNS="$RUNS --run $l=$d"
+    arm=vskipper_qwen3_8b_$(echo $l | sed 's/-step/s/'); python3 -c "import json,sys; d=json.load(open('$QS'))['__per_row__']; sys.exit(0 if any('loaded-$arm-gsm8k_q8b-r13p3/' in k for k in d) else 1)" && RUNS="$RUNS --served $l=$QS:loaded-$arm-gsm8k_q8b-r13p3/"
+    key=$(echo $l | sed 's/c1e4/CoefOneEFour/; s/c5e5/CoefFiveEFive/; s/c25e6/CoefTwoFiveESix/; s/-step10000/StepTenK/; s/-step8750/StepEightK/; s/-step7500/StepSevenK/; s/-step5000/StepFiveK/; s/[^A-Za-z]//g'); RUNS="$RUNS --macro-key $l=$key"
+    sk=$(grep "^$l=" $SEL/SKIPS.txt | cut -d= -f2); [ -n "$sk" ] && SKIPS="$SKIPS --skip $l=$sk"; done
   python3 $VP/native_composite.py $RUNS $SKIPS --base Qwen3-8B-base --rows generated/qwen_native_rows.tex --macros generated/qwen_native_macros.tex --macro-prefix vpNatQ --json generated/qwen_native.json | tail -n 6
   python3 $VP/paired_dod_2x2_v16.py --dataset gsm8k --arm A=$Q4/qwen_base/gsm8k --arm B=$Q4/qwen_fd/gsm8k --scores $QL --cell-c "loaded-upstream_g1024-gsm8k_q4b-r16p15/" --cell-d "loaded-vskipper_qwen3_4b_alwaysroute-gsm8k_q4b-r16p15/" --margin 1.0 --latex generated/qwen_quality_rows.tex --macros generated/qwen_quality_macros.tex --macro-prefix vpQwenFour --json generated/paired_dod_qwen4b.json | tail -1
   python3 $VP/paired_dod_2x2_v16.py --dataset gsm8k --arm A=$SEL/base/gsm8k --arm B=$SEL/c5e5-step10000/gsm8k --scores $QS --cell-c "loaded-upstream_g1024-gsm8k_q8b-r13p3/" --cell-d "loaded-${Q8ARM}_alwaysroute-gsm8k_q8b-r13p3/" --margin 1.0 --latex generated/qwen_quality_rows.tex --macros generated/qwen_quality_macros.tex --macro-prefix vpQwenEight --json generated/paired_dod_qwen8b.json | tail -1
