@@ -33,7 +33,7 @@ def main():
         tflops, bw = roofline.device_peaks(key); v = roofline.kv_crossover_tokens(key); rule = roofline.derived_kv_band(key)
         if rule != (exit_t, enter_t): sys.exit(f"FATAL {key}: table band {(exit_t, enter_t)} is not the rule's {rule}")
         name, mac = NAMES.get(key, (key.replace("_", " "), re.sub(r"[^A-Za-z]", "", key)))
-        knee = knees.get(key, "--"); mark = "\\checkmark" if key in used else ""
+        knee = knees.get(key, "--"); mark = "yes" if key in used else ""
         rows.append(f"{name} & {bw:,.0f} & {tflops:,.0f} & {v/1e3:.1f}k & {exit_t//1000}k / {enter_t//1000}k & {knee} & {mark} \\\\")
         macros += [f"\\newcommand{{\\vpBand{mac}Exit}}{{{exit_t//1000}}}", f"\\newcommand{{\\vpBand{mac}Enter}}{{{enter_t//1000}}}", f"\\newcommand{{\\vpBand{mac}Vstar}}{{{v/1e3:.1f}}}", f"\\newcommand{{\\vpBand{mac}Bw}}{{{bw:,.0f}}}"]
     macros += [f"\\newcommand{{\\vpBandTauMs}}{{{roofline.DECODE_BODY_TAX_MS}}}", f"\\newcommand{{\\vpBandSkipRatio}}{{{roofline.DESIGN_DECODE_SKIP_RATIO}}}", f"\\newcommand{{\\vpBandEnterFactor}}{{{roofline.KV_BAND_ENTER_FACTOR}}}"]
