@@ -16,6 +16,9 @@ KNEES=(--knee gsm8k=13 --knee bbh_cot=34 --knee coqa=25)   # g1024 knees, D-827 
 say(){ printf '\n=== %s ===\n' "$*"; }
 mkdir -p generated figures
 
+say "0  identity-preserved generated files carried from v1.5 (App. G attribution, attested skip, client equivalence, F1 probe, sweep V*) -> generated/"
+if [ -d $PACK/identity-preserved/paper-carried ]; then cp $PACK/identity-preserved/paper-carried/*.tex $PACK/identity-preserved/paper-carried/*.json generated/; echo "  carried $(ls $PACK/identity-preserved/paper-carried | grep -c -v README) files"; else echo "  (no paper-carried/ in the pack: the v1.5 identity-preserved macros must already be in generated/)"; fi
+
 say "1  node-computed analyses -> generated/ (paired report over 6 reps, latency map, graph coverage, cache share, engagement, loaded shares, natural lengths, suite, ladders)"
 for f in paired_report.json latency_map.json graph_coverage.json graph_coverage_macros.tex cache_share_macros.tex engagement_rows.tex engagement_macros.tex \
          loaded_shares.json loaded_shares_macros.tex natural_lengths_rows.tex natural_lengths_macros.tex suite_macros.tex ladder_rows.tex ladder_macros.tex; do
