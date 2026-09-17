@@ -345,6 +345,24 @@ ARMS["vskipper_qwen3_8b_s7500_alwaysroute"] = {
     **ARMS["vskipper_qwen3_8b_alwaysroute"], "weights_key": "flexidepth_weights_qwen3_8b_s7500", "design_skip_ratio": 0.428,
 }
 
+# [D-840/D-843, 2026-09-17] Penalty-tuning arms warm-started from checkpoint-7500 (owner: skip > 0.5 with quality held):
+# PENALTY 4e-4 (coef 1e-4) at steps 8750 / 10000 and PENALTY 2e-4 (coef 5e-5) at 10000. `design_skip_ratio` = the chat-template
+# skip the on-node gate attested; bands by the rule (L_r = 18, tau scaled 18/16). Which one the paper serves is decided by the
+# native composite GSM8K score (base - 10 pp) then the served knee cell -- D-843.
+for _tag, _s, _bands in (
+    ("c1e4s10000", 0.516, {"NVIDIA_A100": (150000, 190000), "NVIDIA_H100_HBM3": (260000, 330000), "NVIDIA_A100_40GB": (120000, 150000)}),
+    ("c1e4s8750", 0.481, {"NVIDIA_A100": (160000, 200000), "NVIDIA_H100_HBM3": (280000, 350000), "NVIDIA_A100_40GB": (130000, 160000)}),
+    ("c5e5s10000", 0.445, {"NVIDIA_A100": (180000, 220000), "NVIDIA_H100_HBM3": (310000, 380000), "NVIDIA_A100_40GB": (140000, 180000)}),
+):
+    ARMS[f"vskipper_qwen3_8b_{_tag}"] = {
+        **ARMS["vskipper_qwen3_8b"], "weights_key": f"flexidepth_weights_qwen3_8b_{_tag}", "design_skip_ratio": _s,
+        "decode_kv_band": dict(_bands),
+    }
+    ARMS[f"vskipper_qwen3_8b_{_tag}_alwaysroute"] = {
+        **ARMS["vskipper_qwen3_8b_alwaysroute"], "weights_key": f"flexidepth_weights_qwen3_8b_{_tag}", "design_skip_ratio": _s,
+    }
+del _tag, _s, _bands
+
 # THE SKIP-RATE x DEPTH SWEEP (plan item 3; owner scope 2026-09-10: gsm8k only, ALL 12 points,
 # one rate, 3 reps, with the upstream anchor interleaved in the same session).
  
