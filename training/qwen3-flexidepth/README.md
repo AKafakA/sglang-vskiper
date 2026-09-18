@@ -37,7 +37,7 @@ bin/segment_chain.sh q8b-ste-c25e6 /path/FlexiDepth-Qwen3-8B-init-sealed-ste 1e-
 bin/consolidate_w4.sh q8b-ste-c25e6 q8b-ste-c25e6-w4 7500
 ```
 
-Environment: `/mydata/venvs/training` (torch 2.8.0+cu128, transformers 4.57.0, trl 0.23.1; the CSD3 lock `528dabc4…`),
+Environment: `/mydata/venvs/training` (torch 2.8.0+cu128, transformers 4.57.0, trl 0.23.1; the cluster lock `528dabc4…`),
 OpenMPI 4.1.2, driver 615.71.09 on the node. The two served checkpoints are on the Hub in one repository,
 `asdwb/vskip-flexidepth-qwen-3` (`qwen3-4b/` = step 20,000 of the 4B run, `qwen3-8b/` = step 10,000 of `q8b-ste-c5e5-from7500`), each as a
 full export with its gate JSON, the selection record (`selection_native_composite.json`, `served_knee_lmeval_score.json`) and the router

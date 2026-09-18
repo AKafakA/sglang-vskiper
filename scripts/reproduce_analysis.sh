@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # v1.6 regeneration (2026-09-17, D-824/D-833): every headline number from the LADDER-CONTROL campaign (baseline = upstream SGLang
 # with --cuda-graph-max-bs 1024, the same decode-graph ladder the fork captures; D-824). The raw cells live on the A100 node and
-# CSD3 (openclaw has no room for the 13 GB mirror), so the raw-dependent analyses ran ON THE NODE (analysis_bundle_v16.sh, harness
+# the cluster mirror (the hub has no room for the 13 GB mirror), so the raw-dependent analyses ran ON THE NODE (analysis_bundle_v16.sh, harness
 # a5a61bf215) and this script consumes their outputs from the v1.6 data home; the report-driven steps run here as in regenerate.sh.
 #   ./regenerate_v16.sh            # perf tables/macros/figures + quality tables from the block-B lm-eval scores
 set -euo pipefail
@@ -45,7 +45,7 @@ H=$EV/h100-500w/ladder/h100_gsm8k/paired_report.upstream_g1024__vskipper.json
 A6=$AN/rtxa6000/paired_report.upstream_g128__vskipper.json   # 48 GB card: the same-ladder control is upstream_g128 (D-824 on this device)
 [ -f $A6 ] && python3 $VP/paper_table.py $A6 --knee gsm8k=$(cat $AN/rtxa6000/qstar.txt) --emit --columns main --dataset-label "RTX A6000" --macros generated/a6000_macros.tex --macro-prefix vpAsix > generated/a6000_rows.tex && echo "  A6000: $(grep -c '\\\\' generated/a6000_rows.tex) rows" || echo "  A6000 row pending"
 
-say "3b ladders of the transfer devices (rung logs pulled from the CSD3 mirror)"
+say "3b ladders of the transfer devices (rung logs pulled from the raw mirror)"
 LH=$EV/h100-500w/ladder/ladder-gsm8k-upstream_g1024; rm -f generated/ladder_h100_rows.tex generated/ladder_h100_macros.tex
 [ -d $LH ] && python3 $VP/ladder_table.py h100_gsm8k=$LH --knee h100_gsm8k=14 --rows generated/ladder_h100_rows.tex --macros generated/ladder_h100_macros.tex | tail -1
 # v1.7 body: the compact transfer table (means only), H100 then RTX A6000, without the n column
