@@ -15,8 +15,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 TOOL = ROOT / "vskipper/src/vskipper/analysis/paper_table.py"
-COLUMNS = ["TTFT p50", "TTFT mean", "TTFT p99", "TPOT p50", "TPOT mean", "TPOT p99",
-           "E2E p50", "E2E mean", "E2E p99", "output TPS"]
+COLUMNS = ["TTFT p50", "TTFT mean", "TTFT p95", "TTFT p99",
+           "TPOT p50", "TPOT mean", "TPOT p95", "TPOT p99",
+           "E2E p50", "E2E mean", "E2E p95", "E2E p99", "makespan", "output TPS"]
 
 
 def _report(path: Path, datasets=(("gsm8k", 11.0), ("bbh_cot", 25.0)), drop=None) -> Path:

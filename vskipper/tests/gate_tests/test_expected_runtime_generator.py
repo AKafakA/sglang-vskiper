@@ -79,7 +79,8 @@ def test_it_reproduces_the_four_expectations_that_already_existed():
 
 
 def test_all_twelve_sweep_arms_are_covered():
-    sweep = [a for a in tool.ARMS if a.startswith("integrated_randomskip_")]
+    import re
+    sweep = [a for a in tool.ARMS if re.fullmatch(r"integrated_randomskip_r\d+_d\d+", a)]
     assert len(sweep) == 12
     for arm in sweep:
         assert tool.expectation(arm)["runtime"]["served_design"]["skipper"] == "deterministic_mock"

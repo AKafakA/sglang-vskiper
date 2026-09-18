@@ -185,15 +185,17 @@ def test_a_plateau_wide_band_is_REFUSED_even_though_a_rung_grew():
     bottom-rung guards both passed it as "BRACKETED, contiguous". Acting on that would have
     pinned every coqa cell deep in overload."""
     knee, blockers = q.verdict(_COQA_FLAT)
-    assert knee == 27, "the growth rule still reads 27 off this curve"
+    # D-827 requires sustained growth: rung 27's isolated blip no longer
+    # establishes a knee. Both the climb and bottom-rung guards reject it.
+    assert knee == 22, "an isolated blip must not become a sustained-growth knee"
     assert any("never climbed" in b for b in blockers), blockers
 
 
-def test_the_bottom_rung_guard_alone_cannot_catch_it():
-    """Rung 27 genuinely grew, so the knee is not the bottom rung and that guard stays silent.
-    Recording this because it is exactly why a second, independent guard was needed."""
+def test_sustained_growth_also_exposes_the_bottom_rung():
+    """The sustained-growth rule rejects the isolated blip before bracketing."""
     _, blockers = q.verdict(_COQA_FLAT)
-    assert not any("BOTTOM RUNG" in b for b in blockers), blockers
+    assert any("BOTTOM RUNG" in b for b in blockers), blockers
+    assert any("never climbed" in b for b in blockers), blockers
 
 
 def test_a_real_climb_is_not_refused():

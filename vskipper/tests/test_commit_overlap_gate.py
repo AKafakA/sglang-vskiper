@@ -10,6 +10,8 @@ inert flag is the attested-but-not-running class (R6).
 CPU-safe: validator calls with injected environ mappings only.
 """
 import sys
+from contextlib import ExitStack
+from unittest.mock import patch
 
 from vskipper.runtime.validation import validate_full_graph_model_configuration
 
@@ -35,11 +37,27 @@ DEFER_POSTURE = {
 
 def call(env, label):
     try:
-        validate_full_graph_model_configuration(
-            loaded_layers=ROUTED, loaded_flexidepth_layers=ROUTED,
-            tp_size=1, pp_size=1, quant_config=None, environ=env,
-            cuda_graph_enabled=True,
-        )
+        from vskipper.runtime import design, validation
+        # Exercise the dependency guards as unit seams. Overlap and batched
+        # commit are pinned off in serving; their real readers are checked below.
+        with ExitStack() as stack:
+            stack.enter_context(patch.dict(design._ARM_CACHE, name="vskipper"))
+            stack.enter_context(patch.object(design, "_host", return_value={
+                "flexidepth_weights": "/fixture/router.pt",
+                "conditional_graph_helper": "/fixture/helper.so",
+            }))
+            for reader, key in (
+                ("full_graph_defer_project_kv_enabled", "SGLANG_FD_FULL_GRAPH_DEFER_PROJECT_KV"),
+                ("full_graph_commit_overlap_enabled", "SGLANG_FD_FULL_GRAPH_COMMIT_OVERLAP"),
+                ("full_graph_batched_commit_enabled", "SGLANG_FD_FULL_GRAPH_BATCHED_COMMIT"),
+            ):
+                stack.enter_context(patch.object(validation, reader,
+                    side_effect=lambda values, key=key: values.get(key) == "1"))
+            validate_full_graph_model_configuration(
+                loaded_layers=ROUTED, loaded_flexidepth_layers=ROUTED,
+                tp_size=1, pp_size=1, quant_config=None, environ=env,
+                cuda_graph_enabled=True,
+            )
         return ("no-raise", label)
     except Exception as e:
         return (f"{type(e).__name__}: {str(e)[:110]}", label)
@@ -178,3 +196,13 @@ def test_commit_overlap_startup_gate():
         "partial capacity coverage must be refused at startup, not at capture"
     assert outcomes["M contiguous with full coverage"] == "no-raise", \
         "full capacity coverage must boot"
+
+
+def test_retired_commit_modes_cannot_be_enabled_by_environment():
+    from vskipper.runtime.config import (
+        full_graph_commit_overlap_enabled, full_graph_batched_commit_enabled,
+    )
+    for values in ({}, {"SGLANG_FD_FULL_GRAPH_COMMIT_OVERLAP": "1",
+                       "SGLANG_FD_FULL_GRAPH_BATCHED_COMMIT": "1"}):
+        assert full_graph_commit_overlap_enabled(values) is False
+        assert full_graph_batched_commit_enabled(values) is False

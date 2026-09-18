@@ -50,7 +50,8 @@ def _build(tmp: Path, reps: int, *, gated: bool = True, scale=lambda r: 0.90,
 
 
 def _run(out: Path, *extra: str) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, str(TOOL), str(out), *extra],
+    return subprocess.run([sys.executable, str(TOOL), str(out),
+                           "--treatment", "integrated_it4", *extra],
                           capture_output=True, text=True)
 
 

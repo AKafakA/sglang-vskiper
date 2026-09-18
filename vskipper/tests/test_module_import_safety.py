@@ -125,6 +125,16 @@ def _ordered_loads(stmt, outer_bound):
     bad = []
 
     def visit(node, scope):
+        if isinstance(node, (ast.For, ast.AsyncFor)):
+            visit(node.iter, scope)
+            inner = set(scope) | set(_targets(node.target))
+            for sub in node.body:
+                visit(sub, inner)
+                inner |= module_level_bindings(ast.Module(body=[sub], type_ignores=[]))
+            # Loop targets exist in the body, but the loop may run zero times.
+            for sub in node.orelse:
+                visit(sub, set(scope))
+            return
         if isinstance(node, ast.Lambda):
             a = node.args
             inner = set(scope)
@@ -253,6 +263,24 @@ def unbound_module_level_names(path):
             bad.append((name, lineno))
         bound |= module_level_bindings(sub)
     return sorted(set(bad))
+
+
+def test_tuple_loop_targets_are_bound_inside_body(tmp_path):
+    source = tmp_path / "loop.py"
+    source.write_text("for name, value in [('x', 1)]:\n    result = {name: value}\n")
+    assert unbound_module_level_names(source) == []
+
+
+def test_loop_targets_do_not_hide_an_unbound_iterable(tmp_path):
+    source = tmp_path / "loop.py"
+    source.write_text("for item in item:\n    result = item\n")
+    assert unbound_module_level_names(source) == [("item", 1)]
+
+
+def test_empty_loop_does_not_bind_following_load(tmp_path):
+    source = tmp_path / "loop.py"
+    source.write_text("for item in []:\n    pass\nresult = item\n")
+    assert unbound_module_level_names(source) == [("item", 3)]
 
 
 def module_paths():

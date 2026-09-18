@@ -215,6 +215,15 @@ REGIME_JSON = json.dumps(
 )
 
 
+def _typed_regime_fixture(raw=REGIME_JSON):
+    """Construct the dispatch unit fixture without the retired env-config API."""
+    import msgspec
+    from vskipper.runtime.common import RegimeSwitchConfig
+    config = msgspec.json.decode(raw, type=RegimeSwitchConfig)
+    config.validate()
+    return config
+
+
 def _phase_fb(*, decode: bool, coverage: bool, w1_decode_dense: bool = False):
     mode = SimpleNamespace(
         is_decode=lambda: decode,
@@ -239,9 +248,9 @@ def test_phase_enabled_truth_table(monkeypatch, w1_on, stamped, decode) -> None:
 
     monkeypatch.setenv("SGLANG_FD_ACTIVE_PHASES", "both")
     if w1_on:
-        monkeypatch.setenv("SGLANG_VP_REGIME_SWITCH", REGIME_JSON)
-    else:
         monkeypatch.delenv("SGLANG_VP_REGIME_SWITCH", raising=False)
+    else:
+        monkeypatch.setenv("SGLANG_VP_REGIME_SWITCH", "off")
     fb = _phase_fb(decode=decode, coverage=stamped)
     result = flexidepth_phase_enabled(fb)
     if decode and stamped:
@@ -343,7 +352,7 @@ def test_seam_observe_is_level_triggered_idempotent_in_state() -> None:
         DecodeRegimeDispatch,
     )
 
-    cfg = regime_switch_config({"SGLANG_VP_REGIME_SWITCH": REGIME_JSON})
+    cfg = _typed_regime_fixture()
     dispatch = DecodeRegimeDispatch(cfg)
     # Enter high, then double-observe the same rows (seam + load_batch): the
     # BAND STATE cannot double-advance (F22 — level-triggered, idempotent in
@@ -362,92 +371,32 @@ def test_seam_observe_is_level_triggered_idempotent_in_state() -> None:
     assert dispatch.observe(1024) == "skip"
 
 
-def test_fused_evidence_allows_both_phases_and_attests_its_scope() -> None:
-    """Lane-2 cut3 item 4 (D-359): the fused evidence kernel is decode-layout and
-    row-capped, so the mode is chosen per PASS. A both-phase deployment is therefore
-    legal, must still have decode active, and must say in the attestation that two
-    evidence definitions coexist."""
-    import pytest
-
-    from vskipper.runtime.validation import (
-        validate_full_graph_model_configuration,
-    )
-
-    base = {
-        "SGLANG_FD_EXECUTION_MODE": "full_graph",
+@pytest.mark.parametrize("phases", ["both", "decode", "prefill"])
+def test_fused_evidence_is_disabled_in_the_served_design(phases) -> None:
+    """D-609 pins this former gate-only mode off for every serving phase."""
+    from vskipper.runtime.config import full_graph_fused_evidence_enabled
+    assert full_graph_fused_evidence_enabled({}) is False
+    assert full_graph_fused_evidence_enabled({
         "SGLANG_FD_FULL_GRAPH_FUSED_EVIDENCE": "1",
-        "SGLANG_FD_FULL_GRAPH_ROUTE_ACCOUNTING": "1",
-        "SGLANG_FD_FULL_GRAPH_LAYER_COUNTERS": "1",
-        "SGLANG_FD_FULL_GRAPH_DEVICE_ROUTE_TAPE": "1",
-        "SGLANG_FD_FULL_GRAPH_DEVICE_ROUTE_DIGEST": "1",
-        "SGLANG_FD_FULL_GRAPH_SCHEDULER_CONVERGENCE": "1",
-        "SGLANG_FD_FULL_GRAPH_COMPACT": "1",
-    }
-
-    def check(phases):
-        env = dict(base, SGLANG_FD_ACTIVE_PHASES=phases)
-        routed = list(range(16, 32))
-        validate_full_graph_model_configuration(
-            loaded_layers=routed,
-            loaded_flexidepth_layers=routed,
-            tp_size=1,
-            pp_size=1,
-            quant_config=None,
-            environ=env,
-        )
-
-    # both phases is now legal (it was refused before this cut)
-    check("both")
-    check("decode")
-    # ... but decode must be active, or the fused path could never run
-    with pytest.raises(ValueError):
-        check("prefill")
+        "SGLANG_FD_ACTIVE_PHASES": phases,
+    }) is False
 
 
-def test_native_dense_low_row_policy_is_unbounded_and_attested() -> None:
-    """Lane-2 cut3 item 1 (D-358): `native_dense` is the serving arm's routed-MLP
-    posture — the model's own dense feed-forward at EVERY occupancy. It carries no
-    row bound (setting one is refused) and says so in the attestation."""
+def test_low_row_policy_is_fixed_off_and_rejects_overrides() -> None:
+    """D-609 fixes the serving policy to off; old body overrides fail closed."""
     import pytest
 
     from vskipper.runtime.attestation import low_row_policy_attestation
     from vskipper.runtime.common import full_graph_low_row_policy
 
-    policy, max_rows = full_graph_low_row_policy(
-        {"SGLANG_FD_FULL_GRAPH_LOW_ROW_POLICY": "native_dense"}
-    )
-    assert policy == "native_dense"
-    assert max_rows >= 4096, "native_dense must cover every capturable bucket"
-
-    # A row bound contradicts the policy and is refused rather than ignored.
-    with pytest.raises(ValueError):
-        full_graph_low_row_policy(
-            {
-                "SGLANG_FD_FULL_GRAPH_LOW_ROW_POLICY": "native_dense",
-                "SGLANG_FD_FULL_GRAPH_LOW_ROW_MAX_ROWS": "32",
-            }
-        )
-    # The bounded policy still behaves exactly as before.
-    bounded_policy, bounded_rows = full_graph_low_row_policy(
-        {
-            "SGLANG_FD_FULL_GRAPH_LOW_ROW_POLICY": "full_dual",
-            "SGLANG_FD_FULL_GRAPH_LOW_ROW_MAX_ROWS": "31",
-        }
-    )
-    assert (bounded_policy, bounded_rows) == ("full_dual", 31)
-    # An unknown policy name is still refused.
-    with pytest.raises(ValueError):
-        full_graph_low_row_policy(
-            {"SGLANG_FD_FULL_GRAPH_LOW_ROW_POLICY": "dense_everywhere"}
-        )
-
-    block = low_row_policy_attestation(policy, max_rows)
-    assert block["policy"] == "native_dense"
-    assert block["enabled"] is True
-    assert block["applies_to_all_rows"] is True
-    assert block["routed_mlp_kernels"] == "model_native_dense_only"
-    assert block["physical_work"] == "dense_and_project_all_graph_rows"
-    assert block["flop_savings_claim_allowed"] is False
+    assert full_graph_low_row_policy({}) == "off"
+    assert full_graph_low_row_policy({"SGLANG_FD_FULL_GRAPH_LOW_ROW_POLICY": "off"}) == "off"
+    for policy in ("native_dense", "full_dual", "dense_everywhere"):
+        with pytest.raises(ValueError, match="not configurable"):
+            full_graph_low_row_policy({"SGLANG_FD_FULL_GRAPH_LOW_ROW_POLICY": policy})
+    block = low_row_policy_attestation("off")
+    assert block["policy"] == "off" and block["enabled"] is False
+    assert block["active_phases"] == []
 
 
 def test_decode_regime_kv_criterion_keys_on_resident_tokens() -> None:
@@ -464,7 +413,7 @@ def test_decode_regime_kv_criterion_keys_on_resident_tokens() -> None:
     base["decode"].update(
         {"enabled": True, "enter_kv_tokens": 200_000, "exit_kv_tokens": 160_000}
     )
-    cfg = regime_switch_config({"SGLANG_VP_REGIME_SWITCH": json.dumps(base)})
+    cfg = _typed_regime_fixture(json.dumps(base))
     assert cfg.decode.kv_criterion
     dispatch = DecodeRegimeDispatch(cfg)
     # 512 rows x 256 tokens = 131k KV tokens: below the band -> low body even
@@ -477,14 +426,14 @@ def test_decode_regime_kv_criterion_keys_on_resident_tokens() -> None:
     with pytest.raises(ValueError):
         dispatch.observe(300)  # kv criterion needs seq_lens_sum
     # Rows criterion (0/0) still ignores kv_tokens.
-    rows_cfg = regime_switch_config({"SGLANG_VP_REGIME_SWITCH": REGIME_JSON})
+    rows_cfg = _typed_regime_fixture()
     if rows_cfg.decode.enabled:
         rows_dispatch = DecodeRegimeDispatch(rows_cfg)
         assert rows_dispatch.observe(300, 1) == "skip"
     bad = json.loads(REGIME_JSON)
     bad["decode"].update({"enabled": True, "enter_kv_tokens": 100, "exit_kv_tokens": 0})
     with pytest.raises(ValueError):
-        regime_switch_config({"SGLANG_VP_REGIME_SWITCH": json.dumps(bad)})
+        _typed_regime_fixture(json.dumps(bad))
 
 
 def test_cdopt_corrected_legality_padded_bucket_premise() -> None:
@@ -616,6 +565,8 @@ def test_kill_switch_env_strict_parse_and_default_on() -> None:
 
 
 def test_production_consults_zero_new_state(monkeypatch) -> None:
+    from vskipper.runtime import design
+    monkeypatch.setitem(design._ARM_CACHE, "name", "stock")
     monkeypatch.delenv("SGLANG_FD_WEIGHTS", raising=False)
     monkeypatch.delenv("SGLANG_FD_EXECUTION_MODE", raising=False)
     reset_coverage_dense_state()

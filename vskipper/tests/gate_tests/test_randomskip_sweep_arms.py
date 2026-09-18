@@ -11,6 +11,7 @@ transposed point would silently become a hole in the published curve.
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
 
 import pytest
@@ -27,7 +28,8 @@ def _design():
 
 
 design = _design()
-SWEEP = {k: v for k, v in design.ARMS.items() if k.startswith("integrated_randomskip_")}
+SWEEP = {k: v for k, v in design.ARMS.items()
+         if re.fullmatch(r"integrated_randomskip_r\d+_d\d+", k)}
 
 
 def test_the_grid_is_complete_and_has_exactly_twelve_points():

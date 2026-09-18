@@ -7,6 +7,7 @@ The JSON contract supplies exact staged trees, assets and archive hashes.
 from __future__ import annotations
 
 import argparse
+import csv
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import importlib.util
@@ -96,6 +97,71 @@ def native_rows(path):
                all(type(t) is int and t >= 0 for t in r['prompt']) for r in rows):
         raise ValueError(f'invalid frozen token inputs: {path}')
     return rows
+
+
+def control_test_overlay(control, candidate, results):
+    """Run repaired test fixtures against the unchanged frozen control runtime.
+
+    Preserve the original baseline failure report. Only the enumerated tests
+    change here; runtime directories are links to the hash-verified control.
+    Each repair is taken from the committed candidate, with layout/import
+    translations recorded separately from the actual fixture repair.
+    """
+    repaired = (
+        'test_shared_module_state.py', 'test_module_import_safety.py',
+        'test_commit_overlap_gate.py', 'test_execution_mode_gate.py',
+        'test_coverage_dense.py', 'test_prefill_cublas_branch.py',
+        'gate_tests/test_arm_fields.py', 'gate_tests/test_expected_runtime_generator.py',
+        'gate_tests/test_paired_analysis.py', 'gate_tests/test_paired_campaign_workgate.py',
+        'gate_tests/test_paper_table.py', 'gate_tests/test_qstar_int.py',
+        'gate_tests/test_quality_lane_token_identity.py',
+        'gate_tests/test_randomskip_sweep_arms.py',
+    )
+    overlay = results / 'control-test-overlay'
+    overlay.mkdir()
+    for entry in control.iterdir():
+        if entry.name != 'test':
+            (overlay / entry.name).symlink_to(entry, target_is_directory=entry.is_dir())
+    (overlay / 'test').mkdir()
+    for entry in (control / 'test').iterdir():
+        if entry.name != 'vp':
+            (overlay / 'test' / entry.name).symlink_to(entry, target_is_directory=entry.is_dir())
+    shutil.copytree(control / 'test/vp', overlay / 'test/vp', symlinks=True)
+    with (candidate / 'vskipper/docs/relocation-ledger.tsv').open() as stream:
+        moves = [(row['new_path'], row['old_path']) for row in csv.DictReader(stream, delimiter='\t')
+                 if row['new_path'] and row['new_path'] != '-']
+    translations = sorted(moves, key=lambda pair: len(pair[0]), reverse=True) + [
+        ('vskipper/src/vskipper/runtime', 'python/sglang/srt/vpipe'),
+        ('vskipper/src/vskipper/kernels', 'python/sglang/srt/vpipe'),
+        ('vskipper/src/vskipper/integration/sglang', 'python/sglang/srt/vpipe'),
+        ('vskipper/src/vskipper/integration', 'python/sglang/srt/vpipe'),
+        ('vskipper/src/vskipper/experiments', 'test/vp'),
+        ('vskipper/src/vskipper/analysis', 'test/vp'),
+        ('vskipper.runtime', 'sglang.srt.vpipe'),
+        ('vskipper.kernels', 'sglang.srt.vpipe'),
+        ('vskipper.integration.sglang', 'sglang.srt.vpipe'),
+        ('/ "vskipper" / "src" / "vskipper"', '/ "python" / "sglang" / "srt" / "vpipe"'),
+        ('VP.parents[3]', 'VP.parents[1]'),
+    ]
+    records = []
+    for name in repaired:
+        source = candidate / 'vskipper/tests' / name
+        target = overlay / 'test/vp' / name
+        if target.is_symlink() or not target.resolve().is_relative_to(overlay.resolve()):
+            raise RuntimeError(f'test overlay target escapes its new directory: {target}')
+        original = source.read_text()
+        adapted = original
+        applied = []
+        for new, old in translations:
+            if new in adapted:
+                adapted = adapted.replace(new, old)
+                applied.append([new, old])
+        target.write_text(adapted)
+        records.append({'test': name, 'original_control_sha256': sha(control / 'test/vp' / name),
+                        'committed_fixture_sha256': sha(source), 'adapted_fixture_sha256': sha(target),
+                        'layout_translations': applied})
+    save(results / 'control-fixture-adaptations.json', records)
+    return overlay
 
 
 def test_env(tree, contract):
@@ -314,32 +380,14 @@ def main():
                     raise RuntimeError('shared checkpoint or input assets changed between sources')
             status['phase'] = f'{label}: tests'
             save(results / 'status.json', status)
-            tests = [str(tree / prefix / p) for p in c['required_tests']]
-            if label == 'control':
-                # The frozen control's script passes None to a runner API and
-                # fails during collection. Use the committed repaired fixture,
-                # changing only its import namespace; keep the control intact.
-                fixture = Path(c['candidate']['tree']) / 'vskipper/tests/test_shared_module_state.py'
-                original = fixture.read_text()
-                old_import = 'from vskipper.runtime import cohort, kv_commit, coverage, attestation'
-                if original.count(old_import) != 1:
-                    raise RuntimeError('shared-state fixture import adapter is ambiguous')
-                adapted = results / label / 'test_shared_module_state.py'
-                adapted.write_text(original.replace(old_import,
-                    'from sglang.srt.vpipe import cohort, kv_commit, coverage, attestation'))
-                tests[tests.index(str(tree / prefix / 'test_shared_module_state.py'))] = str(adapted)
-                save(results / label / 'fixture-adaptation.json', {
-                    'reason': 'frozen control passes None to the armed runner API',
-                    'original_control_sha256': sha(tree / prefix / 'test_shared_module_state.py'),
-                    'committed_fixture_sha256': sha(fixture),
-                    'adapted_fixture_sha256': sha(adapted),
-                    'change': 'import namespace only; identical assertions on both runtime trees',
-                })
+            test_tree = (control_test_overlay(tree, Path(c['candidate']['tree']), results)
+                         if label == 'control' else tree)
+            tests = [str(test_tree / prefix / p) for p in c['required_tests']]
             if label == 'candidate':
                 tests.append(str(tree / prefix / 'test_source_layout.py'))
             run([sys.executable, '-m', 'pytest', *tests, '-q',
                  '--junitxml=' + str(results / label / 'tests.xml')],
-                results / label / 'tests.log', test_env(tree, c), tree, 3600)
+                results / label / 'tests.log', test_env(test_tree, c), test_tree, 3600)
             run([sys.executable, str(tree / prefix / 'test_package_imports.py')],
                 results / label / 'imports.log', env, tree)
             if scope == 'tests-only':

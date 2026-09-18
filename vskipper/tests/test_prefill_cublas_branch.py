@@ -69,7 +69,9 @@ def test_cublas_branch_matches_triton_and_reference(monkeypatch, rows, run_frac)
     w = torch.rand(rows, 1, device=dev, generator=g).to(dtype)
     run_mask = torch.rand(rows, 1, device=dev, generator=g) < run_frac
     with torch.no_grad():
-        ref = vp_mlp._full_dual_mlp(layer, proj, h, w, run_mask)
+        # Independent dense reference for the removed test-only helper: both
+        # branches compute all rows, then select the route and its weight.
+        ref = torch.where(run_mask, w * layer.mlp(h), (1 - w) * proj(h))
         before = dict(vp_mlp._BINARY_COHORT_CUBLAS_PASSES)
         triton = vp_mlp._binary_cohort_mlp(layer, proj, h, w, run_mask, None).clone()
         assert dict(vp_mlp._BINARY_COHORT_CUBLAS_PASSES) == before, "Triton path must not count cuBLAS passes"

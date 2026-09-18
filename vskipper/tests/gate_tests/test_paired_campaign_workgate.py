@@ -61,7 +61,7 @@ def build(tmp_path: Path, base: list[tuple[int, int]], treat: list[tuple[int, in
 def test_equal_work_passes(tmp_path):
     same = [(10, 20), (11, 21), (12, 22)]
     spec, rates = build(tmp_path, same, list(same))
-    failed = driver.cross_arm_work_gate(spec, "gsm8k", rates, 1, tmp_path)
+    failed = driver.cross_arm_work_gate(spec, "gsm8k", rates, 1, tmp_path, "integrated_it4")
     assert failed == [], f"identical work must pass, got {failed}"
 
 
@@ -70,7 +70,7 @@ def test_unequal_output_lens_is_REFUSED(tmp_path):
     base = [(10, 20), (11, 21), (12, 22)]
     treat = [(10, 20), (11, 21), (12, 999)]        # one request does different work
     spec, rates = build(tmp_path, base, treat)
-    failed = driver.cross_arm_work_gate(spec, "gsm8k", rates, 1, tmp_path)
+    failed = driver.cross_arm_work_gate(spec, "gsm8k", rates, 1, tmp_path, "integrated_it4")
     assert failed == ["r11p25"], f"unequal work must REFUSE the rate, got {failed}"
 
 
@@ -79,7 +79,7 @@ def test_the_gate_actually_ran_and_left_its_verdict(tmp_path):
     while still 'failing' the rate, which looks identical to a real refusal from the log."""
     same = [(10, 20), (11, 21)]
     spec, rates = build(tmp_path, same, list(same))
-    driver.cross_arm_work_gate(spec, "gsm8k", rates, 1, tmp_path)
+    driver.cross_arm_work_gate(spec, "gsm8k", rates, 1, tmp_path, "integrated_it4")
     verdicts = list((tmp_path / "rep1" / "gsm8k").glob("workgate_*.json"))
     assert verdicts, "the gate wrote no verdict file -- it did not really run"
 
@@ -91,5 +91,5 @@ def test_a_missing_arm_artifact_fails_rather_than_skips(tmp_path):
     spec, rates = build(tmp_path, same, list(same))
     for p in (tmp_path / "rep1" / "gsm8k" / "integrated_it4" / "cells").glob("*.jsonl"):
         p.unlink()
-    failed = driver.cross_arm_work_gate(spec, "gsm8k", rates, 1, tmp_path)
+    failed = driver.cross_arm_work_gate(spec, "gsm8k", rates, 1, tmp_path, "integrated_it4")
     assert failed == ["r11p25"], f"a missing artifact must fail the rate, got {failed}"

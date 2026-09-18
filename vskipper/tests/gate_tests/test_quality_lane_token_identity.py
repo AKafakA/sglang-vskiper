@@ -13,6 +13,7 @@ that string is what needs protecting."""
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[3]
 DRIVER = (ROOT / "vskipper/src/vskipper/experiments/run_lmeval_quality.py").read_text()
@@ -23,9 +24,22 @@ def _code(text: str) -> str:
 
 
 def test_served_arms_get_token_ids_not_text():
-    code = _code(DRIVER)
-    assert "tokenized_requests=True" in code, "lm-eval must tokenize client-side and send ids"
-    assert "tokenized_requests=False" not in code, "the server-side text path re-adds BOS (D-724)"
+    from run_lmeval_quality import _lmeval_command
+
+    args = SimpleNamespace(lmeval_python="python", base_url="http://localhost:8000",
+                           tokenizer="fixture-tokenizer", num_concurrent=2,
+                           output_dir=Path("fixture-output"))
+    raw = _lmeval_command(args, "gsm8k", "raw_completion")
+    raw_options = raw[raw.index("--model_args") + 1]
+    assert "tokenized_requests=True" in raw_options
+    assert "tokenized_requests=False" not in raw_options
+    assert raw[raw.index("--model") + 1] == "local-completions"
+    # Chat endpoints accept message dictionaries and apply the shared template;
+    # the completion-only token-ID contract must not be applied to that API.
+    chat = _lmeval_command(args, "gsm8k", "chat_messages")
+    assert "tokenized_requests=False" in chat[chat.index("--model_args") + 1]
+    assert chat[chat.index("--model") + 1] == "local-chat-completions"
+    assert "--apply_chat_template" in chat and "--fewshot_as_multiturn" in chat
 
 
 def test_hf_arms_do_not_add_bos_either():
