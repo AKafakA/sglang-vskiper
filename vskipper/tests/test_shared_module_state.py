@@ -15,6 +15,8 @@ Identity is the only check that catches this class. Run as a script; exits
 non-zero on failure.
 """
 import sys
+from types import SimpleNamespace
+from unittest.mock import patch
 
 failures = []
 
@@ -62,7 +64,14 @@ else:
 
 # The end-to-end assertion: build the real attestation block AFTER the reset and
 # confirm it carries the post-reset write. This is what F2 actually broke.
-blk = attestation.coverage_dense_runtime_attestation(None)
+runner_fixture = SimpleNamespace(
+    decode_cuda_graph_runner=None,
+    req_to_token_pool=SimpleNamespace(size=32),
+    server_args=SimpleNamespace(disable_cuda_graph_padding=False),
+)
+with patch.object(attestation, "coverage_dense_armed", return_value=True):
+    blk = attestation.coverage_dense_runtime_attestation(runner_fixture)
+assert blk is not None, "armed attestation must expose shared counters"
 if blk is None:
     print("  NOTE  attestation block is None in this posture (not armed); "
           "accessor identity above still covers the fix")
@@ -81,6 +90,11 @@ same(coverage._c3_counters, coverage.coverage_dense_counters(),
      "coverage._c3_counters is what the accessor returns")
 
 print("SHARED STATE:", "PASS" if not failures else f"FAIL {failures}")
+
+
+def test_shared_module_state():
+    assert not failures, failures
+
 
 if __name__ == "__main__":
     sys.exit(0 if not failures else 1)

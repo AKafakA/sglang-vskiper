@@ -249,10 +249,19 @@ def main():
         raise TimeoutError(f'allocation ending: signal {signum}')
     signal.signal(signal.SIGTERM, terminate)
     c = json.loads(args.contract.read_text())
+    scope = c.get('validation_scope', 'listed-cases')
+    if scope not in ('tests-only', 'listed-cases'):
+        raise ValueError(f'unknown validation scope: {scope}')
+    case_names = [case['name'] for case in c['cases']]
+    if not case_names or len(case_names) != len(set(case_names)):
+        raise ValueError('validation requires nonempty distinct case names')
     results = Path(c['results'])
     results.mkdir(parents=True, exist_ok=False)
     save(results / 'contract.json', c)
-    status = {'status': 'running', 'job_id': os.environ['SLURM_JOB_ID']}
+    status = {'status': 'running', 'job_id': os.environ['SLURM_JOB_ID'],
+              'validation_scope': scope, 'listed_cases': case_names,
+              'control_commit': c['control']['commit'],
+              'candidate_commit': c['candidate']['commit']}
     try:
         status['phase'] = 'dependency preflight'
         save(results / 'status.json', status)
@@ -305,14 +314,36 @@ def main():
                     raise RuntimeError('shared checkpoint or input assets changed between sources')
             status['phase'] = f'{label}: tests'
             save(results / 'status.json', status)
-            run([sys.executable, str(tree / prefix / 'test_package_imports.py')],
-                results / label / 'imports.log', env, tree)
             tests = [str(tree / prefix / p) for p in c['required_tests']]
+            if label == 'control':
+                # The frozen control's script passes None to a runner API and
+                # fails during collection. Use the committed repaired fixture,
+                # changing only its import namespace; keep the control intact.
+                fixture = Path(c['candidate']['tree']) / 'vskipper/tests/test_shared_module_state.py'
+                original = fixture.read_text()
+                old_import = 'from vskipper.runtime import cohort, kv_commit, coverage, attestation'
+                if original.count(old_import) != 1:
+                    raise RuntimeError('shared-state fixture import adapter is ambiguous')
+                adapted = results / label / 'test_shared_module_state.py'
+                adapted.write_text(original.replace(old_import,
+                    'from sglang.srt.vpipe import cohort, kv_commit, coverage, attestation'))
+                tests[tests.index(str(tree / prefix / 'test_shared_module_state.py'))] = str(adapted)
+                save(results / label / 'fixture-adaptation.json', {
+                    'reason': 'frozen control passes None to the armed runner API',
+                    'original_control_sha256': sha(tree / prefix / 'test_shared_module_state.py'),
+                    'committed_fixture_sha256': sha(fixture),
+                    'adapted_fixture_sha256': sha(adapted),
+                    'change': 'import namespace only; identical assertions on both runtime trees',
+                })
             if label == 'candidate':
                 tests.append(str(tree / prefix / 'test_source_layout.py'))
             run([sys.executable, '-m', 'pytest', *tests, '-q',
                  '--junitxml=' + str(results / label / 'tests.xml')],
                 results / label / 'tests.log', test_env(tree, c), tree, 3600)
+            run([sys.executable, str(tree / prefix / 'test_package_imports.py')],
+                results / label / 'imports.log', env, tree)
+            if scope == 'tests-only':
+                continue
             status['phase'] = f'{label}: serving'
             save(results / 'status.json', status)
             # A control failure ends the job before candidate execution.
@@ -340,6 +371,9 @@ def main():
                             raise RuntimeError(f'wheel resource missing or changed: {resource}')
                 save(results / 'wheel-resources.json', {'wheel_sha256': sha(wheel_files[0]),
                                                        'verified_resources': resources})
+        if scope == 'tests-only':
+            status.update(status='pass', phase='tests complete; serving/package checks separate')
+            return
         for label in ('control', 'candidate'):
             pack = Path(c[label]['pack'])
             run(['bash', str(pack / 'reproduce_results.sh'), str(results / f'{label}-reproduction')],
