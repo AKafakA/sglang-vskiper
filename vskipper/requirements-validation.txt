@@ -1,0 +1,5 @@
+# Isolated test tools; install with --no-deps --target, never into serving env.
+# packaging and pygments are supplied by the frozen serving environment.
+pytest==8.4.2
+pluggy==1.6.0
+iniconfig==2.1.0

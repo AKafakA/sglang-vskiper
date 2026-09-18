@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Submit on the assigned GPU cluster with the account/partition supplied to sbatch.
-# Arguments: CONTRACT_JSON SERVING_ENV COMPILER_ROOT
+# Arguments: CONTRACT_JSON SERVING_ENV COMPILER_ROOT [NEW_TEST_TOOLS_DIRECTORY]
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
@@ -28,5 +28,10 @@ export NVCC_PREPEND_FLAGS=-DCCCL_DISABLE_CTK_COMPATIBILITY_CHECK
 export PYTHONDONTWRITEBYTECODE=1 HF_HUB_OFFLINE=1
 export TRITON_CACHE_DIR="$(dirname -- "$CONTRACT")/triton-cache"
 export TORCHINDUCTOR_CACHE_DIR="$(dirname -- "$CONTRACT")/torchinductor-cache"
+if [ -n "${4:-}" ]; then
+    test ! -e "$4"
+    "$SERVING_ENV/bin/python" -m pip install --no-deps --target "$4" \
+        -r "$(dirname -- "$CONTRACT")/candidate/vskipper/requirements-validation.txt"
+fi
 # Slurm copies this batch script; the contract's sibling candidate is the pinned source.
 exec "$SERVING_ENV/bin/python" "$(dirname -- "$CONTRACT")/candidate/vskipper/scripts/validate_reference.py" "$CONTRACT"

@@ -15,6 +15,7 @@ import math
 import os
 from pathlib import Path
 import signal
+import shutil
 import socket
 import subprocess
 import sys
@@ -95,6 +96,21 @@ def native_rows(path):
                all(type(t) is int and t >= 0 for t in r['prompt']) for r in rows):
         raise ValueError(f'invalid frozen token inputs: {path}')
     return rows
+
+
+def test_env(tree, contract):
+    env = source_env(tree)
+    if contract.get('test_tools'):
+        directory = Path(contract['test_tools'])
+        allowed = {'pytest', '_pytest', 'pluggy', 'iniconfig', 'bin', '__pycache__'}
+        for entry in directory.iterdir():
+            if entry.name in allowed:
+                continue
+            if entry.name.endswith('.dist-info') and entry.name.split('-')[0] in allowed:
+                continue
+            raise ValueError(f'unexpected package in isolated test tools: {entry.name}')
+        env['PYTHONPATH'] += os.pathsep + str(directory)
+    return env
 
 
 def probe(url, rows, concurrency, tokenizer, out):
@@ -238,6 +254,25 @@ def main():
     save(results / 'contract.json', c)
     status = {'status': 'running', 'job_id': os.environ['SLURM_JOB_ID']}
     try:
+        status['phase'] = 'dependency preflight'
+        save(results / 'status.json', status)
+        analysis_env = dict(os.environ)
+        if c.get('analysis_environment'):
+            analysis_env['PATH'] = str(Path(c['analysis_environment']) / 'bin') + os.pathsep + analysis_env['PATH']
+        analysis_python = shutil.which('python3', path=analysis_env['PATH'])
+        if not analysis_python:
+            raise RuntimeError('analysis Python is missing')
+        run([analysis_python, '-c',
+             'import sys,numpy,matplotlib; assert sys.version_info[:2] == (3,12); '
+             'print(sys.version); print(numpy.__version__,matplotlib.__version__)'],
+            results / 'analysis-environment.txt', analysis_env, results, 120)
+        for label in ('control', 'candidate'):
+            tree = Path(c[label]['tree'])
+            run([sys.executable, '-c',
+                 'import pytest,pluggy,iniconfig,packaging,pygments,setuptools,wheel; '
+                 'print("pytest",pytest.__version__,pytest.__file__); '
+                 'print("pluggy",pluggy.__version__,pluggy.__file__)'],
+                results / f'{label}-test-dependencies.txt', test_env(tree, c), tree, 120)
         for label in ('control', 'candidate'):
             if sha(c[label]['archive']) != c[label]['archive_sha256']:
                 raise ValueError(f'{label}: source archive checksum mismatch')
@@ -268,12 +303,6 @@ def main():
             if label == 'candidate':
                 if {str(Path(p).resolve()): sha(p) for p in sorted(assets)} != asset_hashes:
                     raise RuntimeError('shared checkpoint or input assets changed between sources')
-            status['phase'] = f'{label}: serving'
-            save(results / 'status.json', status)
-            # A control boot/probe failure ends the job before candidate execution.
-            for case in c['cases']:
-                print('SERVE', label, case['name'], flush=True)
-                serve(c, label, case, results)
             status['phase'] = f'{label}: tests'
             save(results / 'status.json', status)
             run([sys.executable, str(tree / prefix / 'test_package_imports.py')],
@@ -283,7 +312,13 @@ def main():
                 tests.append(str(tree / prefix / 'test_source_layout.py'))
             run([sys.executable, '-m', 'pytest', *tests, '-q',
                  '--junitxml=' + str(results / label / 'tests.xml')],
-                results / label / 'tests.log', env, tree, 3600)
+                results / label / 'tests.log', test_env(tree, c), tree, 3600)
+            status['phase'] = f'{label}: serving'
+            save(results / 'status.json', status)
+            # A control failure ends the job before candidate execution.
+            for case in c['cases']:
+                print('SERVE', label, case['name'], flush=True)
+                serve(c, label, case, results)
             if label == 'candidate':
                 wheels = results / 'wheel-build'
                 wheels.mkdir()
@@ -305,9 +340,6 @@ def main():
                             raise RuntimeError(f'wheel resource missing or changed: {resource}')
                 save(results / 'wheel-resources.json', {'wheel_sha256': sha(wheel_files[0]),
                                                        'verified_resources': resources})
-        analysis_env = dict(os.environ)
-        if c.get('analysis_environment'):
-            analysis_env['PATH'] = str(Path(c['analysis_environment']) / 'bin') + os.pathsep + analysis_env['PATH']
         for label in ('control', 'candidate'):
             pack = Path(c[label]['pack'])
             run(['bash', str(pack / 'reproduce_results.sh'), str(results / f'{label}-reproduction')],
