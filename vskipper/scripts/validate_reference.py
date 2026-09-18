@@ -102,7 +102,7 @@ def test_env(tree, contract):
     env = source_env(tree)
     if contract.get('test_tools'):
         directory = Path(contract['test_tools'])
-        allowed = {'pytest', '_pytest', 'pluggy', 'iniconfig', 'wheel', 'bin', '__pycache__'}
+        allowed = {'pytest', '_pytest', 'py.py', 'pluggy', 'iniconfig', 'wheel', 'bin', '__pycache__'}
         for entry in directory.iterdir():
             if entry.name in allowed:
                 continue
