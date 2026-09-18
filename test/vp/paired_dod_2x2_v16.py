@@ -44,6 +44,7 @@ def main():
     ap.add_argument("--scores", required=True); ap.add_argument("--cell-c", required=True); ap.add_argument("--cell-d", required=True)
     ap.add_argument("--margin", type=float, default=None); ap.add_argument("--latex"); ap.add_argument("--macros"); ap.add_argument("--json"); ap.add_argument("--macro-prefix", default="vpQ")
     ap.add_argument("--no-filter-col", action="store_true", help="omit the filter column (the paper names the filters in a table note)")
+    ap.add_argument("--no-gate-col", action="store_true", help="omit the pass/unresolved verdict column (v1.7 rc6: the 1-pp margin is an internal planning gate, not a paper column)")
     a = ap.parse_args()
     arms = dict(x.split("=", 1) for x in a.arm)
     A, B = load_arm(arms["A"], a.dataset), load_arm(arms["B"], a.dataset)
@@ -67,7 +68,8 @@ def main():
     gate = gate.replace("unresolved (crosses $-\\epsilon$)", "unresolved")
     filt = "" if a.no_filter_col else f"{METRIC_LABEL[a.dataset]} & "
     row = (f"{DISP[a.dataset]} & {filt}{m['A']:.2f} & {m['B']:.2f} & {m['C']:.2f} & {m['D']:.2f} & "
-           f"{rep['B_minus_A']['mean_pp']:+.2f} & {rep['D_minus_C']['mean_pp']:+.2f} & {z['mean_pp']:+.2f} $\\pm$ {z['ci95_half_pp']:.2f} & {gate} \\\\")
+           f"{rep['B_minus_A']['mean_pp']:+.2f} & {rep['D_minus_C']['mean_pp']:+.2f} & {z['mean_pp']:+.2f} $\\pm$ {z['ci95_half_pp']:.2f}"
+           + ("" if a.no_gate_col else f" & {gate}") + " \\\\")
     macros = [f"\\newcommand{{\\{P}{mac}BminusA}}{{{rep['B_minus_A']['mean_pp']:+.2f}}}", f"\\newcommand{{\\{P}{mac}DminusC}}{{{rep['D_minus_C']['mean_pp']:+.2f}}}",
               f"\\newcommand{{\\{P}{mac}Dod}}{{{z['mean_pp']:+.2f}}}", f"\\newcommand{{\\{P}{mac}DodCi}}{{{z['ci95_half_pp']:.2f}}}",
               f"\\newcommand{{\\{P}{mac}Ndocs}}{{{len(common):,}}}", f"\\newcommand{{\\{P}{mac}ArmD}}{{{m['D']/100:.4f}}}", f"\\newcommand{{\\{P}{mac}ArmC}}{{{m['C']/100:.4f}}}",
