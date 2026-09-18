@@ -48,6 +48,7 @@ def main() -> int:
     ap.add_argument("--occupancy", action="append", default=[], help="label=occupancy.json for that sweep")
     ap.add_argument("--suite", default="gsm8k_eqw_r10p45"); ap.add_argument("--device", default="NVIDIA_A100")
     ap.add_argument("--png", type=Path, required=True); ap.add_argument("--rows", type=Path, required=True); ap.add_argument("--macros", type=Path, required=True)
+    ap.add_argument("--no-occupancy-bars", action="store_true", help="v1.7 rc6 (owner): draw the points only, no crossover-to-occupancy bars")
     a = ap.parse_args()
     sweeps = {k: load_map(Path(v), a.suite) for k, v in (x.split("=", 1) for x in a.sweep)}
     if "ungated" in sweeps:   # step 10b twins: integrated_randomskip_r{r}_d{d}_alwaysroute -> the grid arm's key
@@ -110,20 +111,21 @@ def main() -> int:
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
     # v1.7: no per-point r/d text (the table carries the arm mapping), legend above the axes, larger figure; the horizontal bar
     # from a shared-band point runs from the arm's crossover V* to the occupancy its cell held (a relation, not an error bar).
-    fig, ax = plt.subplots(figsize=(5.0, 2.8), dpi=200)
+    fig, ax = plt.subplots(figsize=(5.0, 3.0), dpi=200)
     style = {"ungated": dict(marker="^", color="#7f7f7f", label="always route (a)"), "fixed": dict(marker="o", color="#c0392b", label="shared band (b)"), "rule": dict(marker="s", color="#1f77b4", label="per-policy band (c)")}
     for label, pts in points.items():
-        ax.scatter([p[0] / 1e3 for p in pts], [p[1] for p in pts], s=30, zorder=3, edgecolor="black", linewidth=0.4, **style[label])
-        if label == "fixed":
+        ax.scatter([p[0] / 1e3 for p in pts], [p[1] for p in pts], s=46, zorder=3, edgecolor="black", linewidth=0.5, alpha=0.9, **style[label])
+        if label == "fixed" and not a.no_occupancy_bars:
             for v_, dl, p90, arm in pts:
                 if p90:
                     ax.plot([v_ / 1e3, p90 / 1e3], [dl, dl], color="#c0392b", lw=0.8, alpha=0.5, zorder=2)
                     ax.plot([p90 / 1e3], [dl], marker="|", color="#c0392b", ms=7, alpha=0.8, zorder=2)
-    ax.axhline(0, color="k", lw=0.6); ax.set_xscale("log")
+    ax.axhline(0, color="k", lw=0.6); ax.set_xscale("log"); ax.margins(y=0.12)
     from matplotlib.ticker import FixedLocator, FixedFormatter
     ax.xaxis.set_major_locator(FixedLocator([100, 200, 300, 500, 1000, 1500])); ax.xaxis.set_major_formatter(FixedFormatter(["100k", "200k", "300k", "500k", "1M", "1.5M"])); ax.xaxis.set_minor_locator(FixedLocator([]))
-    ax.set_xlabel("rule crossover $V^*$ (resident K/V tokens); bar to the cell's own occupancy"); ax.set_ylabel("E2E mean change (%)")
-    ax.legend(fontsize=7, frameon=False, loc="lower center", bbox_to_anchor=(0.5, 1.01), ncol=3, borderaxespad=0.0); ax.tick_params(labelsize=7); ax.xaxis.label.set_size(7.5); ax.yaxis.label.set_size(7.5); ax.grid(alpha=0.25)
+    ax.set_xlabel("rule crossover $V^*$ (resident K/V tokens)" + ("" if a.no_occupancy_bars else "; bar to the cell's own occupancy")); ax.set_ylabel("E2E mean change (%)")
+    fs = 9 if a.no_occupancy_bars else 7
+    ax.legend(fontsize=fs, frameon=False, loc="lower center", bbox_to_anchor=(0.5, 1.01), ncol=3, borderaxespad=0.0); ax.tick_params(labelsize=fs); ax.xaxis.label.set_size(fs + 0.5); ax.yaxis.label.set_size(fs + 0.5); ax.grid(alpha=0.25)
     fig.tight_layout(); fig.savefig(a.png); print(f"{len(lines)} arms; fixed: {len(above)} above their occupancy ({sum(1 for p in above if p[1] > 0)} lost), {len(below)} below ({sum(1 for p in below if p[1] < 0)} won) -> {a.png}")
     return 0
 
