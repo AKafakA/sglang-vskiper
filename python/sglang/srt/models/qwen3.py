@@ -36,9 +36,9 @@ from sglang.srt.models.utils import apply_qk_norm
 from sglang.srt.runtime_context import get_flags, get_parallel
 from sglang.srt.server_args import get_global_server_args
 from sglang.srt.utils import add_prefix, get_bool_env_var, is_cuda, is_hip, is_npu
-from sglang.srt.vpipe import seam as vp_seam
-from sglang.srt.vpipe.attention import fd_attention_qkv_full_graph
-from sglang.srt.vpipe.env import FD_EXECUTION_FULL_GRAPH
+from vskipper.integration.sglang import seam as vp_seam
+from vskipper.runtime.attention import fd_attention_qkv_full_graph
+from vskipper.runtime.env import FD_EXECUTION_FULL_GRAPH
 
 Qwen3Config = None
 

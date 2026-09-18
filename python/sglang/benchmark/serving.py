@@ -41,7 +41,7 @@ from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
 from sglang.benchmark.datasets import DatasetRow, get_dataset
 from sglang.benchmark.datasets.mooncake import get_mooncake_request_over_time
-from sglang.benchmark.request_identity import (
+from vskipper.experiments.request_identity import (
     SGLANG_IDENTITY_BACKENDS,
     SGLANG_NATIVE_BACKENDS,
     attach_stable_sglang_rid,

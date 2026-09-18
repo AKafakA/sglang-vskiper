@@ -62,21 +62,21 @@ from sglang.srt.model_executor.runner.base_cuda_graph_runner import (
     freeze_gc,
 )
 from sglang.srt.model_executor.runner.shape_key import ShapeKey
-from sglang.srt.vpipe.design import flexidepth_weights_path, skipper_deployed
-from sglang.srt.vpipe.common import (
+from vskipper.runtime.design import flexidepth_weights_path, skipper_deployed
+from vskipper.runtime.common import (
     flexidepth_active_phases,
     flexidepth_execution_mode,
     regime_switch_config,
 )
-from sglang.srt.vpipe.env import FD_EXECUTION_FULL_GRAPH
-from sglang.srt.vpipe.regime import (
+from vskipper.runtime.env import FD_EXECUTION_FULL_GRAPH
+from vskipper.runtime.regime import (
     PREFILL_BODY_DENSE,
     PREFILL_BODY_FD,
     PrefillEngagementTracker,
     prefill_regime_decision,
 )
-from sglang.srt.vpipe.attestation import _BINARY_COHORT_STATS
-from sglang.srt.vpipe.seam import _vp_regime_prefill_mixed_running_bs
+from vskipper.runtime.attestation import _BINARY_COHORT_STATS
+from vskipper.integration.sglang.seam import _vp_regime_prefill_mixed_running_bs
 # [R2, 2026-09-07] `_vp_cohort_totals()` (a synchronous `.cpu()` of the
 # binary-cohort counters at the start of every pass after a routed pass) is
 # retired: the same readings are taken by PrefillEngagementTracker as
@@ -109,10 +109,10 @@ from sglang.srt.utils import (
     require_attn_tp_gather,
     require_mlp_tp_gather,
 )
-from sglang.srt.vpipe.attestation import (
+from vskipper.runtime.attestation import (
     full_graph_capture_synthetic_request_ids,
 )
-from sglang.srt.vpipe.config import (
+from vskipper.runtime.config import (
     full_graph_request_identity_required,
 )
 

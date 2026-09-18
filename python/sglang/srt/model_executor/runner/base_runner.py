@@ -53,7 +53,7 @@ from sglang.srt.utils import (
     require_gathered_buffer,
     require_mlp_tp_gather,
 )
-from sglang.srt.vpipe.config import (
+from vskipper.runtime.config import (
     full_graph_request_identity_required,
 )
 

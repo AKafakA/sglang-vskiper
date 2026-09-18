@@ -46,7 +46,7 @@ from sglang.srt.utils import (
     require_mlp_tp_gather,
 )
 from sglang.srt.utils.async_probe import maybe_detect_nan, maybe_detect_oob
-from sglang.srt.vpipe.config import (
+from vskipper.runtime.config import (
     full_graph_request_identity_required,
 )
 

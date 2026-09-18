@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 import torch
 
 from sglang.srt.model_executor.input_buffers import share_input_buffer
-from sglang.srt.vpipe.config import (
+from vskipper.runtime.config import (
     full_graph_request_identity_required,
 )
 

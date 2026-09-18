@@ -3795,7 +3795,7 @@ class Scheduler(
 
     def get_internal_state(self, recv_req: GetInternalStateReq):
         ret = dict(vars(get_global_server_args()))  # vars returns a ref to obj.__dict__
-        from sglang.srt.vpipe.attestation import (
+        from vskipper.runtime.attestation import (
             scheduler_runtime_attestation,
         )
 

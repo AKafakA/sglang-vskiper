@@ -35,7 +35,7 @@ from sglang.srt.model_executor.forward_batch_info import (
     compute_local_num_token_non_padded,
 )
 from sglang.srt.model_executor.input_buffers import ForwardInputBuffers
-from sglang.srt.vpipe.config import (
+from vskipper.runtime.config import (
     full_graph_request_identity_required,
 )
 

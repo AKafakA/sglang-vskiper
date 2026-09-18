@@ -7,7 +7,7 @@ FlashInfer is faster and Triton is easier to customize.
 Each backend supports two operators: extend (i.e. prefill with cached prefix) and decode.
 """
 
-from sglang.srt.vpipe.attestation import (
+from vskipper.runtime.attestation import (
     vp_runtime_enabled,
 )
 from sglang.srt.runtime_context import get_parallel

@@ -82,7 +82,7 @@ def resolve_decode_backend(
 
         return FullXPUGraphBackend(cuda_graph_runner)
 
-    from sglang.srt.vpipe.attestation import (
+    from vskipper.runtime.attestation import (
         full_graph_conditional_graph_enabled,
     )
 
@@ -91,7 +91,7 @@ def resolve_decode_backend(
             raise ValueError(
                 "FlexiDepth conditional graphs require the full decode backend"
             )
-        from sglang.srt.vpipe.graph_backend import (
+        from vskipper.integration.sglang.graph_backend import (
             FlexiDepthConditionalCudaGraphBackend,
         )
 

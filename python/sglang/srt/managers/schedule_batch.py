@@ -68,7 +68,7 @@ from sglang.srt.disaggregation.decode_schedule_batch_mixin import (
 from sglang.srt.disaggregation.utils import FAKE_BOOTSTRAP_HOST, DisaggregationMode
 from sglang.srt.distributed.parallel_state import get_tensor_model_parallel_rank
 from sglang.srt.dllm.mixin.req import ReqDllmMixin
-from sglang.srt.vpipe.attestation import (
+from vskipper.runtime.attestation import (
     ReqVPMixin,
 )
 from sglang.srt.environ import envs

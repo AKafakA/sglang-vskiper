@@ -98,12 +98,12 @@ def get_batch_sizes_to_capture(
     # decode batch above the CLI default max_bs falls to the eager path (the
     # D-414/D-416 T1-vs-T2 gap). Decode runner only (one token per row).
     if requested_tokens_per_bs == 1:
-        from sglang.srt.vpipe.common import (
+        from vskipper.runtime.common import (
             coverage_capture_bs,
             vp_decode_coverage_max_bs,
             vp_decode_coverage_target,
         )
-        from sglang.srt.vpipe.env import _VP_DECODE_COVERAGE
+        from vskipper.runtime.env import _VP_DECODE_COVERAGE
 
         target = vp_decode_coverage_target(model_runner)
         if target is not None:

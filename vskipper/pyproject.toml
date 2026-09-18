@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vskipper"
+version = "0.1.0"
+description = "Graph-compatible conditional-depth serving integration for the mirrored SGLang fork"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"vskipper.runtime" = ["*.json"]
+"vskipper.kernels" = ["binary_cohort_configs/*.json", "csrc/*.cu"]
+"vskipper.experiments" = ["*.json", "*.sh", "bbh_cot_fewshot/*", "gates/*.json", "gates/*.sh"]

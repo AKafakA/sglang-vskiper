@@ -55,13 +55,13 @@ from sglang.srt.model_loader.weight_utils import (
 )
 from sglang.srt.runtime_context import get_flags, get_parallel
 from sglang.srt.utils import add_prefix, is_cuda, is_npu, is_xpu, make_layers
-from sglang.srt.vpipe.attention import (
+from vskipper.runtime.attention import (
     fd_attention_o_proj_full_graph,
     fd_attention_qkv_full_graph,
 )
 from sglang.utils import get_exception_traceback
 
-from sglang.srt.vpipe import seam as vp_seam
+from vskipper.integration.sglang import seam as vp_seam
 
 _is_cuda = is_cuda()
 _is_xpu = is_xpu()
@@ -274,7 +274,7 @@ class LlamaAttention(nn.Module):
             )
 
         if _FD_PARITY_TRACE_ENABLED:
-            from sglang.srt.vpipe.routing import (
+            from vskipper.runtime.routing import (
                 fd_parity_trace_attention,
             )
 

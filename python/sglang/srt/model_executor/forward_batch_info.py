@@ -58,7 +58,7 @@ from sglang.srt.utils import (
     support_triton,
 )
 from sglang.srt.utils.common import ceil_align, is_pin_memory_available
-from sglang.srt.vpipe.config import (
+from vskipper.runtime.config import (
     full_graph_request_identity_required,
 )
 
@@ -1676,7 +1676,6 @@ def _bootstrap_rooms_to_tensor(
 def _stable_hash_str_to_i64(rid: str) -> int:
     digest = hashlib.blake2b(rid.encode("utf-8"), digest_size=8).digest()
     return int.from_bytes(digest, "little", signed=True)
-
 
 
 

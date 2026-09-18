@@ -1,0 +1,257 @@
+"""Environment knob names and process-level constants.
+
+The frozen tree referenced 202 env knobs accumulated across four superseded VP
+generations; the four canonical deployment arms set 25. Only the names the
+served path actually reads travel here -- the rest were gates on experiments the
+decision log records as rejected or not-promoted.
+
+Names only. Reading and validation live with the code that owns each knob, so
+that a knob and its fail-closed parsing stay together.
+"""
+
+from __future__ import annotations
+
+import os
+
+
+# Operator declaration of the staged checkpoint's revision. Needed because
+# a locally staged snapshot exposes no commit hash, and a directory name is
+# not identity -- renaming any checkpoint would defeat it. General identity
+# machinery (consumed by the llama attach site), not a skipper feature.
+SERVED_MODEL_REVISION_ENV = "SGLANG_VP_SERVED_MODEL_REVISION"
+DEVICE_ROUTE_DIGEST_ENV = "SGLANG_FD_FULL_GRAPH_DEVICE_ROUTE_DIGEST"
+FULL_GRAPH_MOCK_SEED_ENV = "SGLANG_VP_FULL_GRAPH_MOCK_SEED"
+FULL_GRAPH_MOCK_SKIPPED_DEPTH_RATIO_ENV = (
+    "SGLANG_VP_FULL_GRAPH_MOCK_SKIPPED_DEPTH_RATIO"
+)
+FULL_GRAPH_MOCK_TOKEN_SKIP_RATE_ENV = (
+    "SGLANG_VP_FULL_GRAPH_MOCK_TOKEN_SKIP_RATE"
+)
+FULL_GRAPH_SKIPPER_ENV = "SGLANG_VP_FULL_GRAPH_SKIPPER"
+REGIME_SWITCH_ENV = "SGLANG_VP_REGIME_SWITCH"
+_MOCK_CONFIG_ENVS = (
+    FULL_GRAPH_MOCK_TOKEN_SKIP_RATE_ENV,
+    FULL_GRAPH_MOCK_SKIPPED_DEPTH_RATIO_ENV,
+    FULL_GRAPH_MOCK_SEED_ENV,
+)
+# [D-609] pinned off; parity tracing is a debug facility, not a served feature.
+_FD_PARITY_TRACE_ENABLED = False
+FD_EXECUTION_MODE_ENV = "SGLANG_FD_EXECUTION_MODE"
+FD_ACTIVE_PHASES_ENV = "SGLANG_FD_ACTIVE_PHASES"
+FD_EXECUTION_DIRECT_EAGER = "direct_eager"
+FD_EXECUTION_FULL_GRAPH = "full_graph"
+_MASKED_DECODE_REQUIRED_BACKEND = "triton"
+FD_EAGER_SEMANTIC_DEBUG_ENV = "SGLANG_FD_FULL_GRAPH_EAGER_SEMANTIC_DEBUG"
+FD_PREFILL_GROUPED_MLP_ENV = "SGLANG_FD_FULL_GRAPH_PREFILL_GROUPED_MLP"
+FD_COMPACT_ENABLED_ENV = "SGLANG_FD_FULL_GRAPH_COMPACT"
+FD_COMPACT_PHASES_ENV = "SGLANG_FD_FULL_GRAPH_COMPACT_PHASES"
+# P3 (2026-09-05): binary_cohort branch GEMMs through cuBLAS on EAGER prefill
+# passes (host-known counts); captured passes keep the count-GEMMs.
+FD_PREFILL_CUBLAS_ENV = "SGLANG_FD_FULL_GRAPH_PREFILL_CUBLAS"
+# D-508 (2026-09-06): per-layer break-even fallback on EAGER prefill passes.
+# Value = minimum PROJECT share (fraction of valid rows, in (0, 1]) below which
+# a routed layer runs the dense-filtered-project body (production's dense MLP
+# on every row + the projector on the PROJECT rows only) instead of a
+# compaction body; unset = off. The share is read to the host once per routed layer
+# (eager passes only; captured passes keep their captured variant). The
+# default value used in serving is the ladder's measured break-even (D-490:
+# 22 % PROJECT = parity, 8 % = -4.4 %, ~37 % = -4..-6 %), never a per-dataset
+# tuning.
+FD_PREFILL_FALLBACK_ENV = "SGLANG_FD_FULL_GRAPH_PREFILL_FALLBACK_MIN_PROJECT"
+# P5 coverage-as-code (2026-09-05): decode CUDA-graph buckets cover the
+# scheduler admission cap when FlexiDepth full_graph serving is active.
+VP_DECODE_COVERAGE_ENV = "SGLANG_VP_DECODE_COVERAGE"
+# Optional explicit ceiling for the coverage endpoint (capture memory is finite).
+VP_DECODE_COVERAGE_MAX_BS_ENV = "SGLANG_VP_DECODE_COVERAGE_MAX_BS"
+FD_DUAL_COMPACT_MIN_ROWS_ENV = "SGLANG_FD_FULL_GRAPH_DUAL_COMPACT_MIN_ROWS"
+FD_LOW_ROW_POLICY_ENV = "SGLANG_FD_FULL_GRAPH_LOW_ROW_POLICY"
+FD_ROUTE_ACCOUNTING_ENV = "SGLANG_FD_FULL_GRAPH_ROUTE_ACCOUNTING"
+FD_LAYER_COUNTERS_ENV = "SGLANG_FD_FULL_GRAPH_LAYER_COUNTERS"
+FD_DEVICE_ROUTE_TAPE_ENV = "SGLANG_FD_FULL_GRAPH_DEVICE_ROUTE_TAPE"
+FD_DEVICE_ROUTE_DIGEST_ENV = "SGLANG_FD_FULL_GRAPH_DEVICE_ROUTE_DIGEST"
+FD_SCHEDULER_CONVERGENCE_ENV = (
+    "SGLANG_FD_FULL_GRAPH_SCHEDULER_CONVERGENCE"
+)
+FD_FORCE_ROUTE_ENV = "SGLANG_FD_FULL_GRAPH_FORCE_ROUTE"
+FD_FORCED_ALL_RUN_FASTPATH_ENV = (
+    "SGLANG_FD_FULL_GRAPH_FORCED_ALL_RUN_FASTPATH"
+)
+FD_FORCED_ALL_RUN_PRODUCTION_ATTN_ENV = (
+    "SGLANG_FD_FULL_GRAPH_FORCED_ALL_RUN_PRODUCTION_ATTENTION"
+)
+FD_LAYER_POLICIES_ENV = "SGLANG_FD_FULL_GRAPH_LAYER_POLICIES"
+FD_VIRTUAL_COHORT_ENV = "SGLANG_FD_FULL_GRAPH_VIRTUAL_COHORT"
+FD_WEIGHTED_SCATTER_ENV = "SGLANG_FD_FULL_GRAPH_WEIGHTED_SCATTER"
+FD_FUSED_EVIDENCE_ENV = "SGLANG_FD_FULL_GRAPH_FUSED_EVIDENCE"
+FD_MASKED_DECODE_ATTN_ENV = "SGLANG_FD_FULL_GRAPH_MASKED_DECODE_ATTENTION"
+FD_CONDITIONAL_GRAPH_ENV = "SGLANG_FD_FULL_GRAPH_CONDITIONAL_GRAPH"
+FD_CONDITIONAL_PRODUCTION_ALL_RUN_ENV = (
+    "SGLANG_FD_FULL_GRAPH_CONDITIONAL_PRODUCTION_ALL_RUN"
+)
+FD_CONDITIONAL_GRAPH_HELPER_ENV = (
+    "SGLANG_FD_FULL_GRAPH_CONDITIONAL_GRAPH_HELPER"
+)
+FD_CONDITIONAL_MAX_ROWS_ENV = (
+    "SGLANG_FD_FULL_GRAPH_CONDITIONAL_MAX_ROWS"
+)
+FD_CONDITIONAL_BRANCH_COUNTERS_ENV = (
+    "SGLANG_FD_FULL_GRAPH_CONDITIONAL_BRANCH_COUNTERS"
+)
+FD_DEFER_PROJECT_KV_ENV = "SGLANG_FD_FULL_GRAPH_DEFER_PROJECT_KV"
+FD_DEFER_PROJECT_KV_DIAGNOSTIC_STAGE_ENV = (
+    "SGLANG_FD_FULL_GRAPH_DEFER_PROJECT_KV_DIAGNOSTIC_STAGE"
+)
+FD_COMMIT_OVERLAP_ENV = "SGLANG_FD_FULL_GRAPH_COMMIT_OVERLAP"
+FD_BATCHED_COMMIT_ENV = "SGLANG_FD_FULL_GRAPH_BATCHED_COMMIT"
+FD_COMPACT_ROUTED_QKV_ENV = "SGLANG_FD_FULL_GRAPH_COMPACT_ROUTED_QKV"
+FD_CONTIGUOUS_ROUTED_QKV_ENV = (
+    "SGLANG_FD_FULL_GRAPH_CONTIGUOUS_ROUTED_QKV"
+)
+FD_ROUTED_QKV_CAPACITIES_ENV = (
+    "SGLANG_FD_FULL_GRAPH_ROUTED_QKV_CAPACITIES"
+)
+FD_ROUTED_QKV_MIN_ROWS_ENV = "SGLANG_FD_FULL_GRAPH_ROUTED_QKV_MIN_ROWS"
+FD_ROUTED_QKV_CAPACITY_MULTIPLE_ENV = (
+    "SGLANG_FD_FULL_GRAPH_ROUTED_QKV_CAPACITY_MULTIPLE"
+)
+_VALID_LAYER_POLICIES = frozenset(
+    (
+        # 2026-09-08 (D-574): every routed layer runs the count-adaptive binary-cohort
+        # body. The other policies selected the per-layer adapter capacities and the
+        # hand-chosen split at layer 22 -- constants fitted to one dataset's route
+        # distribution that a paired A/B showed bought nothing, so their bodies are gone.
+        # Naming a removed policy now fails closed here instead of silently falling
+        # through to the default body.
+        "binary_cohort",
+    )
+)
+_VALID_EXECUTION_MODES = frozenset(
+    (FD_EXECUTION_DIRECT_EAGER, FD_EXECUTION_FULL_GRAPH)
+)
+# `native_dense` (lane-2 cut3 item 1, D-358) is the dense-body posture at every
+# occupancy; the bounded `full_dual` variant was deleted with its bound (D-582):
+# the model's OWN dense feed-forward for every row plus the projector, selected
+# by the route mask, at every occupancy. It is the serving arm's routed-MLP
+# posture — the count-adaptive and grouped paths stay in the tree for their
+# gate arms but are not reachable from a `native_dense` deployment.
+_VALID_LOW_ROW_POLICIES = frozenset(("off", "native_dense"))
+# Routed-MLP gate arithmetic, which is a property of the CHECKPOINT, not a tuning
+# knob. `released` is the published FlexiDepth gate: `w * MLP` on RUN rows and
+# `(1 - w) * PROJECT` on the rest. `hard_mask` is the straight-through gate
+# (`m = hard + w - w.detach()`, trained 2026-09-03 for the Qwen3 family): the
+# forward is a hard selection with NO `w` scaling on either branch. Serving an
+# `ste_hard` checkpoint under `released` applies scaling it was never trained
+# with and fails silently — the same defect that voided the 09-03 quality gates.
+FD_GATE_MODE_ENV = "SGLANG_FD_GATE_MODE"
+_VALID_GATE_MODES = frozenset(("released", "hard_mask"))
+# Router-norm implementation. `0` (default) keeps the local FDRMSNorm, whose
+# arithmetic reproduces the released FlexiDepth checkpoint's routing EXACTLY.
+# `1` swaps in SGLang's fused RMSNorm, collapsing ~6-8 elementwise launches per
+# routed layer per step into one: MEASURED 2026-09-04 at -0.32 ms/step of flat
+# decode tax (2.67 -> 2.35), vp-vs-production +0.87 pp at ctx 4096 / +0.60 pp at
+# 6144, crossover 2597 -> 2313.
+#
+# It defaults OFF because it is NOT route-identical. The fused kernel reduces the
+# 256-wide variance with a parallel tree, PyTorch's `.pow(2).mean(-1)` does not,
+# and they differ in the last bit -- enough to move a row whose sigmoid sits
+# within an epsilon of the 0.5 RUN/PROJECT threshold. Measured: exactly one row
+# of 735,888 flipped RUN -> PROJECT (run_rows 389192 -> 389191). The effect is
+# DETERMINISTIC (two boots of one tree give bit-identical counters), so this is a
+# changed route, not a flaky one -- but it does break the exact-equality
+# assertion in `vskipper/src/vskipper/experiments/gates/route_digest_compare.py` and it makes vSkipper's
+# routes differ from the FlexiDepth oracle. Opt in only with that declared.
+FD_FUSED_ROUTER_NORM_ENV = "SGLANG_FD_FUSED_ROUTER_NORM"
+# Sentinel bound for `native_dense`; larger than any capturable decode bucket
+# (the req-to-token pool ceiling is 4096 rows) so the body always resolves.
+_NATIVE_DENSE_UNBOUNDED_ROWS = 1 << 30
+_VALID_ACTIVE_PHASES = frozenset(("decode", "prefill", "both"))
+_VALID_FORCED_ROUTES = frozenset(("off", "all_run", "all_project"))
+_VALID_DEFER_PROJECT_KV_DIAGNOSTIC_STAGES = frozenset(
+    ("full", "qkv_only", "qkv_rope", "readiness_only")
+)
+_CONFLICTING_FULL_GRAPH_ENV = (
+    "SGLANG_VP_V2_CONFIG",
+    "SGLANG_FD_VP_PROJECT",
+    "SGLANG_FD_VP_STAGE_ROUTE",
+    "SGLANG_FD_VP_ASYNC_KV",
+    "SGLANG_VP_ASYNC_KV_BATCHED",
+)
+# Knobs whose features were DROPPED from this build (owner ruling 2026-08-23:
+# AdaSkip sublayer skipper; batched K/V commit + commit overlap; routed-QKV
+# compact/contiguous staging). Setting one is a stale config, refused loudly
+# at validation -- see codex/asplos-plan/2026-08-21-removed-feature-register.md
+# for revival. An explicit off value ("0"/"false"/"no"/"off") is allowed.
+_REMOVED_FEATURE_ENVS = (
+    "SGLANG_VP_ADASKIP_PROFILE",
+    "SGLANG_VP_ADASKIP_DENSE_REFERENCE_MLP",
+    "SGLANG_VP_ADASKIP_MAX_GRAPH_ROWS",
+    "SGLANG_VP_ADASKIP_MAX_REQUEST_SLOTS",
+    "SGLANG_FD_FULL_GRAPH_REPAIR_GROUP_SIZE",
+    # [lane-2 knob cleanup, D-578] compact output-projection / split-QKV bodies
+    # and the mapped-decode worker-row sizing. Never enabled in a served arm;
+    # the first two could not have run at all (they passed a `capacity=`
+    # keyword to kernel.pack_rows, which does not accept one).
+    "SGLANG_FD_FULL_GRAPH_COMPACT_O_PROJ",
+    "SGLANG_FD_FULL_GRAPH_COMPACT_O_PROJ_LAYERS",
+    "SGLANG_FD_FULL_GRAPH_COMPACT_O_PROJ_MIN_ROWS",
+    "SGLANG_FD_FULL_GRAPH_COMPACT_Q_PROJ",
+    "SGLANG_FD_FULL_GRAPH_MAPPED_DECODE_ATTENTION",
+    # [lane-2 knob cleanup, D-578] compaction capacity constants. The fraction
+    # and the min-row count stopped reaching any computation at D-574 and only
+    # shaped attestation counters; the rounding multiple is now the module
+    # constant COMPACT_CAPACITY_MULTIPLE.
+    "SGLANG_FD_FULL_GRAPH_COMPACT_CAPACITY_FRACTION",
+    "SGLANG_FD_FULL_GRAPH_COMPACT_CAPACITY_MULTIPLE",
+    "SGLANG_FD_FULL_GRAPH_COMPACT_MIN_ROWS",
+    # [D-582] the low-row body swap: a third occupancy threshold outside the two
+    # admission legs, measured as parity on gsm8k when removed.
+    "SGLANG_FD_FULL_GRAPH_LOW_ROW_MAX_ROWS",
+)
+# Value-typed names among the conflict/removed sets: any non-off value counts
+# as set (a path, a list, an integer); the rest are boolean-ish.
+_VALUE_TYPED_CONFLICT_ENVS = frozenset(
+    (
+        "SGLANG_VP_V2_CONFIG",
+        "SGLANG_VP_ADASKIP_PROFILE",
+        "SGLANG_VP_ADASKIP_MAX_GRAPH_ROWS",
+        "SGLANG_VP_ADASKIP_MAX_REQUEST_SLOTS",
+        "SGLANG_FD_FULL_GRAPH_REPAIR_GROUP_SIZE",
+        "SGLANG_FD_FULL_GRAPH_COMPACT_O_PROJ_LAYERS",
+        "SGLANG_FD_FULL_GRAPH_COMPACT_O_PROJ_MIN_ROWS",
+        "SGLANG_FD_FULL_GRAPH_COMPACT_CAPACITY_FRACTION",
+        "SGLANG_FD_FULL_GRAPH_COMPACT_CAPACITY_MULTIPLE",
+        "SGLANG_FD_FULL_GRAPH_COMPACT_MIN_ROWS",
+        "SGLANG_FD_FULL_GRAPH_LOW_ROW_MAX_ROWS",
+    )
+)
+# [lane-2 knob cleanup, D-578] Cohort buffer sizes round up to this many rows.
+# An allocation granularity (same class as a block size), never a policy knob:
+# it was SGLANG_FD_FULL_GRAPH_COMPACT_CAPACITY_MULTIPLE, always served at 16.
+COMPACT_CAPACITY_MULTIPLE = 16
+# [lane-2 knob cleanup, D-578] Capacity fraction used ONLY by the route-derived
+# compact accounting specs (attestation), never by a served body: after D-574
+# no remaining body has a fixed capacity. It was
+# SGLANG_FD_FULL_GRAPH_COMPACT_CAPACITY_FRACTION, always served at 0.625; kept
+# as a constant so the reported counters stay byte-identical to every cell
+# measured to date.
+COMPACT_ACCOUNTING_CAPACITY_FRACTION = 0.625
+FULL_GRAPH_CAPTURE_SYNTHETIC_RID_BASE = -(1 << 62)
+_BINARY_COHORT_SCRATCH: dict = {}
+_BINARY_COHORT_STATS: dict = {}
+_BINARY_COHORT_LAYERS: set = set()
+# Lane-2 Track B / F1: device -> int64 [calls] counter incremented INSIDE the fused
+# route-decide kernel, so graph replays are counted (executed evidence, never a flag).
+_ROUTE_DECIDE_STATS: dict = {}
+# P3 attestation: eager prefill passes that took the cuBLAS branch, per device
+# (executed evidence, never a flag): device -> (passes, rows).
+_BINARY_COHORT_CUBLAS_PASSES: dict[str, tuple[int, int]] = {}
+# D-508 attestation: per-layer prefill break-even decisions on eager passes,
+# per device: device -> (layers_checked, layers_fallen_back_to_the_dense_body).
+# Executed evidence; lives under binary_cohort.realized (identity-stripped).
+_PREFILL_FALLBACK: dict[str, tuple[int, int]] = {}
+# P5 attestation: decode graph coverage decision per device (executed evidence).
+_VP_DECODE_COVERAGE: dict[str, dict] = {}
+_BINARY_COHORT_CONFIG_DIGEST: dict = {}
+DETERMINISTIC_MOCK_FULL_GRAPH_SKIPPER = "deterministic_mock"
+FLEXIDEPTH_FULL_GRAPH_SKIPPER = "flexidepth"
+RUN_PROJECT_EXECUTION = "run_project"

@@ -103,24 +103,24 @@ from sglang.srt.utils import (
     require_mlp_tp_gather,
 )
 from sglang.srt.utils.profile_utils import export_cuda_graph_capture_trace
-from sglang.srt.vpipe.coverage import (
+from vskipper.runtime.coverage import (
     record_recapture_event,
     vp_graph_lifecycle_mark,
 )
-from sglang.srt.vpipe.coverage import (
+from vskipper.runtime.coverage import (
     COVERAGE_REASON_INELIGIBLE,
     COVERAGE_REASON_ROWS,
 )
-from sglang.srt.vpipe.common import (
+from vskipper.runtime.common import (
     flexidepth_execution_mode,
 )
-from sglang.srt.vpipe.env import (
+from vskipper.runtime.env import (
     FD_EXECUTION_FULL_GRAPH,
 )
-from sglang.srt.vpipe.common import (
+from vskipper.runtime.common import (
     regime_switch_config,
 )
-from sglang.srt.vpipe.regime import (
+from vskipper.runtime.regime import (
     DecodeRegimeDispatch,
     compose_regime_variant_label,
     regime_body_dispatches_stock_decode,
@@ -1184,7 +1184,7 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
         ):
             # The stock low band exists only under the FD conditional decode
             # backend; narrow to it so the orphaned-wrapper plan is type-clean.
-            from sglang.srt.vpipe.graph_backend import (
+            from vskipper.integration.sglang.graph_backend import (
                 FlexiDepthConditionalCudaGraphBackend,
             )
 
