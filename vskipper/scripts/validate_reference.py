@@ -102,7 +102,7 @@ def test_env(tree, contract):
     env = source_env(tree)
     if contract.get('test_tools'):
         directory = Path(contract['test_tools'])
-        allowed = {'pytest', '_pytest', 'pluggy', 'iniconfig', 'bin', '__pycache__'}
+        allowed = {'pytest', '_pytest', 'pluggy', 'iniconfig', 'wheel', 'bin', '__pycache__'}
         for entry in directory.iterdir():
             if entry.name in allowed:
                 continue
@@ -324,7 +324,7 @@ def main():
                 wheels.mkdir()
                 run([sys.executable, '-m', 'pip', 'wheel', '--no-deps', '--no-build-isolation',
                      '--no-index', '--no-cache-dir', '--wheel-dir', str(wheels), str(tree / 'vskipper')],
-                    results / 'wheel-build.log', env, tree, 300)
+                    results / 'wheel-build.log', test_env(tree, c), tree, 300)
                 wheel_files = list(wheels.glob('vskipper-*.whl'))
                 if len(wheel_files) != 1:
                     raise RuntimeError('expected exactly one vSkipper wheel')
