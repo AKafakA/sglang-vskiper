@@ -6,7 +6,8 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:1
 #SBATCH --mem=100G
-#SBATCH --time=04:00:00
+#SBATCH --time=01:00:00
+#SBATCH --no-requeue
 #SBATCH --signal=B:TERM@60
 #SBATCH --job-name=vsk-ref-layout
 set -euo pipefail

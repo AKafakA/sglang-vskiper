@@ -305,11 +305,14 @@ def main():
                             raise RuntimeError(f'wheel resource missing or changed: {resource}')
                 save(results / 'wheel-resources.json', {'wheel_sha256': sha(wheel_files[0]),
                                                        'verified_resources': resources})
+        analysis_env = dict(os.environ)
+        if c.get('analysis_environment'):
+            analysis_env['PATH'] = str(Path(c['analysis_environment']) / 'bin') + os.pathsep + analysis_env['PATH']
         for label in ('control', 'candidate'):
             pack = Path(c[label]['pack'])
             run(['bash', str(pack / 'reproduce_results.sh'), str(results / f'{label}-reproduction')],
-                results / f'{label}-reproduction.log', dict(os.environ), results, 1200)
-        env = dict(os.environ, PACK=c['candidate']['pack'])
+                results / f'{label}-reproduction.log', analysis_env, results, 1200)
+        env = dict(analysis_env, PACK=c['candidate']['pack'])
         run(['bash', str(Path(c['candidate']['tree']) / 'vskipper/scripts/reproduce_analysis.sh'),
              str(results / 'repository-reproduction')],
             results / 'repository-reproduction.log', env, results, 1200)

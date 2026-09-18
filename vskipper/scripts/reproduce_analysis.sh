@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Reproduce numerical outputs and data-driven plots from the frozen reviewer inputs.
 set -euo pipefail
+python3 - <<'PY'
+import sys
+if sys.version_info[:2] != (3, 12):
+    raise SystemExit('Exact reference reproduction uses CPython 3.12 (validated: 3.12.11). Activate the documented analysis environment.')
+import numpy, matplotlib
+PY
 PACK=${PACK:?set PACK to the unpacked reviewer data pack}
 PACK=$(cd -- "$PACK" && pwd -P)
 VP=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../src/vskipper/analysis" && pwd -P)

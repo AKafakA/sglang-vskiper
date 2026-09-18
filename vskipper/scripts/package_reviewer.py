@@ -120,6 +120,14 @@ def main():
                         "source_sha256": digest(original), "export_sha256": digest(exported),
                         "adjustment": adjustment})
 
+    dependency_path = "vskipper/requirements-analysis.txt"
+    dependency_bytes = (ROOT / dependency_path).read_bytes()
+    put("code/" + dependency_path, dependency_bytes)
+    sources.append({"repository_path": dependency_path,
+                    "export_path": "code/" + dependency_path,
+                    "source_sha256": digest(dependency_bytes),
+                    "export_sha256": digest(dependency_bytes), "adjustment": None})
+
     provenance = {"measurement_version": "v1.6", "reviewer_package": "r2",
                   "reference_commit": commit, "control_manifest_sha256": digest(manifest_bytes),
                   "preserved_data": preserved, "source_files": sources,
@@ -138,6 +146,16 @@ exec bash "$PACK/code/vskipper/scripts/reproduce_analysis.sh" "$1"
 
     for name in DOCUMENTS:
         text = (control / name).read_text()
+        text = text.replace("Python 3.10 or newer", "CPython 3.12.11")
+        text = text.replace("python3 -m venv analysis-env", "python3.12 -m venv analysis-env")
+        text = text.replace("python3 -m pip install numpy matplotlib",
+                            "python3 -m pip install -r code/vskipper/requirements-analysis.txt")
+        if name == "REPRODUCE.md":
+            text = text.replace("## 2. Verify and regenerate",
+                                "The exact-output check is validated with CPython 3.12.11 and the pinned\n"
+                                "dependencies above. Python 3.11 introduces roundoff differences in five\n"
+                                "JSON files; use the validated environment for exact comparison.\n\n"
+                                "## 2. Verify and regenerate")
         text = text.replace("reviewer package r1", "reviewer package r2").replace("Reviewer-package r1", "Reviewer-package r2")
         text = text.replace("code/test/vp/", "code/vskipper/src/vskipper/analysis/")
         text = text.replace("python/sglang/srt/vpipe/design.py", "vskipper/src/vskipper/runtime/design.py")

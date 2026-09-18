@@ -2,9 +2,20 @@
 
 ## CPU numerical reproduction
 
-Use Linux, Bash, GNU `sed`, Python 3.10 or newer, NumPy and Matplotlib. On macOS,
-put GNU `sed` on `PATH`. The reviewer pack contains the analysis source and
-inputs; [stage 3](03-run-analysis.md) gives the complete command.
+Use Linux, Bash, GNU `sed` and CPython 3.12.11 with the pinned analysis
+dependencies. This environment reproduces all 114 reference outputs with the
+exact verifier. Python 3.11 produces roundoff differences in five JSON records;
+use the validated Python version for exact reproduction. On macOS, put GNU
+`sed` on `PATH`. The reviewer pack contains the analysis source and inputs;
+[stage 3](03-run-analysis.md) gives the complete command.
+
+Create a separate analysis environment, preserving any serving environment:
+
+```bash
+python3.12 -m venv analysis-env
+. analysis-env/bin/activate
+python -m pip install -r vskipper/requirements-analysis.txt
+```
 
 ## GPU serving
 
