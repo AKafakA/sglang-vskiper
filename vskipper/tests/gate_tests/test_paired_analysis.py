@@ -86,7 +86,8 @@ def test_a_straddle_is_reported_as_PARITY(tmp_path):
     out = _build(tmp_path, 4, scale=lambda r: {1: 0.98, 2: 1.02, 3: 0.99, 4: 1.01}[r])
     done = _run(out)
     assert done.returncode == 0
-    assert "PARITY (straddles 0)" in done.stdout
+    assert "unresolved (straddles 0)" in done.stdout
+    assert "treatment better" not in done.stdout and "treatment worse" not in done.stdout
 
 
 def test_a_consistent_improvement_is_not_called_parity(tmp_path):

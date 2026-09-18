@@ -46,3 +46,16 @@ checks and complete numerical reproduction.
 The guard-page probe can skip when the allocator provides no unmapped page.
 Its memory-safety requirement remains outstanding until the corresponding
 compute-sanitizer check passes. A skip is not a memory-safety pass.
+
+Inside an assigned GPU allocation, use the existing serving interpreter and
+isolated test-tool import path to run:
+
+```bash
+python vskipper/scripts/validate_memory.py --tree "$PWD" \
+  --sanitizer /path/to/compute-sanitizer --output /new/memory-check-output
+```
+
+Run this once per source tree. The checker first requires detection of a planted
+invalid read, then requires zero memcheck errors for all four existing Qwen/Llama
+kernel probe shapes. It disables allocator caching in these diagnostic subprocesses
+to expose actual CUDA allocation boundaries; serving configurations remain unchanged.

@@ -19,6 +19,7 @@ ROUTED = list(range(16, 32))
 
 # The canonical vdec_fd defer posture (the sealed arm env, host paths elided).
 DEFER_POSTURE = {
+    "SGLANG_VP_REGIME_SWITCH": "off",  # isolated defer seam; switching requires foreground K/V
     "SGLANG_FD_WEIGHTS": "/x.pt",
     "SGLANG_FD_EXECUTION_MODE": "full_graph",
     "SGLANG_FD_ACTIVE_PHASES": "decode",

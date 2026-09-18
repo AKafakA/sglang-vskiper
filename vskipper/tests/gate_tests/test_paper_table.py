@@ -112,7 +112,9 @@ def test_macros_are_latex_legal_names(tmp_path: Path):
     assert text.startswith("% GENERATED")
     import re
     names = re.findall(r"\\newcommand\{\\([A-Za-z]+)\}", text)
-    assert len(names) == 60, len(names)
+    expected = 2 * 3 * len(COLUMNS) * 2  # datasets x rungs x fields x (estimate, CI)
+    assert len(names) == expected, len(names)
+    assert len(set(names)) == expected, "macro names must be unique"
     assert all(n.isalpha() for n in names)
 
 
