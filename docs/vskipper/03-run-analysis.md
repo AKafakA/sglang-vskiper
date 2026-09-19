@@ -20,7 +20,7 @@ bash scripts/reproduce_analysis.sh     # the whole thing; the paper repo's regen
 | `analysis/` | node-side analysis bundle: `paired_report.json` (headline, 6 reps), `latency_map.json`, graph coverage, cache share, engagement rows, loaded shares, natural lengths, suite macros, ladder rows; `ablation/<ds>/`, `sweep*/`, `sweep-occ/`; `loaded_all_v16.json` (27 block-B cells, per-document rows); `natural-lane/`; `qwen/<root>/paired_report.*`; `qwen_loaded_v16.json` + `qwen_loaded_cells/` (Qwen3-4B block B); `qwen_loaded_sweep.json` + `qwen_loaded_cells_sweep/` (Qwen3-8B block B); `rtxa6000/` | `analysis_bundle_v16.sh` on the campaign node + per-lane scorers |
 | `evidence/h100-500w/ladder/` | the H100 ladder cells and its paired report | mirrored small evidence |
 | `identity-preserved/` | inputs carried unchanged from v1.5: the Llama 2×2 native halves (`q2x2-all/`, `a6000-20260910-bbh-2x2/`), the Qwen3-4B native halves (`qwen-quality-ab-bf16/`), `quality_macros_v15.tex` (App. E.2 filter diagnostic) | v1.5 pack |
-| `qwen8b-selection/` | native lm-eval runs of the Qwen3-8B base and the three candidate checkpoints (`<label>/gsm8k/samples_*.jsonl`), `SKIPS.txt` | D-843 selection on the A100 node |
+| `qwen8b-native/` | native lm-eval runs of the Qwen3-8B base and the three reported checkpoints (`<label>/gsm8k/samples_*.jsonl`), `SKIPS.txt` = the training-time chat-template probe skip | lm-eval on the A100 node (D-843, D-847) |
 
 Raw per-request arrays are not in the pack; they are the **full data** tier (`vast-raw-mirror/` tars with `SHA256SUMS`).
 
@@ -37,8 +37,8 @@ Raw per-request arrays are not in the pack; they are the **full data** tier (`va
 | RandomSkip sweep maps, rule-prediction figure, occupancy/V\* macros, TTFT macros | `sweep_heatmap.py`, `sweep_prediction.py`, `vstar_macros.py` | `analysis/sweep*/`, `analysis/sweep-occ/` |
 | Qwen serving rows (4B, shared band, 8B) and the GSM8K all-models table | `paper_table.py` per paired report | `analysis/qwen/<root>/` |
 | Qwen block-B rows | `qwen_quality_v16.py` | `analysis/qwen_loaded_{v16,sweep}.json` + cell dirs |
-| Qwen 2×2 rows | `paired_dod_2x2_v16.py` | native halves (`identity-preserved/qwen-quality-ab-bf16/`, `qwen8b-selection/`) + the block-B scores |
-| Qwen3-8B selection table | `native_composite.py` | `qwen8b-selection/` |
+| Qwen 2×2 rows | `paired_dod_2x2_v16.py` | native halves (`identity-preserved/qwen-quality-ab-bf16/`, `qwen8b-native/`) + the block-B scores |
+| Qwen3-8B native readings | `native_composite.py` | `qwen8b-native/` |
 | Llama block-B quality table and 2×2 | `loaded_quality_table.py --layout v16`, `paired_dod_2x2_v16.py` | `analysis/loaded_all_v16.json`, `identity-preserved/q2x2-all/` |
 | natural-lane stacks table | `natural_lane_table.py` | `analysis/natural-lane/` |
 | Pareto figure | `pareto_figure.py` | `paired_report.json`, `analysis/ablation/`, `loaded_all_v16.json` |
