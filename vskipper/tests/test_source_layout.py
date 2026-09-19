@@ -37,6 +37,9 @@ def test_runtime_resources_are_in_their_own_package():
 def test_campaign_binds_both_fork_packages_and_only_upstream_baseline():
     from run_paired_campaign import serving_pythonpath
     spec = {"tree": "/candidate", "upstream_tree": "/upstream",
+            "upstream_arms": {"upstream": [], "upstream_g1024": ["--cuda-graph-max-bs", "1024"]},
             "arms": {"baseline": "upstream_g1024", "treatment": "vskipper"}}
     assert serving_pythonpath(spec, "vskipper") == "/candidate/vskipper/src:/candidate/python"
     assert serving_pythonpath(spec, "upstream_g1024") == "/upstream/python"
+    assert serving_pythonpath(spec, "upstream") == "/upstream/python"
+    assert serving_pythonpath(spec, "stock") == "/candidate/vskipper/src:/candidate/python"
