@@ -11,6 +11,12 @@ Exact campaign recreation also needs its frozen workload suites, length banks,
 checkpoint assets and environment provenance, supplied separately from the
 CPU reviewer pack.
 
+The [Qwen3 checkpoint guide](../training/qwen3-flexidepth/README.md#reviewer-checkpoint-reproduction)
+maps all four reported checkpoints to their assets. The served 4B and 8B
+checkpoints are full exports; the two additional 8B checkpoints require
+reconstruction from the pinned base and supplied router delta. The same guide
+separates inference reproduction from the historical training launchers.
+
 ## 1. Stage the source and assets
 
 Follow [stage 1](01-environment.md). Stage the treatment checkout and a separate

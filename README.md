@@ -20,7 +20,7 @@ bash /path/to/unpacked-pack/reproduce_results.sh /path/to/new-output
 ```
 
 This route uses Python, NumPy and Matplotlib on CPU. It produces numerical
-tables, macros and data-driven plots, then checks 114 reference outputs. It
+tables, macros and data-driven plots, then checks 120 reference outputs. It
 requires neither the manuscript nor a TeX installation.
 
 Start with the [reproduction guide](vskipper/docs/README.md):

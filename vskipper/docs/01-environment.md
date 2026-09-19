@@ -3,7 +3,7 @@
 ## CPU numerical reproduction
 
 Use Linux, Bash, GNU `sed` and CPython 3.12.11 with the pinned analysis
-dependencies. This environment reproduces all 114 reference outputs with the
+dependencies. This environment reproduces all 120 reference outputs with the
 exact verifier. Python 3.11 produces roundoff differences in five JSON records;
 use the validated Python version for exact reproduction. On macOS, put GNU
 `sed` on `PATH`. The reviewer pack contains the analysis source and inputs;
