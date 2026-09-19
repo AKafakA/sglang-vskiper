@@ -202,7 +202,7 @@ def prefill_regime_decision(
     #     against are not what runs;
     #   * the per-token profile INVERTS its premise: cost falls with pass size,
     #     98 us/tok below 1536 down to 72.7 at 6-8k, against dense ~78-85.
-    # Measured directly (D-579, CSD3 duo, single variable, GR-1a PASS on all four
+    # Measured directly (D-579, two-GPU cluster A/B, single variable, GR-1a PASS on all four
     # cells): removing it converts +9.5 % of gsm8k overload passes from dense to
     # routed and buys TTFT -6.1 % / E2E -2.8 % there, while being PROVABLY INERT
     # on coqa -- both arms recorded byte-identical prefill counters (1413 dense /

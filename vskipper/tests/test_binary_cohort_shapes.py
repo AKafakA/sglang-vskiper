@@ -11,7 +11,7 @@ loaded the weight tile with no N mask, reading up to 64 rows past the projector 
 This test checks the arithmetic at every capture bucket (rows) and both gate modes; an out-of-bounds
 READ that lands in mapped memory is numerically invisible here (the masked store discards those
 columns), so the memory contract is checked separately under compute-sanitizer memcheck
-(`csd3_v15_qwen_fix.sh`). GPU only; run with CUDA_LAUNCH_BLOCKING=1 to attribute a fault to its
+(`hpc_v15_qwen_fix.sh`). GPU only; run with CUDA_LAUNCH_BLOCKING=1 to attribute a fault to its
 launch.
 """
 import contextlib

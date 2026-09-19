@@ -108,7 +108,7 @@ def test_guard_layout_faults_one_past_the_end():
     proc = _run(_GUARD)
     assert "GUARD inside ok" in proc.stdout, proc.stdout + proc.stderr
     if proc.returncode == 0 or "SUCCEEDED" in proc.stdout:
-        # Measured on CSD3 gpu-q-11 (2026-09-12): the expandable-segment layout did NOT leave the
+        # Measured on a cluster A100 node (2026-09-12): the expandable-segment layout did NOT leave the
         # address after the allocation unmapped, so this host cannot host the guard. The memory
         # contract is then carried by compute-sanitizer memcheck (`sanitize_projgd.py`: unfixed
         # tree 896 invalid 16-byte reads, fixed tree 0 errors), not by this test.

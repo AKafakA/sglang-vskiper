@@ -1,6 +1,6 @@
 """Locally staged rows for the balanced long-output rows (owner D-519, 2026-09-06).
 
-Two datasets, read from a staged directory (CSD3 has no outbound network; the
+Two datasets, read from a staged directory (the HPC cluster has no outbound network; the
 staging happens on a box with network and the files travel with a MANIFEST that
 binds the frozen suite to its input data, exactly like `scrolls_local.py`):
 
@@ -124,7 +124,7 @@ def stage_dir() -> Path:
     if not raw:
         raise RuntimeError(
             f"{_STAGE_DIR_ENV} is unset. LongBench-Write / LCA rows are read from "
-            "locally staged jsonl (CSD3 has no outbound network). Stage them on a "
+            "locally staged jsonl (the cluster has no outbound network). Stage them on a "
             f"networked box and point {_STAGE_DIR_ENV} at that directory."
         )
     path = Path(raw)

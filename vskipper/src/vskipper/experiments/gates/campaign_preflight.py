@@ -53,7 +53,7 @@ def main() -> int:
         help="the host config THIS run will serve with, e.g. vskipper/configs/deploy/hosts/vast-a100.json "
              "(relative to --tree, or absolute). Required, and deliberately not defaulted: "
              "the gate previously globbed deploy/hosts/*.json and validated the "
-             "alphabetically first one, so it checked CSD3 paths on a Vast box.",
+             "alphabetically first one, so it checked another host's paths on a Vast box.",
     )
     ap.add_argument("--require-suites", action="store_true",
                     help="also demand campaign suites + banks (STEP 3 onward)")
@@ -128,9 +128,9 @@ def main() -> int:
     # THE HOST CONFIG IS NAMED, NOT GUESSED.
     #
     # This block used to glob deploy/hosts/*.json, sort, and validate hosts[0] -- the
-    # ALPHABETICALLY FIRST config, which on this tree is csd3.json. On 2026-09-10 the paired
-    # smoke ran on the Vast A100 and was refused for missing /rds/user/wd312/... paths: it had
-    # checked CSD3's host config, on a box that is not CSD3, while the campaign's own contract
+    # ALPHABETICALLY FIRST config, which on this tree is hpc-cluster.json. On 2026-09-10 the paired
+    # smoke ran on the Vast A100 and was refused for missing shared-filesystem paths: it had
+    # checked the cluster's host config, on a box that is not that cluster, while the campaign's own contract
     # named vskipper/configs/deploy/hosts/vast-a100.json.
     #
     # The false refusal was the harmless half. Had the first config's paths happened to exist,

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Length-calibration check for bank-pinned debug cells (the ONLY post-step
-of the CSD3 debug harness — no quality scoring).
+of the cluster debug harness — no quality scoring).
 
 Verifies, per request of each cell result: the raw served output length
 equals the requested (bank-pinned) length, and the requested length equals

@@ -5,7 +5,7 @@
 # This is the PROVEN 2026-08-24 v2 driver (box_vpcov_arm_v2.sh) verbatim in
 # logic, repo-resident since dev-h-harness-selfcontained (D-307 Lane H) with
 # path resolution parameterized. v2's shape, kept exactly: TREE is a parameter
-# and sets PYTHONPATH (namespace-package srt override, the proven CSD3 A/B
+# and sets PYTHONPATH (namespace-package srt override, the proven cluster A/B
 # pattern); the probe client comes from the tree under test; server_info is
 # fetched again AFTER the probe (the attested route counters are post-probe);
 # no coverage tracer. Arm postures are sourced verbatim from gates/arms/ and
@@ -28,7 +28,7 @@ if [ -n "$_HC" ] && [ -f "$_HC" ]; then
   VP_GATE_PYTHON="${VP_GATE_PYTHON:-$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('serve_python',''))" "$_HC")}"
   VP_GATE_MODEL="${VP_GATE_MODEL:-$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('model_path',''))" "$_HC")}"
 fi
-W="${W:-${VP_GATE_WORKDIR:-/local/scratch/tmp/wd312}}"
+W="${W:-${VP_GATE_WORKDIR:-/local/scratch/tmp/vskipper}}"
 TREE="${2:-$W/tree-a56485bcf8}"
 OUTROOT="${3:-$W/vpcov-out}"
 V="${VP_GATE_PYTHON:-$W/sglang-sm75/.venv/bin/python}"

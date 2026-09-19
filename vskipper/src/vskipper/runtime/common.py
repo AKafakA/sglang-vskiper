@@ -297,7 +297,7 @@ def full_graph_low_row_policy(
     [lane-2 knob cleanup, D-582] ``full_dual`` and
     ``SGLANG_FD_FULL_GRAPH_LOW_ROW_MAX_ROWS`` are gone. That pair was the third
     occupancy threshold in the design -- a per-layer body swap below 128 rows,
-    sitting outside the two admission legs -- and the CSD3 duo A/B measured its
+    sitting outside the two admission legs -- and the two-GPU cluster A/B measured its
     removal as parity on gsm8k (knee TPS -0.1 %, TTFT +1.7 %, TPOT -0.2 %,
     E2E -0.2 %; overload TPS +0.1 %, TTFT -0.8 %, E2E -0.4 %; GR-1a PASS both
     cells). ``native_dense`` is NOT a threshold and stays: it is a whole-model
@@ -963,7 +963,7 @@ class RegimeSwitchDecodeConfig(
     # Lane-2 cut1 (2026-09-02): KV-volume criterion. When enter_kv_tokens > 0
     # the band is keyed on the decode batch's resident KV tokens
     # (ForwardBatch.seq_lens_sum, a host int -- no device sync) instead of its
-    # rows: the CSD3 ladders put the skip body's crossover at ~512 rows x 256
+    # rows: the cluster ladders put the skip body's crossover at ~512 rows x 256
     # tokens (131k KV tokens, parity) vs 256 rows x 1k (262k, -4%), i.e. the
     # saving scales with rows x context while the floor is fixed, so rows alone
     # mis-key the band. 0/0 (default) == the rows criterion, byte-identical.

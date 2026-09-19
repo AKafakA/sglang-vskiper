@@ -1,5 +1,5 @@
-"""Stage SCROLLS validation splits to local jsonl for offline (CSD3) loading.
-CSD3 has no outbound SSL, so the archived hf_hub_download path cannot run there."""
+"""Stage SCROLLS validation splits to local jsonl for offline (cluster) loading.
+The HPC cluster has no outbound SSL, so the archived hf_hub_download path cannot run there."""
 import datasets, json, hashlib, os, sys
 OUT = sys.argv[1]
 os.makedirs(OUT, exist_ok=True)

@@ -1,5 +1,5 @@
 import json, hashlib, os, pathlib
-R = pathlib.Path(os.environ.get("VP_GATE_AB_OUT", "/local/scratch/tmp/wd312/route-digest-ab"))
+R = pathlib.Path(os.environ.get("VP_GATE_AB_OUT", "/local/scratch/tmp/vskipper/route-digest-ab"))
 
 def routes(p):
     d = json.load(open(p))

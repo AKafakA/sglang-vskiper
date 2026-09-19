@@ -217,7 +217,7 @@ def campaign_preflight_gate(spec: dict[str, Any],
                # 0 shards" on a box with the model staged one level up (D-664).
                "--workdir", spec["staging_root"],
                # The campaign's own host config, NAMED. The gate used to pick the
-               # alphabetically first deploy/hosts/*.json for itself and validated CSD3
+               # alphabetically first deploy/hosts/*.json for itself and validated the cluster's
                # paths on a Vast box (D-664).
                "--host-config", spec["host_config"],
                "--serving-pythonpath", str(serving)]

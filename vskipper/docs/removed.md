@@ -8,7 +8,7 @@ SGLang files; see the [integration map](integration.md).
 
 Twelve historical harness files are retired:
 
-- `test/vp/csd3_debug_cell.sh`: historical host paths, an absent cell-count
+- `test/vp/hpc_debug_cell.sh`: historical host paths, an absent cell-count
   contract and runner flags rejected by the current contract.
 - `test/vp/run_production_calibration.sh`: requires a missing runtime
   expectation and default calibration contract.

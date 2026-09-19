@@ -13,7 +13,7 @@ set -uo pipefail
 ARM="${1:?usage: box_conc16_stress.sh <arm> [boots] [tree-dir] [out-root]}"
 BOOTS="${2:-3}"
 GATES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-W="${VP_GATE_WORKDIR:-/local/scratch/tmp/wd312}"
+W="${VP_GATE_WORKDIR:-/local/scratch/tmp/vskipper}"
 TREE="${3:-$(cd "$GATES_DIR/../../../../.." && pwd)}"
 OUTROOT="${4:-$W/conc16-stress-out}"
 V="${VP_GATE_PYTHON:-$W/sglang-sm75/.venv/bin/python}"

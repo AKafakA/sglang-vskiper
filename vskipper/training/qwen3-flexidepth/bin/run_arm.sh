@@ -20,7 +20,7 @@ read -r -a GPU_ARR <<< "${GPUS}"; test "${#GPU_ARR[@]}" -eq "${WORLD}"
 readonly ENV_DIR=/mydata/venvs/training
 readonly SOURCE_ARCHIVE=${RUN_ROOT}/src/flexidepth-debug-20260902.tar.gz
 readonly SOURCE_REVISION=ccb10a4fe31cf3cac01b688d882aaeeda6934f1b
-readonly DATA=/mydata/csd3/datasets/flexidepth-qwen3-alignment-b14afda6-d117af2f-seq2048-r2
+readonly DATA=/mydata/datasets/flexidepth-qwen3-alignment-b14afda6-d117af2f-seq2048-r2
 readonly DATA_SHA=7fd1a8f2d0836115e06a084b665b39ab01c44efaef39edba8426b5ef2225ad47
 readonly DATA_NAME=allenai/tulu-3-sft-mixture
 readonly DATA_REVISION=b14afda60f1bbebe55d5d2fa1e4df5042f97f8be

@@ -1,7 +1,7 @@
 {
   "checkpoint_probe": true,
   "completion_only_loss": false,
-  "dataset_dir": "/mydata/csd3/datasets/flexidepth-qwen3-alignment-b14afda6-d117af2f-seq2048-r2",
+  "dataset_dir": "/mydata/datasets/flexidepth-qwen3-alignment-b14afda6-d117af2f-seq2048-r2",
   "dataset_manifest_sha256": "7fd1a8f2d0836115e06a084b665b39ab01c44efaef39edba8426b5ef2225ad47",
   "dataset_name": "allenai/tulu-3-sft-mixture",
   "dataset_revision": "b14afda60f1bbebe55d5d2fa1e4df5042f97f8be",
