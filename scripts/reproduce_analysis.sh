@@ -118,9 +118,9 @@ QW=$AN/qwen; rm -f generated/qwen_serving_rows.tex generated/qwen_sharedband_row
 # steps 10,000 and 18,750. The label is display-only (macro names come from the dataset key, gsm8k_q8b -> QwenEight); the macro
 # stems are vpQwenEight (served) / vpQwenEightAlt (2e-4, 18,750) / vpQwenEightOld (2e-4, 10,000). Labels carry no comma: the
 # verify step's --ignore-datasets list is comma-separated.
-Q8ROOT=$QW/qwen8b_c1e4s15000_gsm8k_q8b;  Q8ARM=vskipper_qwen3_8b_c1e4s15000;  Q8LABEL='Qwen3-8B $4{\times}10^{-4}$ step 15k (served)'
-Q8AROOT=$QW/qwen8b_c5e5s18750_gsm8k_q8b; Q8AARM=vskipper_qwen3_8b_c5e5s18750; Q8ALABEL='Qwen3-8B $2{\times}10^{-4}$ step 18.75k'
-Q8OROOT=$QW/qwen8b_c5e5s10000_gsm8k_q8b; Q8OARM=vskipper_qwen3_8b_c5e5s10000; Q8OLABEL='Qwen3-8B $2{\times}10^{-4}$ step 10k'
+Q8ROOT=$QW/qwen8b_c1e4s15000_gsm8k_q8b;  Q8ARM=vskipper_qwen3_8b_c1e4s15000;  Q8LABEL='Qwen3-8B $4{\times}10^{-4}$ 15k (served)'
+Q8AROOT=$QW/qwen8b_c5e5s18750_gsm8k_q8b; Q8AARM=vskipper_qwen3_8b_c5e5s18750; Q8ALABEL='Qwen3-8B $2{\times}10^{-4}$ 18.75k'
+Q8OROOT=$QW/qwen8b_c5e5s10000_gsm8k_q8b; Q8OARM=vskipper_qwen3_8b_c5e5s10000; Q8OLABEL='Qwen3-8B $2{\times}10^{-4}$ 10k'
 q8rows(){ # root arm label macro-stem rows-file
   [ -f $1/paired_report.upstream_g1024__$2.json ] || { echo "  MISSING $1/paired_report.upstream_g1024__$2.json"; return 1; }
   python3 $VP/paper_table.py $1/paired_report.upstream_g1024__$2.json --knee gsm8k_q8b=14 --emit --columns main --dataset-label "$3" --macros /tmp/$5.macros.tex --macro-prefix $4 > generated/$5.tex && cat /tmp/$5.macros.tex >> generated/qwen_serving_macros_v16.tex && echo "  $3: $(grep -c '\\\\' generated/$5.tex) rows"; }
