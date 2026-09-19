@@ -21,11 +21,16 @@ and the model code is the checkpoint's own `modeling_ddqwen3.py` / `configuratio
 
 `run_arm.sh` fixes the accumulation at 4 so the effective coefficient (= penalty / accumulation) is invariant when the world size
 changes (`consolidate_w4.sh` seeds a new work directory by hard links for a world change; the trainer byte-compares its sealed
-`TRAINING_INPUT_CONTRACT.json`, an example is beside this file). `segment_chain.sh` runs train → gate → rule as a state machine
+`TRAINING_INPUT_CONTRACT.json`; the sealed contracts of the three Qwen3-8B arms are beside this file as
+`TRAINING_INPUT_CONTRACT.q8b-ste-{c25e6,c5e5-from7500,c1e4-from7500}.json`). `segment_chain.sh` runs train → gate → rule as a state machine
 (`segment_chain_reportonly.sh`: gates report only; `segment_chain_c30.sh`: stop only on a > 30 pp collapse). `gate_node.sh`
 builds the served export (`infer-step<N>`: weights hard-linked, the checkpoint's own model code, tokenizer files from the init),
 runs the 100-document probe (`gate_mixed.py`, bf16), the behavioural probes, and writes the router delta (`step<N>_router.pt`,
-the trained tensors only, 415 MB) plus one `GATELINE`. The probe is a coarse collapse check (±9 pp at n = 100); selection uses the
+the trained tensors only, 415 MB) plus one `GATELINE`.
+
+Still to add to this tree: the Qwen3-4B arm's sealed contract and the preprocessing script that built the tokenized alignment
+dataset (`DATASET_SHA256SUMS` + `PREPROCESSING_MANIFEST.json` in the dataset directory record its construction); both are archived on
+the training cluster. The probe is a coarse collapse check (±9 pp at n = 100); selection uses the
 full 1,319-row composite score (`test/vp/run_lmeval_quality.py`, batch 16, bf16).
 
 ## Running it
