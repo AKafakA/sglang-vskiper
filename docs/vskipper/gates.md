@@ -52,13 +52,14 @@ failed the routed-pass observation — and both of its columns are dashes in the
 
 The dev branch maintains the scanner and its tests; anonymity is a publication
 gate for `vskipper-paper`, not a requirement to scrub the development tree.
-Run the gate from the anonymous source checkout with an external private TSV
+In the published anonymous checkout (`vskipper-paper`), the release layout uses
+`vskipper/scripts/`. Run its gate with an external private TSV
 of identifying terms. Each non-comment line is a label, a tab and an extended
 regular expression. Include owner handles, account names, host identifiers and
 institutional domains in that private file; never add the file to a release.
 
 ```bash
-bash scripts/check_anonymity.sh --terms-file /private/terms.tsv --list
+bash vskipper/scripts/check_anonymity.sh --terms-file /private/terms.tsv --list
 ```
 
 Exit 0 means all tracked text and filenames passed; 1 means a match; 2 means
