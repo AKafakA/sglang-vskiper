@@ -177,7 +177,7 @@ def macros(rows: list[dict[str, Any]], prefix: str = "vp") -> str:
 
 
 ROW_RE = re.compile(
-    r"^(?P<ds>[A-Za-z0-9][A-Za-z0-9 -]*?)\s*&\s*\$(?P<mult>[0-9.]+)\\times Q\^\*\$\s*&\s*(?P<n>\d+)\s*&"
+    r"^(?P<ds>[^&]+?)\s*&\s*\$(?P<mult>[0-9.]+)\\times Q\^\*\$\s*&\s*(?P<n>\d+)\s*&"   # ds: any first cell (v1.7: labels carry LaTeX)
     # `%?` because the generated file ends its last row with a comment character to swallow
     # the newline that would otherwise open a phantom row inside the tabular.
     r"(?P<cells>.+?)\\\\%?\s*$",

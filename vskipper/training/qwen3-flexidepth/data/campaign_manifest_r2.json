@@ -1,0 +1,16 @@
+{
+  "campaign_id": "cluster-flexidepth-qwen3-data-r2-20260716",
+  "evidence_class": "training_data_artifact",
+  "predecessor_preflight_job": "31403127",
+  "predecessor_failure": "datasets.map callback declared stage before positional batch",
+  "source_revision": "1ec394d209aadfbbc8e69c6ca7ee3ca4c67bc259",
+  "source_archive_sha256": "61e77a3c7baf3afcc1400699151ee18c2197812076a113ea04008f4dcf3f7c7e",
+  "tokenizer_revision": "d117af2f304f02a8647f88fe05b61cfb405a1d9e",
+  "tokenizer_manifest_sha256": "c5fdb878dd893ad1415410fa2d806787467acf3e794a5066630367a3bab7a953",
+  "alignment_dataset_revision": "b14afda60f1bbebe55d5d2fa1e4df5042f97f8be",
+  "annealing_dataset_revision": "af60f3c18201652a83a93f46fcfee1b646ba3df7",
+  "max_length": 2048,
+  "test_size": 0.01,
+  "seed": 42,
+  "status": "prepared"
+}
