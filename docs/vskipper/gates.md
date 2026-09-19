@@ -47,3 +47,28 @@ signal; the other digest fields are.
 It excludes the cell. The paper prints a dash where a gated-out cell would have been, rather than a number with a
 footnote. One cell in the reported campaign failed this way — an ablation arm below the knee on GSM8K, which
 failed the routed-pass observation — and both of its columns are dashes in the ablation table.
+
+## Anonymous-release check
+
+The dev branch maintains the scanner and its tests; anonymity is a publication
+gate for `vskipper-paper`, not a requirement to scrub the development tree.
+Run the gate from the anonymous source checkout with an external private TSV
+of identifying terms. Each non-comment line is a label, a tab and an extended
+regular expression. Include owner handles, account names, host identifiers and
+institutional domains in that private file; never add the file to a release.
+
+```bash
+bash scripts/check_anonymity.sh --terms-file /private/terms.tsv --list
+```
+
+Exit 0 means all tracked text and filenames passed; 1 means a match; 2 means
+invalid inputs or an incomplete scan. The checker scans its own content.
+Inspect exported archive members and binary metadata separately. Maintained
+tests exercise clean, identifying, missing-rule and invalid-rule cases.
+
+## Frozen numerical reproduction
+
+Run `PACK=/path/to/pack bash scripts/reproduce_analysis.sh /path/to/new-output`
+in the [analysis environment](01-environment.md). The results-only entrypoint
+checks the pack manifest, preserves its inputs and verifies all 120 reference
+outputs. It rejects an existing output directory. See [stage 3](03-run-analysis.md).

@@ -29,9 +29,9 @@ Each stage is a separate guide and ends in a check you can run yourself.
 
 | stage | guide | you get |
 |---|---|---|
-| 1 | [`01-environment.md`](01-environment.md) | a working tree, two ways: build fresh, or reuse the prebuilt wheels in the data pack |
+| 1 | [`01-environment.md`](01-environment.md) | separate analysis and serving environments; GPU assets are staged separately |
 | 2 | [`02-run-experiments.md`](02-run-experiments.md) | measured cells in a target directory, from a clean A100 |
-| 3 | [`03-run-analysis.md`](03-run-analysis.md) | every table and figure in the paper, from the data pack, **with no GPU and no serving host** |
+| 3 | [`03-run-analysis.md`](03-run-analysis.md) | 120 numerical reference outputs and data-driven plots from the reviewer pack, with no serving host |
 
 If you only want to check the paper's numbers, **go straight to stage 3.** The cells are already measured and
 shipped; stage 2 exists for re-running them from scratch.
@@ -39,6 +39,5 @@ shipped; stage 2 exists for re-running them from scratch.
 ## Also here
 
 - [`gates.md`](gates.md) — the gates that decide whether a cell counts as a measurement.
-- [`removed.md`](removed.md) — what this branch dropped relative to the development tree, and the artifact proving
-  each removal was unused.
+- [`removed.md`](removed.md) — historical cleanup records; dev retains the original source layout.
 - [`decisions.md`](decisions.md) — the rulings the code comments refer to, restated.

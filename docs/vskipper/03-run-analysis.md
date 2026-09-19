@@ -1,60 +1,50 @@
-# Stage 3 — regenerate every table and figure (paper v1.6.1)
+# Stage 3 — reproduce numerical outputs
 
-From the data pack to every generated table, macro and figure in the paper. **No GPU, no serving host, no network.**
-Every `.tex` fragment this produces is byte-identical to the one the PDF was typeset from.
+The reviewer pack contains frozen measurement summaries, preserved per-example
+quality records, the analysis code used by this recipe, and 120 reference
+outputs. Reproduction emits numerical tables/macros and data-driven plots.
+The architecture illustration is a separate explanatory figure.
 
-## Set up
+## Run the bundled source
 
-```bash
-export PACK=$HOME/vskipper-data        # the unpacked data pack (layout below)
-export VP=$PWD/test/vp                 # this repo's analysis scripts (vskipper-ref)
-export OUT=$PWD/paper-out              # where generated/ and figures/ land
-sha256sum -c $PACK/MANIFEST.sha256     # must pass before you trust anything below
-bash scripts/reproduce_analysis.sh     # the whole thing; the paper repo's regenerate_v16.sh is a wrapper around it
-```
-
-## The pack
-
-| directory | what | origin |
-|---|---|---|
-| `analysis/` | node-side analysis bundle: `paired_report.json` (headline, 6 reps), `latency_map.json`, graph coverage, cache share, engagement rows, loaded shares, natural lengths, suite macros, ladder rows; `ablation/<ds>/`, `sweep*/`, `sweep-occ/`; `loaded_all_v16.json` (27 block-B cells, per-document rows); `natural-lane/`; `qwen/<root>/paired_report.*`; `qwen_loaded_v16.json` + `qwen_loaded_cells/` (Qwen3-4B block B); `qwen_loaded_sweep.json` + `qwen_loaded_cells_sweep/` (Qwen3-8B block B); `rtxa6000/` | `analysis_bundle_v16.sh` on the campaign node + per-lane scorers |
-| `evidence/h100-500w/ladder/` | the H100 ladder cells and its paired report | mirrored small evidence |
-| `identity-preserved/` | inputs carried unchanged from v1.5: the Llama 2×2 native halves (`q2x2-all/`, `a6000-20260910-bbh-2x2/`), the Qwen3-4B native halves (`qwen-quality-ab-bf16/`), `quality_macros_v15.tex` (App. E.2 filter diagnostic) | v1.5 pack |
-| `qwen8b-native/` | native lm-eval runs of the Qwen3-8B base and the three reported checkpoints (`<label>/gsm8k/samples_*.jsonl`), `SKIPS.txt` = the training-time chat-template probe skip | lm-eval on the A100 node (D-843, D-847) |
-
-Raw per-request arrays are not in the pack; they are the **full data** tier (`vast-raw-mirror/` tars with `SHA256SUMS`).
-
-## What reads what
-
-| paper artifact | generator | reads |
-|---|---|---|
-| headline table, tails, absolutes, macros | `paper_table.py --columns main/tails` then `abs_macros.py`, `absolutes_table.py` | `analysis/paired_report.json` |
-| latency map figure | `latency_map_figure.py` | `analysis/latency_map.json` |
-| graph coverage, cache share, engagement, loaded shares, natural lengths, suite macros, ladder rows | copied from `analysis/` (node-computed over raw) | — |
-| H100 and RTX A6000 transfer tables + their ladder rows | `paper_table.py` (knee 14 / 6), `ladder_table.py` | `evidence/h100-500w/ladder/`, `analysis/rtxa6000/` |
-| hardware-band appendix table | `hardware_bands_table.py` | the rule (no data input) |
-| mechanism ablation tables (3 datasets) | `ablation_table.py` | `analysis/ablation/<ds>/` |
-| RandomSkip sweep maps, rule-prediction figure, occupancy/V\* macros, TTFT macros | `sweep_heatmap.py`, `sweep_prediction.py`, `vstar_macros.py` | `analysis/sweep*/`, `analysis/sweep-occ/` |
-| Qwen serving rows (4B, shared band, 8B) and the GSM8K all-models table | `paper_table.py` per paired report | `analysis/qwen/<root>/` |
-| Qwen block-B rows | `qwen_quality_v16.py` | `analysis/qwen_loaded_{v16,sweep}.json` + cell dirs |
-| Qwen 2×2 rows | `paired_dod_2x2_v16.py` | native halves (`identity-preserved/qwen-quality-ab-bf16/`, `qwen8b-native/`) + the block-B scores |
-| Qwen3-8B native readings | `native_composite.py` | `qwen8b-native/` |
-| Llama block-B quality table and 2×2 | `loaded_quality_table.py --layout v16`, `paired_dod_2x2_v16.py` | `analysis/loaded_all_v16.json`, `identity-preserved/q2x2-all/` |
-| natural-lane stacks table | `natural_lane_table.py` | `analysis/natural-lane/` |
-| Pareto figure | `pareto_figure.py` | `paired_report.json`, `analysis/ablation/`, `loaded_all_v16.json` |
-| cross-model Pareto pairs figure (upstream → vSkipper per model at its own knee) | `pareto_models_figure.py` | the three paired reports + `loaded_all_v16.json`, `qwen_loaded_{v16,sweep}.json` |
-| kernel-headroom table | `tile_ratio_table.py` | the committed tile artifacts under `python/sglang/srt/vpipe/binary_cohort_configs/` |
-
-The GSM8K composite reading (`exact_match,marker-composite`: strict-match where the marker parses, flexible extraction otherwise)
-is produced by `score_natural_lane_lmeval.py` for every served cell and by `native_composite.py` / `paired_dod_2x2.load_arm` for native
-runs. No reading in the paper is computed by hand.
-
-## Check
+Use the CPU environment described in [stage 1](01-environment.md). Extract the
+pack into a path without whitespace, choose a new output directory, and run:
 
 ```bash
-diff -r $OUT/generated <paper-repo>/generated
+bash /path/to/unpacked-pack/reproduce_results.sh /path/to/new-output
 ```
 
-Every `.tex` fragment must be byte-identical; figure images are compared through their derived macros. `generated/` is the directory
-the PDF is typeset from, and it is committed, so it cannot drift from the paper you are holding; the `versions/<x.y.z>/` directories are
-snapshots of past builds.
+The entrypoint verifies the package manifests, uses its bundled source and
+writes `generated/`, `figures/` and isolated scratch files. It checks all 120
+reference results: TeX files match byte-for-byte; JSON files match structurally
+and numerically after normalizing the unpacked pack's absolute path.
+
+The pack contains reproduction materials only. The command requires no paper
+source, paper PDF, review files or TeX installation. Saved measurement summaries
+are inputs to the recipe; their original full GPU traces are supplied separately
+for reconstructing those summaries from raw traffic.
+
+## Run the matching repository source
+
+Use a verified `vskipper-dev` commit for development. The reviewer release uses
+the reference commit recorded in the pack's source-provenance file and its
+branch-specific paths; record the dev commit when running this route:
+
+```bash
+PACK=/path/to/unpacked-pack bash scripts/reproduce_analysis.sh \
+  /path/to/new-repository-output
+```
+
+This runs `test/vp/` against the same evidence and checks
+the same references. `scripts/reproduce_analysis.sh` is results-only;
+it never builds or edits a manuscript.
+
+Generated reference headers retain their original generator labels, preserving
+byte-identical numerical artifacts. The current executable paths are those above.
+
+Both routes preserve the input evidence and reject an existing output path.
+Keep the pack's checksum, source commit, command, environment freeze and output
+verification report with a reproduction run.
+
+For new GPU measurements, follow [stage 2](02-run-experiments.md). Keep new
+results in their own artifact root and retain the frozen reference pack.

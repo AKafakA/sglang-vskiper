@@ -1,137 +1,147 @@
-# Stage 2 — run experiments
+# Stage 2 — GPU measurements
 
-From a clean GPU host to measured cells in a directory stage 3 can read.
+A paired cell serves the same frozen request IDs and input/output token counts
+through upstream SGLang and the selected vSkipper arm, at the same offered
+rate and repetition. Each measurement retains responses, actual token counts,
+finish reasons, launch configuration and runtime attestations.
 
-**You probably do not need this.** The cells the paper reports are already measured and shipped in the data pack;
-[`03-run-analysis.md`](03-run-analysis.md) reproduces every table and figure from them with no GPU. This guide is
-for re-running the measurement from scratch, or for measuring a new arm.
+For numerical reproduction from the supplied evidence, use
+[stage 3](03-run-analysis.md). This stage describes collecting new GPU cells.
+Exact campaign recreation also needs its frozen workload suites, length banks,
+checkpoint assets and environment provenance, supplied separately from the
+CPU reviewer pack.
 
-## What a cell is
+The [Qwen3 checkpoint guide](../../training/qwen3-flexidepth/README.md#reviewer-checkpoint-reproduction)
+maps all four reported checkpoints to their assets. The served 4B and 8B
+checkpoints are full exports; the two additional 8B checkpoints require
+reconstruction from the pinned base and supplied router delta. The same guide
+separates inference reproduction from the historical training launchers.
 
-A **cell** is one (dataset, offered rate, repetition) served by one arm. A paired cell is the same dataset, rate
-and repetition served by **both** arms — the treatment and upstream SGLang — against the same pinned work. The
-paired unit is the within-repetition delta, which is why both arms always run inside the same repetition.
+## 1. Stage the source and assets
 
-The work is pinned in a **bank**: a frozen list of prompts with each request's output length fixed in advance, so
-both arms generate exactly the same number of tokens. That is what makes the comparison a runtime measurement
-rather than a measurement of how much the two models chose to say.
+Follow [stage 1](01-environment.md). Stage the treatment checkout and a separate
+upstream checkout at `602c8615a1afbb2ad13b80334643c64970884bac`. The `stock` arm
+is the fork with skipping disabled; the external baseline uses the upstream
+tree. Keep each tree's source archive and digest.
 
-## 1. Declare the host and the arms
-
-A host file under `deploy/hosts/` names the device and its resolved launch profile. Copy the example and fill in
-your own paths:
-
-```bash
-cp deploy/hosts/a100.json.example deploy/hosts/my-a100.json
-```
-
-A **campaign spec** is a JSON file naming the two trees, the model, the bank directory and the arms. Its fields:
-
-| field | meaning |
-|---|---|
-| `tree` | the checkout serving the treatment arm |
-| `upstream_tree` | the **separate** upstream SGLang checkout serving the baseline |
-| `model_path` | the pinned model revision |
-| `suites_dir` | where the frozen banks live |
-| `host_config` | the host file above |
-| `arms` | arm name to `design.py` entry, for both arms |
-| `datasets` | dataset to rate list |
-
-`upstream_tree` must be a genuine upstream checkout. This fork with the skipper disabled is **not** the baseline;
-it is a different arm with its own name, and the ablation table reports it separately.
-
-## 2. Refuse to start if the inputs are not staged
+Create a host JSON with absolute asset paths. Build expected-runtime records
+from the selected treatment source:
 
 ```bash
-python test/vp/gates/campaign_preflight.py --spec my_spec.json
+python test/vp/make_expected_runtime.py \
+  --out-dir /path/to/expectations --arm upstream_g1024 --arm vskipper
+
+python test/vp/gates/campaign_preflight.py \
+  --tree "$PWD" --upstream /path/to/upstream --workdir /path/to/staging \
+  --host-config /path/to/host.json \
+  --serving-pythonpath "$PWD/python"
 ```
 
-This checks the campaign's *inputs*: both trees present and at the revisions the spec names, the model staged, the
-banks present and hash-matching. It exists because a re-staged host once silently lacked the upstream baseline
-tree and every downstream gate still passed.
+The preflight checks staged assets, the named host configuration, source-path
+binding and the upstream runtime's content identity. Add `--require-suites`
+when the staging root has `serving-fullcells/` and `banks/` populated. Preserve
+the workload-specific hashes and contract alongside those directories.
 
-## 3. Refuse to measure the wrong system
+## 2. Freeze the work
 
-Two gates, both fail-closed. The **execution-difference gate** compares what the two servers *execute* — decode
-and prefill graph ladders (top and bucket list), K/V pool size, chunk size, backends, the treatment's regime-switch
-band against the roofline rule for the device — from their `/server_info` snapshots against the declaration in
-`deploy/execution_differences*.json`; anything undeclared refuses the cell. A larger treatment K/V pool never passes;
-a smaller one passes within the declared tolerance (relative, or the exact token displacement the treatment's weights
-cost). The chain scripts run it on every repetition's boot snapshots and kill the driver on refusal:
+Use the upstream-derived natural-generation harvest to construct one length
+bank per workload and rate. Apply that same bank to every compared arm:
 
 ```bash
-python test/vp/gates/verify_execution_differences.py --snapshots <dir> --arms upstream_g1024,vskipper \
-       --declaration deploy/execution_differences.json --port 32051 --device-name "$(nvidia-smi --query-gpu=name --format=csv,noheader)" \
-       --device-memory-mib "$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits)"
+python test/vp/bank_from_harvest.py \
+  /path/to/upstream-harvest --out /path/to/new-banks
+
+python test/vp/pin_output_lengths_from_bank.py \
+  --requests /path/to/requests.jsonl --metadata /path/to/metadata.jsonl \
+  --bank /path/to/new-banks/upstream-harvest/bank.json --context-length 8192 \
+  --output-requests /path/to/pinned.requests.jsonl \
+  --output-metadata /path/to/pinned.metadata.jsonl \
+  --output-summary /path/to/pinned.summary.json
 ```
 
-The **served-design gate**, once a server is up:
+Use the context length and output policy declared by the target campaign.
+Requested maxima and actual generated lengths remain distinct fields. The
+cross-arm work gate must pass before combining any arms into a comparison.
+
+For a fresh load calibration, `qstar_int.py` consumes the completed upstream
+ladder directory as a positional argument:
 
 ```bash
-python test/vp/gates/verify_served_design.py --base-url http://127.0.0.1:32051 --arm <arm-name>
+python test/vp/qstar_int.py /path/to/ladder --emit
 ```
 
-This reads the server's own attested design and compares it to the `design.py` entry the arm names. Every other
-gate in the project checks the *output* of a measurement; this one checks that the intended system produced it.
+Use the same decode-graph ladder in calibration and paired measurement. The
+tool fails when the ladder has not bracketed the knee. Frozen-paper reproduction
+uses the recorded rates and banks instead of recalibrating them.
 
-## 4. Find the knee
+## 3. Declare and run a campaign
 
-Serving load points are calibrated to **upstream's** capacity, not the treatment's. Walk contiguous integer
-offered rates on upstream and take Q\* as the last rate whose achieved output throughput still beats the running
-mean of the rates below it:
+Create `campaign.json` with these fields, using absolute paths:
+
+```json
+{
+  "tree": "/path/to/vskipper-dev",
+  "upstream_tree": "/path/to/upstream",
+  "python": "/path/to/environment/bin/python",
+  "model_path": "/path/to/pinned-model",
+  "suites_dir": "/path/to/pinned-suites",
+  "staging_root": "/path/to/staging",
+  "expect_dir": "/path/to/expectations",
+  "host_config": "/path/to/host.json",
+  "source_revision": "FULL_DEV_COMMIT",
+  "arms": {"baseline": "upstream_g1024", "treatment": "vskipper"},
+  "upstream_arms": {"upstream_g1024": ["--cuda-graph-max-bs", "1024"]},
+  "upstream_arm_exemptions": {
+    "upstream_g1024": {
+      "cuda_graph_max_bs": {"value": 1024, "decision": "Matched decode-graph ladder"},
+      "cuda_graph_config": {
+        "accept_if": {"decode.max_bs": 1024, "decode.bs[max]": 1024},
+        "decision": "Matched decode-graph ladder"
+      }
+    }
+  },
+  "datasets": {"gsm8k": {"r9p75": 9.75, "r12p35": 12.35, "r16p25": 16.25}}
+}
+```
+
+`datasets` maps each workload to rate labels and numeric offered rates. The
+`upstream_arms` declaration binds the baseline to the upstream checkout and
+supplies its matched graph-cap argument; `upstream_arm_exemptions` declares
+the corresponding resolved fields to the default-conformance gate.
+The example shows the Llama GSM8K grid; supply the complete target campaign's
+workloads, rates and repetitions. For another model, include its recorded
+`model_revision` and `served_model_name`. Set `launch_profile` when the contract
+selects a profile other than the design's default.
 
 ```bash
-python test/vp/qstar_int.py --cells <ladder-root>/cells
+python test/vp/run_paired_campaign.py \
+  --spec campaign.json --out-dir /path/to/new-campaign --reps 6 --dry-run
+
+python test/vp/run_paired_campaign.py \
+  --spec campaign.json --out-dir /path/to/new-campaign --reps 6
 ```
 
-A ladder that never plateaus yields no Q\*: extend it rather than declaring one. The rule counts a rung as growth only
-when it and the next rung both exceed the running maximum by at least 1 % (sustained growth). The baseline that sets the
-knee is upstream **at the same decode-graph ladder the treatment captures** (`--cuda-graph-max-bs 1024` on an A100/H100;
-`128` on a 48 GB card, where the fork captures 4 × 32): a knee taken on a smaller ladder measured the baseline outside
-graph capture on a large share of its batches (the 2026-09-16 incident). The paper's knees on that control are GSM8K 13,
-BBH 34 and CoQA 25 requests per second on the A100 (H100 14, RTX A6000 6; Qwen3-4B 17, Qwen3-8B 14 under the 8,192-token
-output budget), and every headline cell is served at 0.75, 0.95 and 1.25 times its own dataset's knee.
+`--start-rep N --reps K` requests K repetitions starting at N. Use a new output
+directory; retain prior attempts and their failure records.
 
-## 5. Pin the banks from a natural-lane harvest
+## 4. Validate and account for the cells
 
-Serve the suite **once** with each stack generating to its own end-of-sequence, then freeze each request's
-realised output length into the bank that both arms will then be held to:
+The paired driver applies its input and per-cell gates, then verifies cross-arm
+work identity and writes paired analysis. Inspect `campaign_index.json`, the
+per-cell `*.command.json`, response artifacts, gate results and before/after
+server snapshots together. A `completed` status alone is not a comparison gate.
+
+Verify a live endpoint's served design with:
 
 ```bash
-python test/vp/pin_output_lengths_from_bank.py --harvest <harvest-root> --out <suites-dir>/<suite>.bank.json
+python test/vp/gates/verify_served_design.py \
+  --url http://127.0.0.1:32051 --arm vskipper --tree "$PWD"
 ```
 
-The paper pins from the **base model's** natural lane, so the equal-work comparison asks how fast the same output
-work executes. Pinning from the served arm's own lane is a legitimate second bank set and the paper reports it as
-a companion table; the two are never mixed inside one campaign.
+Apply `verify_execution_differences.py` to each repetition's baseline/treatment
+snapshots using the matching declaration under `deploy/`.
+This is an explicit release check in addition to the paired driver's checks;
+preserve its command and result. Consult its `--help` for the snapshot layout.
 
-## 6. Run the paired campaign
-
-```bash
-python test/vp/run_paired_campaign.py --spec my_spec.json --out-dir <root> --reps 6
-```
-
-Add `--start-rep N` to resume. Each cell writes a `command.json` recording the exact commands, the artifact
-hashes, the gates that ran and the status. The campaign's chain scripts (ladder → harvests → paired reps, per dataset
-and per GPU, with the mirror step) are recorded with the paper's evidence under the campaign directory of the
-documentation repository; `training/qwen3-flexidepth/` holds the Qwen3 training tooling and `scripts/reproduce_analysis.sh`
-the analysis stage.
-
-## Check
-
-A cell counts as a measurement only if its own record says so:
-
-```bash
-python - <<'PY'
-import json, glob
-for f in sorted(glob.glob("<root>/rep*/*/*/cells/*.command.json")):
-    d = json.load(open(f))
-    if d["status"] != "completed":
-        print(d["status"], d.get("failed_gates"), f)
-PY
-```
-
-Anything that is not `completed` is excluded from every table, and the paper prints a dash in its place rather
-than a number. See [`gates.md`](gates.md) for what each gate refuses and why.
-
-Next: [`03-run-analysis.md`](03-run-analysis.md).
+Read [the gate map](gates.md) before accepting cells, then follow
+[stage 3](03-run-analysis.md) to regenerate numerical outputs from saved evidence.

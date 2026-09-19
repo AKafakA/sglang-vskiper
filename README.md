@@ -1,3 +1,16 @@
+# vSkipper — development branch
+
+vSkipper is a mirrored fork of SGLang for conditional-depth serving.
+Start with the [vSkipper guides](docs/vskipper/README.md) and the
+[120-output reproduction recipe](docs/vskipper/03-run-analysis.md).
+This branch retains the original development layout; `vskipper-ref` groups the
+release under `vskipper/`, and `vskipper-paper` is its anonymous reviewer view.
+Shared changes are developed and tested here before forward synchronization.
+
+The original upstream SGLang introduction is preserved below.
+
+---
+
 <div align="center" id="sglangtop">
 <img src="https://raw.githubusercontent.com/sgl-project/sglang/main/assets/logo.png" alt="logo" width="400" margin="10px"></img>
 

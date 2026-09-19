@@ -1,49 +1,55 @@
 #!/usr/bin/env bash
-# Blocking gate: refuse a release push while identifying strings remain in TRACKED FILE CONTENT.
-#
-# Scope is deliberate. The anonymised branch is served by anonymous.4open.science, which publishes a
-# static view of the FILE TREE and not git metadata, so commit authorship is out of scope and stays as
-# it is. What a reviewer can read is the content of the files, and that is what this checks.
-#
-#   bash scripts/check_anonymity.sh            # scan tracked files, exit 1 on any hit
-#   bash scripts/check_anonymity.sh --list     # print every hit with file and line
-#
-# Exit 0 means clean. Exit 1 means at least one term was found; the push must not proceed.
-set -uo pipefail
-cd "$(git rev-parse --show-toplevel)"
-LIST=0; [ "${1:-}" = "--list" ] && LIST=1
-
-# Each entry is "label<TAB>extended-regex". Add a term here rather than in a caller.
-TERMS=$(cat <<'EOT'
-username	wd312
-host alias	vast-(a100|h100)|3090-vast|dev-gpu-wd312|openclaw|gxp-l40s
-cluster	[Cc][Ss][Dd]3|login-icelake|hpc\.cam\.ac\.uk
-account code	KALYVIANAKI[A-Z0-9-]*
-absolute home	/home/wd312|/rds/user/[a-z0-9]+
-institution	cam\.ac\.uk|cl\.cam\.ac\.uk
-internal decision id	\bD-[0-9]{3}\b
-EOT
-)
-
+# Check every tracked file, including this checker. Keep identifying patterns
+# outside the repository and outside every reviewer export.
+# Usage: bash scripts/check_anonymity.sh --terms-file /private/terms.tsv [--list]
+# Each non-comment line is LABEL<TAB>EXTENDED_REGULAR_EXPRESSION.
+# Exit 0: clean; 1: identifying content; 2: invalid input or incomplete scan.
+set -euo pipefail
+terms_file=
+show_matches=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --terms-file)
+      [ "$#" -ge 2 ] || { echo 'Missing --terms-file argument' >&2; exit 2; }
+      terms_file=$2; shift 2 ;;
+    --list) show_matches=1; shift ;;
+    *) echo "Unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+[ -n "$terms_file" ] && [ -f "$terms_file" ] || {
+  echo 'Provide --terms-file with an external private TSV file.' >&2; exit 2;
+}
+terms_file=$(realpath -- "$terms_file")
+repo_root=$(git rev-parse --show-toplevel) || exit 2
+repo_root=$(realpath -- "$repo_root")
+case "$terms_file" in
+  "$repo_root"/*) echo 'The private terms file must be outside the repository.' >&2; exit 2 ;;
+esac
+cd -- "$repo_root"
+rules=0
 total=0
-while IFS=$'\t' read -r label re; do
-  [ -z "$label" ] && continue
-  files=$(git grep -lIE "$re" -- . 2>/dev/null | grep -v '^scripts/check_anonymity.sh$' || true)
-  n=$(printf '%s' "$files" | grep -c . || true)
-  printf '%-22s %4s file(s)\n' "$label" "$n"
-  total=$((total + n))
-  if [ "$LIST" = 1 ] && [ "$n" != 0 ]; then
-    git grep -nIE "$re" -- . 2>/dev/null | grep -v '^scripts/check_anonymity.sh:' | sed 's/^/    /'
+while IFS=$'\t' read -r label pattern || [ -n "$label$pattern" ]; do
+  case "$label" in ''|'#'*) continue ;; esac
+  [ -n "$pattern" ] || { echo "Missing pattern for $label" >&2; exit 2; }
+  rules=$((rules + 1))
+  status=0
+  matches=$(git grep -lIE -- "$pattern" -- .) || status=$?
+  [ "$status" -le 1 ] || { echo "Scan failed for $label" >&2; exit 2; }
+  file_status=0
+  name_matches=$(git ls-files | grep -E -- "$pattern") || file_status=$?
+  [ "$file_status" -le 1 ] || { echo "Filename scan failed for $label" >&2; exit 2; }
+  if [ -n "$matches$name_matches" ]; then
+    total=$((total + 1))
+    printf 'FOUND: %s\n' "$label"
+    if [ "$show_matches" -eq 1 ]; then
+      [ -z "$matches" ] || printf '%s\n' "$matches"
+      [ -z "$name_matches" ] || printf '%s\n' "$name_matches"
+    fi
   fi
-done <<< "$TERMS"
-
-echo
-if [ "$total" = 0 ]; then
-  echo "CLEAN: no identifying string in tracked file content."
-  exit 0
+done < "$terms_file"
+[ "$rules" -gt 0 ] || { echo 'The terms file contains no rules.' >&2; exit 2; }
+if [ "$total" -gt 0 ]; then
+  printf 'BLOCKED: %s identifying rule(s) matched. Do not publish.\n' "$total"
+  exit 1
 fi
-echo "BLOCKED: $total file-hits across the terms above. Do not push."
-echo "Run with --list to see them. Host files belong in deploy/hosts/*.json.example with"
-echo "placeholders; absolute paths belong behind a configurable root; decision ids belong in"
-echo "docs/vskipper/decisions.md as restated rulings, keeping the reasoning in the comment."
-exit 1
+printf 'CLEAN: all tracked filenames and text content checked against %s private rules.\n' "$rules"

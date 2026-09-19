@@ -1,15 +1,27 @@
 #!/usr/bin/env bash
-# v1.6 regeneration (2026-09-17, D-824/D-833): every headline number from the LADDER-CONTROL campaign (baseline = upstream SGLang
-# with --cuda-graph-max-bs 1024, the same decode-graph ladder the fork captures; D-824). The raw cells live on the A100 node and
-# the cluster mirror (the hub has no room for the 13 GB mirror), so the raw-dependent analyses ran ON THE NODE (analysis_bundle_v16.sh, harness
-# a5a61bf215) and this script consumes their outputs from the v1.6 data home; the report-driven steps run here as in regenerate.sh.
-#   ./regenerate_v16.sh            # perf tables/macros/figures + quality tables from the block-B lm-eval scores
+# Reproduce numerical outputs and data-driven plots from the frozen reviewer inputs.
 set -euo pipefail
-# Stage 3 of the artifact: PACK = the unpacked data pack (analysis/, evidence/, identity-preserved/, qwen8b-native/),
-# VP = this repo's test/vp, OUT = where generated/ and figures/ land (the paper repo runs it with OUT = its own root).
-PACK=${PACK:?set PACK to the unpacked data pack (e.g. ~/data/vskipper/v1.6)}
-VP=${VP:-$(cd "$(dirname "$0")/../test/vp" && pwd)}
-OUT=${OUT:-.}; mkdir -p "$OUT"; cd "$OUT"
+python3 - <<'PY'
+import sys
+if sys.version_info[:2] != (3, 12):
+    raise SystemExit('Exact reference reproduction uses CPython 3.12 (validated: 3.12.11). Activate the documented analysis environment.')
+import numpy, matplotlib
+PY
+PACK=${PACK:?set PACK to the unpacked reviewer data pack}
+PACK=$(cd -- "$PACK" && pwd -P)
+VP=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../test/vp" && pwd -P)
+[ "$#" -eq 1 ] || { echo 'Usage: PACK=/path/to/pack bash reproduce_analysis.sh NEW_OUTPUT_DIRECTORY' >&2; exit 2; }
+OUT=$1
+case "$OUT" in /*) ;; *) OUT="$PWD/$OUT";; esac
+case "$PACK$VP$OUT" in *[[:space:]]*) echo 'Use paths without whitespace.' >&2; exit 2;; esac
+[ ! -e "$OUT" ] && [ ! -L "$OUT" ] || { echo "Output path already exists: $OUT" >&2; exit 2; }
+if command -v sha256sum >/dev/null 2>&1; then HASH=(sha256sum); else HASH=(shasum -a 256); fi
+(cd "$PACK" && "${HASH[@]}" -c MANIFEST.sha256)
+mkdir -p -- "$OUT/scratch"
+exec > >(tee "$OUT/analysis.log") 2>&1
+export PACK OUT PYTHONDONTWRITEBYTECODE=1
+export MPLCONFIGDIR="$OUT/scratch/matplotlib"
+cd -- "$OUT"
 AN=$PACK/analysis; EV=$PACK/evidence
 BASE=upstream_g1024; TREAT=vskipper
 KNEES=(--knee gsm8k=13 --knee bbh_cot=34 --knee coqa=25)   # g1024 knees, D-827 rule (A100-SXM4-80GB)
@@ -45,13 +57,13 @@ H=$EV/h100-500w/ladder/h100_gsm8k/paired_report.upstream_g1024__vskipper.json
 A6=$AN/rtxa6000/paired_report.upstream_g128__vskipper.json   # 48 GB card: the same-ladder control is upstream_g128 (D-824 on this device)
 [ -f $A6 ] && python3 $VP/paper_table.py $A6 --knee gsm8k=$(cat $AN/rtxa6000/qstar.txt) --emit --columns main --dataset-label "RTX A6000" --macros generated/a6000_macros.tex --macro-prefix vpAsix > generated/a6000_rows.tex && echo "  A6000: $(grep -c '\\\\' generated/a6000_rows.tex) rows" || echo "  A6000 row pending"
 
-say "3b ladders of the transfer devices (rung logs pulled from the raw mirror)"
+say "3b ladders of the transfer devices (preserved rung logs)"
 LH=$EV/h100-500w/ladder/ladder-gsm8k-upstream_g1024; rm -f generated/ladder_h100_rows.tex generated/ladder_h100_macros.tex
 [ -d $LH ] && python3 $VP/ladder_table.py h100_gsm8k=$LH --knee h100_gsm8k=14 --rows generated/ladder_h100_rows.tex --macros generated/ladder_h100_macros.tex | tail -1
 # v1.7 body: the compact transfer table (means only), H100 then RTX A6000, without the n column
 rm -f generated/transfer_body_rows.tex
-[ -f $H ] && python3 $VP/paper_table.py $H --knee gsm8k=14 --emit --columns means --dataset-label "H100" --macros /tmp/transfer_h.tex --no-n-col >> generated/transfer_body_rows.tex
-[ -f $A6 ] && python3 $VP/paper_table.py $A6 --knee gsm8k=$(cat $AN/rtxa6000/qstar.txt) --emit --columns means --dataset-label "RTX A6000" --macros /tmp/transfer_a.tex --no-n-col >> generated/transfer_body_rows.tex
+[ -f $H ] && python3 $VP/paper_table.py $H --knee gsm8k=14 --emit --columns means --dataset-label "H100" --macros ./scratch/transfer_h.tex --no-n-col >> generated/transfer_body_rows.tex
+[ -f $A6 ] && python3 $VP/paper_table.py $A6 --knee gsm8k=$(cat $AN/rtxa6000/qstar.txt) --emit --columns means --dataset-label "RTX A6000" --macros ./scratch/transfer_a.tex --no-n-col >> generated/transfer_body_rows.tex
 LA=$AN/rtxa6000/ladder-gsm8k-upstream_g128; rm -f generated/ladder_a6000_rows.tex generated/ladder_a6000_macros.tex
 [ -d $LA ] && python3 $VP/ladder_table.py a6000_gsm8k=$LA --knee a6000_gsm8k=$(cat $AN/rtxa6000/qstar.txt) --rows generated/ladder_a6000_rows.tex --macros generated/ladder_a6000_macros.tex | tail -1
 
@@ -100,20 +112,20 @@ for tag in ("fixed", "rule", "ungated"): json.dump({tag: o[tag]}, open(f"generat
 PY
 SUITE=gsm8k_eqw_r12p35
 python3 $VP/sweep_prediction.py --no-occupancy-bars --sweep fixed=generated/sweep --occupancy fixed=generated/sweep_occupancy_fixed.json --sweep rule=generated/sweep_v2 --occupancy rule=generated/sweep_occupancy_rule.json --sweep ungated=generated/sweep_ungated --occupancy ungated=generated/sweep_occupancy_ungated.json --suite $SUITE --png figures/sweep_prediction.png --rows generated/sweep_cells_rows.tex --macros generated/sweep_prediction_macros.tex 2>&1 | tail -1
-python3 $VP/sweep_heatmap.py generated/sweep_v2 --dataset gsm8k --suite $SUITE --headline generated/paired_report.json --metrics "E2E mean" --title "per-policy band" --png figures/sweep_heatmap_v2_mean.png --macros /tmp/sweep_v2_mean.tex --macro-prefix vpSweepTwo | tail -1
-python3 $VP/sweep_heatmap.py generated/sweep --dataset gsm8k --suite $SUITE --headline generated/paired_report.json --metrics "E2E mean" --title "shared band" --png figures/sweep_heatmap_mean.png --macros /tmp/sweep_mean.tex | tail -1
-python3 $VP/sweep_heatmap.py generated/sweep_ungated --dataset gsm8k --suite $SUITE --headline generated/paired_report.json --metrics "E2E mean" --title "always route" --png figures/sweep_heatmap_ungated_mean.png --macros /tmp/sweep_ung_mean.tex --macro-prefix vpSweepUng | tail -1
-python3 $VP/sweep_heatmap.py generated/sweep --dataset gsm8k --suite $SUITE --headline generated/paired_report.json --metrics "E2E p95" --title "shared band, p95" --png figures/sweep_heatmap_p95.png --macros /tmp/sweep_p95.tex | tail -1   # App. H: the p95 companion of the shared-band map
-python3 $VP/sweep_heatmap.py generated/sweep_ungated --dataset gsm8k --suite $SUITE --headline generated/paired_report.json --metrics "E2E p95" --title "always route, p95" --png figures/sweep_heatmap_ungated_p95.png --macros /tmp/sweep_ung_p95.tex | tail -1   # App. I three-panel p95 (rc6)
-python3 $VP/sweep_heatmap.py generated/sweep_v2 --dataset gsm8k --suite $SUITE --headline generated/paired_report.json --metrics "E2E p95" --title "per-policy band, p95" --png figures/sweep_heatmap_v2_p95.png --macros /tmp/sweep_v2_p95.tex --macro-prefix vpSweepTwo | tail -1
+python3 $VP/sweep_heatmap.py generated/sweep_v2 --dataset gsm8k --suite $SUITE --headline generated/paired_report.json --metrics "E2E mean" --title "per-policy band" --png figures/sweep_heatmap_v2_mean.png --macros ./scratch/sweep_v2_mean.tex --macro-prefix vpSweepTwo | tail -1
+python3 $VP/sweep_heatmap.py generated/sweep --dataset gsm8k --suite $SUITE --headline generated/paired_report.json --metrics "E2E mean" --title "shared band" --png figures/sweep_heatmap_mean.png --macros ./scratch/sweep_mean.tex | tail -1
+python3 $VP/sweep_heatmap.py generated/sweep_ungated --dataset gsm8k --suite $SUITE --headline generated/paired_report.json --metrics "E2E mean" --title "always route" --png figures/sweep_heatmap_ungated_mean.png --macros ./scratch/sweep_ung_mean.tex --macro-prefix vpSweepUng | tail -1
+python3 $VP/sweep_heatmap.py generated/sweep --dataset gsm8k --suite $SUITE --headline generated/paired_report.json --metrics "E2E p95" --title "shared band, p95" --png figures/sweep_heatmap_p95.png --macros ./scratch/sweep_p95.tex | tail -1   # App. H: the p95 companion of the shared-band map
+python3 $VP/sweep_heatmap.py generated/sweep_ungated --dataset gsm8k --suite $SUITE --headline generated/paired_report.json --metrics "E2E p95" --title "always route, p95" --png figures/sweep_heatmap_ungated_p95.png --macros ./scratch/sweep_ung_p95.tex | tail -1   # App. I three-panel p95 (rc6)
+python3 $VP/sweep_heatmap.py generated/sweep_v2 --dataset gsm8k --suite $SUITE --headline generated/paired_report.json --metrics "E2E p95" --title "per-policy band, p95" --png figures/sweep_heatmap_v2_p95.png --macros ./scratch/sweep_v2_p95.tex --macro-prefix vpSweepTwo | tail -1
 for M in "generated/sweep:vpSweep:sweep_ttft_macros.tex" "generated/sweep_ungated:vpSweepUng:sweep_ttft_macros_ungated.tex" "generated/sweep_v2:vpSweepTwo:sweep_ttft_macros_v2.tex"; do IFS=: read -r SD SP SM <<< "$M"
-  python3 $VP/sweep_heatmap.py $SD --dataset gsm8k --suite $SUITE --headline generated/paired_report.json --metrics "TTFT mean,TPOT mean" --png /tmp/sweep_ttft_$SP.png --macros generated/$SM --macro-prefix $SP | tail -1; done
+  python3 $VP/sweep_heatmap.py $SD --dataset gsm8k --suite $SUITE --headline generated/paired_report.json --metrics "TTFT mean,TPOT mean" --png ./scratch/sweep_ttft_$SP.png --macros generated/$SM --macro-prefix $SP | tail -1; done
 [ -f generated/sweep_vstar.json ] && python3 $VP/vstar_macros.py generated/sweep_vstar.json --out generated/sweep_vstar_macros.tex 2>&1 | tail -1
 
 say "5c Qwen rows (D-830, o8192 budget D-834): Qwen3-4B hybrid (3 reps, Q*=17) + shared Llama band (1 rep); Qwen3-8B, three checkpoints (3 reps each, Q*=14)"
 QW=$AN/qwen; rm -f generated/qwen_serving_rows.tex generated/qwen_sharedband_rows.tex generated/qwen8b_serving_rows.tex generated/qwen8b_alt_serving_rows.tex generated/qwen8b_old_serving_rows.tex generated/qwen_serving_macros_v16.tex
-[ -f $QW/qwen4b_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b.json ] && python3 $VP/paper_table.py $QW/qwen4b_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b.json --knee gsm8k_q4b=17 --emit --columns main --dataset-label "Qwen3-4B" --macros /tmp/qwen4b_macros.tex --macro-prefix vpQwenFour > generated/qwen_serving_rows.tex && cat /tmp/qwen4b_macros.tex >> generated/qwen_serving_macros_v16.tex && echo "  Qwen3-4B: $(grep -c '\\\\' generated/qwen_serving_rows.tex) rows"
-[ -f $QW/qwen4b_shared_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b_sharedband.json ] && python3 $VP/paper_table.py $QW/qwen4b_shared_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b_sharedband.json --knee gsm8k_q4b=17 --emit --columns main --dataset-label "Qwen3-4B (Llama band)" --macros /tmp/qwen4bs_macros.tex --macro-prefix vpQwenFourShr > generated/qwen_sharedband_rows.tex && cat /tmp/qwen4bs_macros.tex >> generated/qwen_serving_macros_v16.tex && echo "  Qwen3-4B shared band: $(grep -c '\\\\' generated/qwen_sharedband_rows.tex) rows"
+[ -f $QW/qwen4b_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b.json ] && python3 $VP/paper_table.py $QW/qwen4b_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b.json --knee gsm8k_q4b=17 --emit --columns main --dataset-label "Qwen3-4B" --macros ./scratch/qwen4b_macros.tex --macro-prefix vpQwenFour > generated/qwen_serving_rows.tex && cat ./scratch/qwen4b_macros.tex >> generated/qwen_serving_macros_v16.tex && echo "  Qwen3-4B: $(grep -c '\\\\' generated/qwen_serving_rows.tex) rows"
+[ -f $QW/qwen4b_shared_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b_sharedband.json ] && python3 $VP/paper_table.py $QW/qwen4b_shared_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b_sharedband.json --knee gsm8k_q4b=17 --emit --columns main --dataset-label "Qwen3-4B (Llama band)" --macros ./scratch/qwen4bs_macros.tex --macro-prefix vpQwenFourShr > generated/qwen_sharedband_rows.tex && cat ./scratch/qwen4bs_macros.tex >> generated/qwen_serving_macros_v16.tex && echo "  Qwen3-4B shared band: $(grep -c '\\\\' generated/qwen_sharedband_rows.tex) rows"
 # v1.7 (D-847): the served Qwen3-8B checkpoint is c1e4s15000 (penalty 4e-4/4, step 15,000). App. K also reports the 2e-4/4 arm at
 # steps 10,000 and 18,750. The label is display-only (macro names come from the dataset key, gsm8k_q8b -> QwenEight); the macro
 # stems are vpQwenEight (served) / vpQwenEightAlt (2e-4, 18,750) / vpQwenEightOld (2e-4, 10,000). Labels carry no comma: the
@@ -123,7 +135,7 @@ Q8AROOT=$QW/qwen8b_c5e5s18750_gsm8k_q8b; Q8AARM=vskipper_qwen3_8b_c5e5s18750; Q8
 Q8OROOT=$QW/qwen8b_c5e5s10000_gsm8k_q8b; Q8OARM=vskipper_qwen3_8b_c5e5s10000; Q8OLABEL='Qwen3-8B $2{\times}10^{-4}$ 10k'
 q8rows(){ # root arm label macro-stem rows-file
   [ -f $1/paired_report.upstream_g1024__$2.json ] || { echo "  MISSING $1/paired_report.upstream_g1024__$2.json"; return 1; }
-  python3 $VP/paper_table.py $1/paired_report.upstream_g1024__$2.json --knee gsm8k_q8b=14 --emit --columns main --dataset-label "$3" --macros /tmp/$5.macros.tex --macro-prefix $4 > generated/$5.tex && cat /tmp/$5.macros.tex >> generated/qwen_serving_macros_v16.tex && echo "  $3: $(grep -c '\\\\' generated/$5.tex) rows"; }
+  python3 $VP/paper_table.py $1/paired_report.upstream_g1024__$2.json --knee gsm8k_q8b=14 --emit --columns main --dataset-label "$3" --macros ./scratch/$5.macros.tex --macro-prefix $4 > generated/$5.tex && cat ./scratch/$5.macros.tex >> generated/qwen_serving_macros_v16.tex && echo "  $3: $(grep -c '\\\\' generated/$5.tex) rows"; }
 q8rows $Q8ROOT $Q8ARM "$Q8LABEL" vpQwenEight qwen8b_serving_rows
 q8rows $Q8AROOT $Q8AARM "$Q8ALABEL" vpQwenEightAlt qwen8b_alt_serving_rows
 q8rows $Q8OROOT $Q8OARM "$Q8OLABEL" vpQwenEightOld qwen8b_old_serving_rows
@@ -214,18 +226,9 @@ python3 $VP/natural_lane_table.py --compact $NL/summary.json --layout v16 --lmev
 
 say "6f magnitude twins (\\<name>Abs) for the H100 / A6000 / Qwen row macros"
 # v1.7: magnitude twins (\<name>Abs) for the H100 / A6000 / Qwen row macros, for "falls by X %" prose
-cat generated/h100_macros.tex generated/a6000_macros.tex generated/qwen_serving_macros_v16.tex 2>/dev/null > /tmp/transfer_macros_all.tex
-python3 $VP/abs_macros.py /tmp/transfer_macros_all.tex generated/transfer_macros_abs.tex
+cat generated/h100_macros.tex generated/a6000_macros.tex generated/qwen_serving_macros_v16.tex 2>/dev/null > ./scratch/transfer_macros_all.tex
+python3 $VP/abs_macros.py ./scratch/transfer_macros_all.tex generated/transfer_macros_abs.tex
 
-say "7  build"
-latexmk -g -pdf -interaction=nonstopmode main.tex > /dev/null 2>&1 || true
-errs=$(grep -cE '^!|Misplaced|Undefined control' main.log || true); echo "  $(pdfinfo main.pdf 2>/dev/null | awk '/Pages/{print $2}') pages, $errs error lines"
-say "8  MECHANICAL CHECK -- the paper against the artifacts"
-# Each paired report verifies its own rows in main.tex; the other reports' rows are named to --ignore-datasets.
-QROWS="Qwen3-4B,Qwen3-4B (Llama band),$Q8LABEL,$Q8ALABEL,$Q8OLABEL"; OTHERS="H100,RTX A6000,$QROWS"
-python3 $VP/paper_table.py generated/paired_report.json "${KNEES[@]}" --verify main.tex --ignore-datasets "$OTHERS" || echo "  A100 VERIFY FAILED"
-[ -f $H ] && { python3 $VP/paper_table.py $H --knee gsm8k=14 --dataset-label "H100" --verify main.tex --ignore-datasets "GSM8K,BBH,CoQA,RTX A6000,$QROWS" || echo "  H100 VERIFY FAILED"; }
-[ -f $A6 ] && { python3 $VP/paper_table.py $A6 --knee gsm8k=$(cat $AN/rtxa6000/qstar.txt) --dataset-label "RTX A6000" --verify main.tex --ignore-datasets "GSM8K,BBH,CoQA,H100,$QROWS" || echo "  A6000 VERIFY FAILED"; }
-for spec in "$Q8ROOT:$Q8ARM:$Q8LABEL" "$Q8AROOT:$Q8AARM:$Q8ALABEL" "$Q8OROOT:$Q8OARM:$Q8OLABEL"; do IFS=: read -r root arm label <<< "$spec"
-  [ -f $root/paired_report.upstream_g1024__$arm.json ] && { python3 $VP/paper_table.py $root/paired_report.upstream_g1024__$arm.json --knee gsm8k_q8b=14 --dataset-label "$label" --verify main.tex --ignore-datasets "GSM8K,BBH,CoQA,H100,RTX A6000,${QROWS/,"$label"/}" || echo "  $label VERIFY FAILED"; }; done
-[ -f $QW/qwen4b_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b.json ] && { python3 $VP/paper_table.py $QW/qwen4b_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b.json --knee gsm8k_q4b=17 --dataset-label "Qwen3-4B" --verify main.tex --ignore-datasets "GSM8K,BBH,CoQA,H100,RTX A6000,${QROWS/Qwen3-4B,/}" || echo "  QWEN3-4B VERIFY FAILED"; }
+
+say "7  verify numerical reference outputs"
+python3 "$PACK/verify_results.py" "$OUT"
