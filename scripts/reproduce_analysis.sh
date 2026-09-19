@@ -5,7 +5,7 @@
 # a5a61bf215) and this script consumes their outputs from the v1.6 data home; the report-driven steps run here as in regenerate.sh.
 #   ./regenerate_v16.sh            # perf tables/macros/figures + quality tables from the block-B lm-eval scores
 set -euo pipefail
-# Stage 3 of the artifact: PACK = the unpacked data pack (analysis/, evidence/, identity-preserved/, qwen8b-selection/),
+# Stage 3 of the artifact: PACK = the unpacked data pack (analysis/, evidence/, identity-preserved/, qwen8b-native/),
 # VP = this repo's test/vp, OUT = where generated/ and figures/ land (the paper repo runs it with OUT = its own root).
 PACK=${PACK:?set PACK to the unpacked data pack (e.g. ~/data/vskipper/v1.6)}
 VP=${VP:-$(cd "$(dirname "$0")/../test/vp" && pwd)}
@@ -110,49 +110,83 @@ for M in "generated/sweep:vpSweep:sweep_ttft_macros.tex" "generated/sweep_ungate
   python3 $VP/sweep_heatmap.py $SD --dataset gsm8k --suite $SUITE --headline generated/paired_report.json --metrics "TTFT mean,TPOT mean" --png /tmp/sweep_ttft_$SP.png --macros generated/$SM --macro-prefix $SP | tail -1; done
 [ -f generated/sweep_vstar.json ] && python3 $VP/vstar_macros.py generated/sweep_vstar.json --out generated/sweep_vstar_macros.tex 2>&1 | tail -1
 
-say "5c Qwen rows (D-830, o8192 budget D-834): Qwen3-4B hybrid (3 reps, Q*=17) + shared Llama band (1 rep); Qwen3-8B hybrid (3 reps, Q*=14)"
-QW=$AN/qwen; rm -f generated/qwen_serving_rows.tex generated/qwen_sharedband_rows.tex generated/qwen8b_serving_rows.tex generated/qwen_serving_macros_v16.tex
+say "5c Qwen rows (D-830, o8192 budget D-834): Qwen3-4B hybrid (3 reps, Q*=17) + shared Llama band (1 rep); Qwen3-8B, three checkpoints (3 reps each, Q*=14)"
+QW=$AN/qwen; rm -f generated/qwen_serving_rows.tex generated/qwen_sharedband_rows.tex generated/qwen8b_serving_rows.tex generated/qwen8b_alt_serving_rows.tex generated/qwen8b_old_serving_rows.tex generated/qwen_serving_macros_v16.tex
 [ -f $QW/qwen4b_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b.json ] && python3 $VP/paper_table.py $QW/qwen4b_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b.json --knee gsm8k_q4b=17 --emit --columns main --dataset-label "Qwen3-4B" --macros /tmp/qwen4b_macros.tex --macro-prefix vpQwenFour > generated/qwen_serving_rows.tex && cat /tmp/qwen4b_macros.tex >> generated/qwen_serving_macros_v16.tex && echo "  Qwen3-4B: $(grep -c '\\\\' generated/qwen_serving_rows.tex) rows"
-[ -f $QW/qwen4b_shared_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b_sharedband.json ] && python3 $VP/paper_table.py $QW/qwen4b_shared_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b_sharedband.json --knee gsm8k_q4b=17 --emit --columns main --dataset-label "Qwen3-4B, Llama band" --macros /tmp/qwen4bs_macros.tex --macro-prefix vpQwenFourShr > generated/qwen_sharedband_rows.tex && cat /tmp/qwen4bs_macros.tex >> generated/qwen_serving_macros_v16.tex && echo "  Qwen3-4B shared band: $(grep -c '\\\\' generated/qwen_sharedband_rows.tex) rows"
-Q8ROOT=$QW/qwen8b_c5e5s10000_gsm8k_q8b; Q8ARM=vskipper_qwen3_8b_c5e5s10000   # v1.6.1: the ONE Qwen3-8B checkpoint (D-843 pick); the 5000/7500 roots stay in the pack as history
-[ -f $Q8ROOT/paired_report.upstream_g1024__$Q8ARM.json ] && python3 $VP/paper_table.py $Q8ROOT/paired_report.upstream_g1024__$Q8ARM.json --knee gsm8k_q8b=14 --emit --columns main --dataset-label "Qwen3-8B" --macros /tmp/qwen8b_macros.tex --macro-prefix vpQwenEight > generated/qwen8b_serving_rows.tex && cat /tmp/qwen8b_macros.tex >> generated/qwen_serving_macros_v16.tex && echo "  Qwen3-8B: $(grep -c '\\\\' generated/qwen8b_serving_rows.tex) rows"
+[ -f $QW/qwen4b_shared_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b_sharedband.json ] && python3 $VP/paper_table.py $QW/qwen4b_shared_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b_sharedband.json --knee gsm8k_q4b=17 --emit --columns main --dataset-label "Qwen3-4B (Llama band)" --macros /tmp/qwen4bs_macros.tex --macro-prefix vpQwenFourShr > generated/qwen_sharedband_rows.tex && cat /tmp/qwen4bs_macros.tex >> generated/qwen_serving_macros_v16.tex && echo "  Qwen3-4B shared band: $(grep -c '\\\\' generated/qwen_sharedband_rows.tex) rows"
+# v1.7 (D-847): the served Qwen3-8B checkpoint is c1e4s15000 (penalty 4e-4/4, step 15,000). App. K also reports the 2e-4/4 arm at
+# steps 10,000 and 18,750. The label is display-only (macro names come from the dataset key, gsm8k_q8b -> QwenEight); the macro
+# stems are vpQwenEight (served) / vpQwenEightAlt (2e-4, 18,750) / vpQwenEightOld (2e-4, 10,000). Labels carry no comma: the
+# verify step's --ignore-datasets list is comma-separated.
+Q8ROOT=$QW/qwen8b_c1e4s15000_gsm8k_q8b;  Q8ARM=vskipper_qwen3_8b_c1e4s15000;  Q8LABEL='Qwen3-8B $4{\times}10^{-4}$ step 15k (served)'
+Q8AROOT=$QW/qwen8b_c5e5s18750_gsm8k_q8b; Q8AARM=vskipper_qwen3_8b_c5e5s18750; Q8ALABEL='Qwen3-8B $2{\times}10^{-4}$ step 18.75k'
+Q8OROOT=$QW/qwen8b_c5e5s10000_gsm8k_q8b; Q8OARM=vskipper_qwen3_8b_c5e5s10000; Q8OLABEL='Qwen3-8B $2{\times}10^{-4}$ step 10k'
+q8rows(){ # root arm label macro-stem rows-file
+  [ -f $1/paired_report.upstream_g1024__$2.json ] || { echo "  MISSING $1/paired_report.upstream_g1024__$2.json"; return 1; }
+  python3 $VP/paper_table.py $1/paired_report.upstream_g1024__$2.json --knee gsm8k_q8b=14 --emit --columns main --dataset-label "$3" --macros /tmp/$5.macros.tex --macro-prefix $4 > generated/$5.tex && cat /tmp/$5.macros.tex >> generated/qwen_serving_macros_v16.tex && echo "  $3: $(grep -c '\\\\' generated/$5.tex) rows"; }
+q8rows $Q8ROOT $Q8ARM "$Q8LABEL" vpQwenEight qwen8b_serving_rows
+q8rows $Q8AROOT $Q8AARM "$Q8ALABEL" vpQwenEightAlt qwen8b_alt_serving_rows
+q8rows $Q8OROOT $Q8OARM "$Q8OLABEL" vpQwenEightOld qwen8b_old_serving_rows
 
-say "6e Qwen quality: block-B knee rows (qwen_quality_v16) + the 2x2 per checkpoint (A/B native: 4B from v1.5, 8B from CloudLab; C/D = block B)"
+say "6e Qwen quality: block-B knee rows (qwen_quality_v16) + the 2x2 per checkpoint (A/B native: 4B from v1.5, 8B from the node's lm-eval runs; C/D = block B)"
 rm -f generated/qwen_blockb_rows.tex generated/qwen_blockb_macros.tex generated/qwen_quality_rows.tex generated/qwen_quality_macros.tex
 QL=$AN/qwen_loaded_v16.json
 if [ -f $QL ]; then
   python3 $VP/qwen_quality_v16.py --scores $QL --raw $AN/qwen_loaded_cells --ds gsm8k_q4b --knee r16p15 --arms up=upstream_g1024 hyb=vskipper_qwen3_4b alw=vskipper_qwen3_4b_alwaysroute --label "Qwen3-4B" --macro QwenFour --rows generated/qwen_blockb_rows.tex --macros generated/qwen_blockb_macros.tex | tail -1
-  QS=$AN/qwen_loaded_sweep.json   # v1.6.1: the pick's block-B cells (upstream_g1024 / hybrid / always-route, one node, D-843)
-  python3 $VP/qwen_quality_v16.py --scores $QS --raw $AN/qwen_loaded_cells_sweep --ds gsm8k_q8b --knee r13p3 --arms up=upstream_g1024 hyb=$Q8ARM alw=${Q8ARM}_alwaysroute --label "Qwen3-8B" --macro QwenEight --rows generated/qwen_blockb_rows.tex --macros generated/qwen_blockb_macros.tex | tail -1
+  # Qwen3-8B block-B cells: the served and the 18,750 checkpoint share one node run (qwen_loaded_q8b.json, 2026-09-19, with its
+  # upstream cell); the 10,000 checkpoint has its own run and upstream cell (qwen_loaded_q8b_step10000.json, 2026-09-17).
+  QS=$AN/qwen_loaded_q8b.json; QSO=$AN/qwen_loaded_q8b_step10000.json
+  python3 $VP/qwen_quality_v16.py --scores $QSO --raw $AN/qwen_loaded_cells_q8b_step10000 --ds gsm8k_q8b --knee r13p3 --arms up=upstream_g1024 hyb=$Q8OARM alw=${Q8OARM}_alwaysroute --label "$Q8OLABEL" --macro QwenEightOld --rows generated/qwen_blockb_rows.tex --macros generated/qwen_blockb_macros.tex | tail -1
+  python3 $VP/qwen_quality_v16.py --scores $QS --raw $AN/qwen_loaded_cells_q8b --ds gsm8k_q8b --knee r13p3 --arms up=upstream_g1024 hyb=$Q8AARM alw=${Q8AARM}_alwaysroute --label "$Q8ALABEL" --macro QwenEightAlt --rows generated/qwen_blockb_rows.tex --macros generated/qwen_blockb_macros.tex | tail -1
+  python3 $VP/qwen_quality_v16.py --scores $QS --raw $AN/qwen_loaded_cells_q8b --ds gsm8k_q8b --knee r13p3 --arms up=upstream_g1024 hyb=$Q8ARM alw=${Q8ARM}_alwaysroute --label "$Q8LABEL" --macro QwenEight --rows generated/qwen_blockb_rows.tex --macros generated/qwen_blockb_macros.tex | tail -1
   Q4=$PACK/identity-preserved/qwen-quality-ab-bf16
-  # 6e2 native composite readings, one line per native run (the same rule as the served cells; never computed by hand): the 4B and 8B
-  # A/B halves, plus the D-843 checkpoint-selection runs when the pack holds them (`qwen8b-selection/<label>/gsm8k`, skip shares in SKIPS).
-  # Each candidate also gets its SERVED knee reading (block B, the same scorer) beside the native one: the label `c<coef>-step<N>`
+  # 6e2 native composite readings, one line per native run (the same rule as the served cells; never computed by hand): the Qwen3-8B
+  # base and the three reported checkpoints (`qwen8b-native/<label>/gsm8k`; SKIPS.txt = the training-time chat-template probe skip).
+  # Each checkpoint also gets its SERVED knee reading (block B, the same scorer) beside the native one: the label `c<coef>-step<N>`
   # maps to the fork arm `vskipper_qwen3_8b_c<coef>s<N>`; the base maps to the upstream cell. Macro stems spell the digits out.
-  SEL=$PACK/qwen8b-selection; RUNS="--run Qwen3-8B-base=$SEL/base/gsm8k --served Qwen3-8B-base=$QS:loaded-upstream_g1024-gsm8k_q8b-r13p3/ --macro-key Qwen3-8B-base=Base"; SKIPS=""
+  SEL=$PACK/qwen8b-native; RUNS="--run Qwen3-8B-base=$SEL/base/gsm8k --served Qwen3-8B-base=$QS:loaded-upstream_g1024-gsm8k_q8b-r13p3/ --macro-key Qwen3-8B-base=Base"; SKIPS=""
   [ -f $SEL/SKIPS.txt ] && for d in $SEL/*/gsm8k; do l=$(basename $(dirname $d)); [ "$l" = base ] && continue; RUNS="$RUNS --run $l=$d"
-    arm=vskipper_qwen3_8b_$(echo $l | sed 's/-step/s/'); python3 -c "import json,sys; d=json.load(open('$QS'))['__per_row__']; sys.exit(0 if any('loaded-$arm-gsm8k_q8b-r13p3/' in k for k in d) else 1)" && RUNS="$RUNS --served $l=$QS:loaded-$arm-gsm8k_q8b-r13p3/"
-    key=$(echo $l | sed 's/c1e4/CoefOneEFour/; s/c5e5/CoefFiveEFive/; s/c25e6/CoefTwoFiveESix/; s/-step10000/StepTenK/; s/-step8750/StepEightK/; s/-step7500/StepSevenK/; s/-step5000/StepFiveK/; s/[^A-Za-z]//g'); RUNS="$RUNS --macro-key $l=$key"
+    arm=vskipper_qwen3_8b_$(echo $l | sed 's/-step/s/'); for sf in $QS $QSO; do python3 -c "import json,sys; d=json.load(open('$sf'))['__per_row__']; sys.exit(0 if any('loaded-$arm-gsm8k_q8b-r13p3/' in k for k in d) else 1)" && { RUNS="$RUNS --served $l=$sf:loaded-$arm-gsm8k_q8b-r13p3/"; break; }; done
+    key=$(echo $l | sed 's/c1e4/CoefOneEFour/; s/c5e5/CoefFiveEFive/; s/-step18750/StepEighteenKSevenFifty/; s/-step15000/StepFifteenK/; s/-step10000/StepTenK/; s/[^A-Za-z]//g'); RUNS="$RUNS --macro-key $l=$key"
     sk=$(grep "^$l=" $SEL/SKIPS.txt | cut -d= -f2); [ -n "$sk" ] && SKIPS="$SKIPS --skip $l=$sk"; done
   python3 $VP/native_composite.py $RUNS $SKIPS --base Qwen3-8B-base --rows generated/qwen_native_rows.tex --macros generated/qwen_native_macros.tex --macro-prefix vpNatQ --json generated/qwen_native.json | tail -n 6
   python3 $VP/paired_dod_2x2_v16.py --no-filter-col --no-gate-col --dataset gsm8k --arm A=$Q4/qwen_base/gsm8k --arm B=$Q4/qwen_fd/gsm8k --scores $QL --cell-c "loaded-upstream_g1024-gsm8k_q4b-r16p15/" --cell-d "loaded-vskipper_qwen3_4b_alwaysroute-gsm8k_q4b-r16p15/" --margin 1.0 --latex generated/qwen_quality_rows.tex --macros generated/qwen_quality_macros.tex --macro-prefix vpQwenFour --json generated/paired_dod_qwen4b.json | tail -1
-  python3 $VP/paired_dod_2x2_v16.py --no-filter-col --no-gate-col --dataset gsm8k --arm A=$SEL/base/gsm8k --arm B=$SEL/c5e5-step10000/gsm8k --scores $QS --cell-c "loaded-upstream_g1024-gsm8k_q8b-r13p3/" --cell-d "loaded-${Q8ARM}_alwaysroute-gsm8k_q8b-r13p3/" --margin 1.0 --latex generated/qwen_quality_rows.tex --macros generated/qwen_quality_macros.tex --macro-prefix vpQwenEight --json generated/paired_dod_qwen8b.json | tail -1
-  sed -i '1s/^[^&]*&/Qwen3-4B \&/; 2s/^[^&]*&/Qwen3-8B \&/' generated/qwen_quality_rows.tex   # row 1 = 4B, row 2 = 8B (the first sed used to hit both lines)
+  python3 $VP/paired_dod_2x2_v16.py --no-filter-col --no-gate-col --dataset gsm8k --arm A=$SEL/base/gsm8k --arm B=$SEL/c5e5-step10000/gsm8k --scores $QSO --cell-c "loaded-upstream_g1024-gsm8k_q8b-r13p3/" --cell-d "loaded-${Q8OARM}_alwaysroute-gsm8k_q8b-r13p3/" --margin 1.0 --latex generated/qwen_quality_rows.tex --macros generated/qwen_quality_macros.tex --macro-prefix vpQwenEightOld --json generated/paired_dod_qwen8b_old.json | tail -1
+  python3 $VP/paired_dod_2x2_v16.py --no-filter-col --no-gate-col --dataset gsm8k --arm A=$SEL/base/gsm8k --arm B=$SEL/c5e5-step18750/gsm8k --scores $QS --cell-c "loaded-upstream_g1024-gsm8k_q8b-r13p3/" --cell-d "loaded-${Q8AARM}_alwaysroute-gsm8k_q8b-r13p3/" --margin 1.0 --latex generated/qwen_quality_rows.tex --macros generated/qwen_quality_macros.tex --macro-prefix vpQwenEightAlt --json generated/paired_dod_qwen8b_alt.json | tail -1
+  python3 $VP/paired_dod_2x2_v16.py --no-filter-col --no-gate-col --dataset gsm8k --arm A=$SEL/base/gsm8k --arm B=$SEL/c1e4-step15000/gsm8k --scores $QS --cell-c "loaded-upstream_g1024-gsm8k_q8b-r13p3/" --cell-d "loaded-${Q8ARM}_alwaysroute-gsm8k_q8b-r13p3/" --margin 1.0 --latex generated/qwen_quality_rows.tex --macros generated/qwen_quality_macros.tex --macro-prefix vpQwenEight --json generated/paired_dod_qwen8b.json | tail -1
+  python3 - generated/qwen_quality_rows.tex "Qwen3-4B" "$Q8OLABEL" "$Q8ALABEL" "$Q8LABEL" <<'PY'
+import sys, pathlib   # row i's first cell = label i (the d-o-d script writes the dataset key there); one row per call above, in order
+p = pathlib.Path(sys.argv[1]); lines = p.read_text().splitlines()
+assert len(lines) == len(sys.argv) - 2, (len(lines), sys.argv[2:])
+p.write_text("".join(label + " &" + line.split("&", 1)[1] + "\n" for label, line in zip(sys.argv[2:], lines)))
+PY
 else echo "  Qwen block-B scores pending"; fi
 
-rm -f generated/qwen8b_s7500_rows.tex   # v1.6.1: the 7,500 row is gone (one Qwen3-8B checkpoint, D-843)
+say "6g served decode skip at each model's knee: the always-route arm's attestation on its block-B knee cell (Table 5 column, the V* sentence, App. K)"
+python3 $VP/attested_skip.py --cell LlamaKnee=$AN/loaded_cells/loaded-integrated_alwaysskip-gsm8k-r12p35/server_info.after.json \
+  --cell QwenFourKnee=$AN/qwen_loaded_cells/loaded-vskipper_qwen3_4b_alwaysroute-gsm8k_q4b-r16p15/server_info.after.json \
+  --cell QwenEightKnee=$AN/qwen_loaded_cells_q8b/loaded-${Q8ARM}_alwaysroute-gsm8k_q8b-r13p3/server_info.after.json \
+  --cell QwenEightAltKnee=$AN/qwen_loaded_cells_q8b/loaded-${Q8AARM}_alwaysroute-gsm8k_q8b-r13p3/server_info.after.json \
+  --cell QwenEightOldKnee=$AN/qwen_loaded_cells_q8b_step10000/loaded-${Q8OARM}_alwaysroute-gsm8k_q8b-r13p3/server_info.after.json \
+  --macros generated/served_skip_macros.tex && echo "  $(grep -c newcommand generated/served_skip_macros.tex) served-skip macros"
+python3 - $PACK/probes generated/probe_skip_macros.tex <<'PY'
+import json, sys, pathlib   # the 32-prompt routing probe's chat-template skip share (overall_skip_rate), the training-time selection signal (App. M)
+root = pathlib.Path(sys.argv[1]); out = ["% GENERATED: chat-template skip share of the routing probe per reported Qwen3-8B checkpoint (probes/<arm>/probe_step<N>-chat.json)"]
+for name, arm, step in (("QwenEight", "q8b-ste-c1e4-from7500", 15000), ("QwenEightAlt", "q8b-ste-c5e5-from7500", 18750), ("QwenEightOld", "q8b-ste-c5e5-from7500", 10000)):
+    v = json.load(open(root / arm / f"probe_step{step}-chat.json"))["overall_skip_rate"]; out.append(f"\\newcommand{{\\vpProbeSkip{name}}}{{{v:.3f}}}")
+pathlib.Path(sys.argv[2]).write_text("\n".join(out) + "\n"); print(f"  {len(out) - 1} probe-skip macros")
+PY
 
-# (v1.7: the GSM8K all-models table was removed from the paper (owner); the cross-model figure of step 6d2 carries that view)
 say "6d Pareto panels: block-B knee score (0.95 x Q*) vs mean E2E latency per served arm (D-829)"
 python3 $VP/pareto_figure.py --headline generated/paired_report.json --ablation-dir $AN/ablation --scores $AN/loaded_all_v16.json --knee gsm8k=r12p35 --knee bbh_cot=r32p3 --knee coqa=r23p75 --pdf figures/pareto_knee.pdf --macros generated/pareto_macros.tex | head -1
 
 say "6d2 cross-model figure (v1.7): GSM8K at each model's own knee, upstream vs vSkipper, three models, explicit keys"
-QPK=$AN/qwen/qwen8b_c5e5s10000_gsm8k_q8b/paired_report.upstream_g1024__$Q8ARM.json
-if [ -f $QPK ] && [ -f $AN/qwen_loaded_sweep.json ]; then
+QPK=$Q8ROOT/paired_report.upstream_g1024__$Q8ARM.json
+if [ -f $QPK ] && [ -f $QS ]; then
   python3 $VP/pareto_models_figure.py \
     --point "Llama-3-8B=generated/paired_report.json:gsm8k:r12p35:$AN/loaded_all_v16.json:loaded-upstream_g1024-gsm8k-r12p35/:loaded-vskipper-gsm8k-r12p35/" \
     --point "Qwen3-4B=$QW/qwen4b_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b.json:gsm8k_q4b:r16p15:$AN/qwen_loaded_v16.json:loaded-upstream_g1024-gsm8k_q4b-r16p15/:loaded-vskipper_qwen3_4b-gsm8k_q4b-r16p15/" \
-    --point "Qwen3-8B=$QPK:gsm8k_q8b:r13p3:$AN/qwen_loaded_sweep.json:loaded-upstream_g1024-gsm8k_q8b-r13p3/:loaded-${Q8ARM}-gsm8k_q8b-r13p3/" \
+    --point "Qwen3-8B=$QPK:gsm8k_q8b:r13p3:$QS:loaded-upstream_g1024-gsm8k_q8b-r13p3/:loaded-${Q8ARM}-gsm8k_q8b-r13p3/" \
     --macro-key "Llama-3-8B=LlamaGsm" --macro-key "Qwen3-4B=QwenFour" --macro-key "Qwen3-8B=QwenEight" \
     --pdf figures/pareto_models.pdf --macros generated/pareto_models_macros.tex | head -1
 else echo "  cross-model figure: Qwen3-8B inputs pending"; fi
@@ -188,9 +222,10 @@ latexmk -g -pdf -interaction=nonstopmode main.tex > /dev/null 2>&1 || true
 errs=$(grep -cE '^!|Misplaced|Undefined control' main.log || true); echo "  $(pdfinfo main.pdf 2>/dev/null | awk '/Pages/{print $2}') pages, $errs error lines"
 say "8  MECHANICAL CHECK -- the paper against the artifacts"
 # Each paired report verifies its own rows in main.tex; the other reports' rows are named to --ignore-datasets.
-OTHERS="H100,RTX A6000,Qwen3-4B,Qwen3-8B"
+QROWS="Qwen3-4B,Qwen3-4B (Llama band),$Q8LABEL,$Q8ALABEL,$Q8OLABEL"; OTHERS="H100,RTX A6000,$QROWS"
 python3 $VP/paper_table.py generated/paired_report.json "${KNEES[@]}" --verify main.tex --ignore-datasets "$OTHERS" || echo "  A100 VERIFY FAILED"
-[ -f $H ] && { python3 $VP/paper_table.py $H --knee gsm8k=14 --dataset-label "H100" --verify main.tex --ignore-datasets "GSM8K,BBH,CoQA,RTX A6000,Qwen3-4B,Qwen3-8B" || echo "  H100 VERIFY FAILED"; }
-[ -f $A6 ] && { python3 $VP/paper_table.py $A6 --knee gsm8k=$(cat $AN/rtxa6000/qstar.txt) --dataset-label "RTX A6000" --verify main.tex --ignore-datasets "GSM8K,BBH,CoQA,H100,Qwen3-4B,Qwen3-8B" || echo "  A6000 VERIFY FAILED"; }
-[ -f $Q8ROOT/paired_report.upstream_g1024__$Q8ARM.json ] && { python3 $VP/paper_table.py $Q8ROOT/paired_report.upstream_g1024__$Q8ARM.json --knee gsm8k_q8b=14 --dataset-label "Qwen3-8B" --verify main.tex --ignore-datasets "GSM8K,BBH,CoQA,H100,RTX A6000,Qwen3-4B" || echo "  QWEN3-8B VERIFY FAILED"; }
-[ -f $QW/qwen4b_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b.json ] && { python3 $VP/paper_table.py $QW/qwen4b_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b.json --knee gsm8k_q4b=17 --dataset-label "Qwen3-4B" --verify main.tex --ignore-datasets "GSM8K,BBH,CoQA,H100,RTX A6000,Qwen3-8B" || echo "  QWEN3-4B VERIFY FAILED"; }
+[ -f $H ] && { python3 $VP/paper_table.py $H --knee gsm8k=14 --dataset-label "H100" --verify main.tex --ignore-datasets "GSM8K,BBH,CoQA,RTX A6000,$QROWS" || echo "  H100 VERIFY FAILED"; }
+[ -f $A6 ] && { python3 $VP/paper_table.py $A6 --knee gsm8k=$(cat $AN/rtxa6000/qstar.txt) --dataset-label "RTX A6000" --verify main.tex --ignore-datasets "GSM8K,BBH,CoQA,H100,$QROWS" || echo "  A6000 VERIFY FAILED"; }
+for spec in "$Q8ROOT:$Q8ARM:$Q8LABEL" "$Q8AROOT:$Q8AARM:$Q8ALABEL" "$Q8OROOT:$Q8OARM:$Q8OLABEL"; do IFS=: read -r root arm label <<< "$spec"
+  [ -f $root/paired_report.upstream_g1024__$arm.json ] && { python3 $VP/paper_table.py $root/paired_report.upstream_g1024__$arm.json --knee gsm8k_q8b=14 --dataset-label "$label" --verify main.tex --ignore-datasets "GSM8K,BBH,CoQA,H100,RTX A6000,${QROWS/,"$label"/}" || echo "  $label VERIFY FAILED"; }; done
+[ -f $QW/qwen4b_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b.json ] && { python3 $VP/paper_table.py $QW/qwen4b_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b.json --knee gsm8k_q4b=17 --dataset-label "Qwen3-4B" --verify main.tex --ignore-datasets "GSM8K,BBH,CoQA,H100,RTX A6000,${QROWS/Qwen3-4B,/}" || echo "  QWEN3-4B VERIFY FAILED"; }
