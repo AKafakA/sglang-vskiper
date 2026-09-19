@@ -316,7 +316,7 @@ ARMS["vskipper_qwen3_4b_sharedband"] = {
 }
 
 # [D-830, 2026-09-16] The third model: FlexiDepth-Qwen3-8B, our alignment-only `ste_hard` checkpoint
-# (coef 2.5e-5; CloudLab d8545 campaign 2026-09-16, model of record = the last checkpoint that passed
+# (coef 2.5e-5; 4-GPU training campaign 2026-09-16, model of record = the last checkpoint that passed
 # the on-node quality gate, D-828). Same family port as Qwen3-4B (36 layers, routed 18..35, 8 K/V heads
 # x 128 = 4 KB/token/layer). `design_skip_ratio` = the chat-template skip the gate attested on the
 # served checkpoint (0.383 at step 5,000); `decode_kv_band` = the rule with this arm's inputs
