@@ -43,3 +43,16 @@ def test_campaign_binds_both_fork_packages_and_only_upstream_baseline():
     assert serving_pythonpath(spec, "upstream_g1024") == "/upstream/python"
     assert serving_pythonpath(spec, "upstream") == "/upstream/python"
     assert serving_pythonpath(spec, "stock") == "/candidate/vskipper/src:/candidate/python"
+
+
+def test_documented_campaign_binds_upstream_baseline():
+    from run_paired_campaign import serving_pythonpath, upstream_arms
+    text = (ROOT / "vskipper/docs/02-run-experiments.md").read_text()
+    spec = json.loads(text.split("```json\n", 1)[1].split("```", 1)[0])
+    baseline = spec["arms"]["baseline"]
+    assert serving_pythonpath(spec, baseline) == spec["upstream_tree"] + "/python"
+    assert upstream_arms(spec)[baseline] == ["--cuda-graph-max-bs", "1024"]
+    exemptions = spec["upstream_arm_exemptions"][baseline]
+    assert exemptions["cuda_graph_max_bs"]["value"] == 1024
+    assert exemptions["cuda_graph_config"]["accept_if"] == {
+        "decode.max_bs": 1024, "decode.bs[max]": 1024}

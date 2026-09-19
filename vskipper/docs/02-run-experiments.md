@@ -84,12 +84,25 @@ Create `campaign.json` with these fields, using absolute paths:
   "host_config": "/path/to/host.json",
   "source_revision": "FULL_REFERENCE_COMMIT",
   "arms": {"baseline": "upstream_g1024", "treatment": "vskipper"},
+  "upstream_arms": {"upstream_g1024": ["--cuda-graph-max-bs", "1024"]},
+  "upstream_arm_exemptions": {
+    "upstream_g1024": {
+      "cuda_graph_max_bs": {"value": 1024, "decision": "Matched decode-graph ladder"},
+      "cuda_graph_config": {
+        "accept_if": {"decode.max_bs": 1024, "decode.bs[max]": 1024},
+        "decision": "Matched decode-graph ladder"
+      }
+    }
+  },
   "datasets": {"gsm8k": {"r9p75": 9.75, "r12p35": 12.35, "r16p25": 16.25}}
 }
 ```
 
 `datasets` maps each workload to rate labels and numeric offered rates. The
-example shows the Llama GSM8K grid; supply the complete target campaign's
+`upstream_arms` declaration binds the baseline to the upstream checkout and
+supplies its matched graph-cap argument; `upstream_arm_exemptions` declares
+the corresponding resolved fields to the default-conformance gate.
+The example shows the Llama GSM8K grid; supply the complete target campaign's
 workloads, rates and repetitions. For another model, include its recorded
 `model_revision` and `served_model_name`. Set `launch_profile` when the contract
 selects a profile other than the design's default.
