@@ -24,7 +24,7 @@ def _fake_boot(outcomes: list[dict[str, str]], boots: list[dict[str, float]]):
     """Each call consumes one outcome: {label: 'ok' | 'reject' | 'crash'}."""
     def boot(spec, dataset, rates, arm, rep, cell_root, port, attempt):
         boots.append(dict(rates))
-        cells = cell_root / "cells"
+        cells = cell_root / ("cells" if attempt == 1 else f"cells_retry{attempt}")   # as run_arm_boot does
         cells.mkdir(exist_ok=True)
         (cells / "run_manifest.json").write_text('{"attempt": %d}\n' % attempt)
         (cell_root / "runner.log").write_text(f"attempt {attempt}\n")
@@ -58,6 +58,8 @@ def test_refused_rate_is_remeasured_alone_and_rejection_kept(tmp_path, monkeypat
     assert any(p.name.startswith("INVALID.") for p in shelf.iterdir())
     assert not any(p.name.startswith("INVALID.") for p in cells.iterdir())
     assert not rpc.refused_cells(cells, "gsm8k", RATES)
+    assert (cells / "run_manifest.retry2.json").is_file()            # the re-measure's manifest kept beside
+    assert not any((cells.parent / "cells_retry2").glob("*_qps*"))    # nothing left behind in the retry dir
 
 
 def test_bounded_attempts_then_unquotable(tmp_path, monkeypatch):
@@ -80,14 +82,16 @@ def test_crashed_run_with_no_artifact_is_remeasured(tmp_path, monkeypatch):
     assert rc == 0 and len(boots) == 2 and boots[1] == RATES
 
 
-def test_runner_command_resumes_only_on_remeasure():
+def test_runner_command_never_resumes():
     spec = {"tree": str(ROOT), "python": "py", "suites_dir": "/s", "source_revision": "x",
             "arms": {"baseline": "upstream_g1024", "treatments": ["vskipper"]}, "upstream_arms": {}}
     monkey = rpc.arm_is_upstream
     rpc.arm_is_upstream = lambda s, a: False
     try:
         base = rpc.runner_command(spec, "vskipper", Path("/m"), Path("/q"), Path("/c"), 1)
-        again = rpc.runner_command(spec, "vskipper", Path("/m"), Path("/q"), Path("/c"), 1, resume=True)
+        again = rpc.runner_command(spec, "vskipper", Path("/m"), Path("/q"), Path("/c_retry2"), 1)
     finally:
         rpc.arm_is_upstream = monkey
-    assert "--resume-completed" not in base and "--resume-completed" in again
+    # a re-measure boots a FRESH runner into its own directory (Codex r2 BLOCKER: the
+    # runner refuses a resume whose qps config differs), so resume is never requested
+    assert "--resume-completed" not in base and "--resume-completed" not in again

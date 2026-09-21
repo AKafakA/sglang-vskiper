@@ -383,7 +383,7 @@ def default_conformance_gate(spec: dict[str, Any], arm: str, port: int) -> None:
 
 
 def runner_command(spec: dict[str, Any], arm: str, manifest: Path, qps_config: Path,
-                   cells_dir: Path, port: int, resume: bool = False) -> list[str]:
+                   cells_dir: Path, port: int) -> list[str]:
     """The run_qps_evaluation.py invocation for ONE booted arm.
 
     Shared by the perf lane (run_arm_cells) and the natural-lane harvest (run_natural_harvest.py)
@@ -423,10 +423,9 @@ def runner_command(spec: dict[str, Any], arm: str, manifest: Path, qps_config: P
          # artifacts are renamed INVALID.* and GR-1a fails that rate -- it simply no
          # longer takes its siblings down.
          "--continue-after-accounting-rejection"]
-        # A re-measure boot writes into the SAME cells directory (every downstream reader --
-        # cell_artifact, paired_analysis, the node's bundle scripts -- looks there); the
-        # runner only accepts an existing directory in resume mode.
-        + (["--resume-completed"] if resume else [])
+        # A re-measure boots a FRESH runner into cells_retry<k>/ (never resume mode: the
+        # runner refuses a resume whose qps config differs); run_arm_cells then moves the
+        # re-measured labels into cells/, where every downstream reader looks.
         + (["--upstream-baseline"] if arm_is_upstream(spec, arm) else []))
 
 
@@ -470,11 +469,33 @@ def shelve_rejected(cells_dir: Path, dataset: str, refused: dict[str, float], at
         (shelf / "run_manifest.json").write_bytes(manifest.read_bytes())
 
 
+def adopt_remeasured(retry_dir: Path, cells_dir: Path, dataset: str,
+                     refused: dict[str, float], attempt: int) -> None:
+    """Move a re-measure's files for the refused labels into cells/ (their names are
+    free there: the rejected attempt was shelved) and keep its run manifest beside."""
+    if not retry_dir.is_dir():
+        return
+    for label in refused:
+        suite = suite_name(dataset, label)
+        for path in list(retry_dir.glob(f"*{suite}_qps*")):
+            if path.is_file():
+                path.rename(cells_dir / path.name)
+    manifest = retry_dir / "run_manifest.json"
+    if manifest.is_file():
+        manifest.rename(cells_dir / f"run_manifest.retry{attempt}.json")
+
+
 def run_arm_boot(spec: dict[str, Any], dataset: str, rates: dict[str, float],
                  arm: str, rep: int, cell_root: Path, port: int, attempt: int) -> int:
-    """The given rates for one (dataset, arm, rep) against ONE boot. Returns the runner's rc."""
+    """The given rates for one (dataset, arm, rep) against ONE boot. Returns the runner's rc.
+
+    A re-measure (attempt > 1) runs a FRESH runner into its own ``cells_retry<k>/``
+    (its own qps.json with only the refused rates; the runner refuses a resume whose
+    qps config differs -- Codex r2 BLOCKER); run_arm_cells moves the re-measured
+    labels into ``cells/`` afterwards, where every reader looks.
+    """
     tree = Path(spec["tree"])
-    cells_dir = cell_root / "cells"
+    cells_dir = cell_root / ("cells" if attempt == 1 else f"cells_retry{attempt}")
     if attempt > 1:
         previous = cell_root / "boots" / f"attempt{attempt - 1}"
         previous.mkdir(parents=True, exist_ok=True)
@@ -520,8 +541,7 @@ def run_arm_boot(spec: dict[str, Any], dataset: str, rates: dict[str, float],
         # fewer than their whole suite. The runner derives duration = rows/qps per cell,
         # which is the only form that keeps work identical across rates.
         completed = subprocess.run(
-            runner_command(spec, arm, manifest, qps_config, cells_dir, port,
-                           resume=cells_dir.is_dir()),
+            runner_command(spec, arm, manifest, qps_config, cells_dir, port),
             check=False, stdout=(cell_root / "runner.log").open("wb"),
             stderr=subprocess.STDOUT,
         )
@@ -549,6 +569,7 @@ def run_arm_cells(spec: dict[str, Any], dataset: str, rates: dict[str, float],
             f"cells/rejected/attempt{attempt - 1})")
         shelve_rejected(cells_dir, dataset, refused, attempt - 1)
         rc = run_arm_boot(spec, dataset, refused, arm, rep, cell_root, port, attempt=attempt)
+        adopt_remeasured(cell_root / f"cells_retry{attempt}", cells_dir, dataset, refused, attempt)
     refused = refused_cells(cells_dir, dataset, rates)
     if refused:
         log(f"    {arm}: STILL REFUSED after {MAX_CELL_ATTEMPTS} attempts: {sorted(refused)} "
