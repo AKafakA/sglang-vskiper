@@ -390,6 +390,11 @@ class ReqVPMixin:
         # AdmissionPinner; None until admitted (or forever when pinning is off).
         # Survives a retract/re-admit round trip: the pin is never re-decided.
         self.vp_body: Optional[str] = None
+        # [phase-sticky] the body the prompt was encoded by (fixed at admission) and
+        # whether the decode body has been decided at the prefill->decode boundary
+        self.vp_prefill_body: Optional[str] = None
+        self.vp_decode_body: Optional[str] = None
+        self.vp_decode_pinned: bool = False
 
 
 def _env_scan() -> bool:

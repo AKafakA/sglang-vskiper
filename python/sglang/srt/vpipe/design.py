@@ -51,7 +51,7 @@ SERVED_REGIME_SWITCH: Final[dict[str, Any]] = {
     "version": 2,
     "admission": {
         "enabled": True,
-        "criterion": "decode_band_state",
+        "criterion": "phase_sticky",
         "cold_start": "stock",
         "prefill_demotion": "observe_only",
         "mixed_step": "forced_run",

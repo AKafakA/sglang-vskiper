@@ -45,7 +45,7 @@ SERVED_V2 = {
     "version": 2,
     "admission": {
         "enabled": True,
-        "criterion": "decode_band_state",
+        "criterion": "phase_sticky",
         "cold_start": "stock",
         "prefill_demotion": "observe_only",
         "mixed_step": "forced_run",
@@ -198,6 +198,30 @@ def test_pinner_follows_the_kv_band_with_hysteresis() -> None:
     assert counts["admitted_fd"] == 1 and counts["admitted_stock"] == 1
     with pytest.raises(ValueError):
         pinner.observe_decode_step(8, None)  # the kv criterion needs seq_lens_sum
+
+
+def test_pinner_phase_sticky_prefill_round_and_decode_boundary() -> None:
+    pinner = AdmissionPinner(_cfg())
+    assert pinner.phase_sticky
+    # prefill body per round from the round's prompt tokens (the v1 pass threshold, 1536)
+    assert pinner.prefill_pin(1535) == REQUEST_BODY_STOCK
+    assert pinner.prefill_pin(1536) == REQUEST_BODY_FD
+    # decode body at the boundary: FD after FD prefill regardless of the band; band state after stock prefill
+    assert pinner.decode_pin_at_boundary(REQUEST_BODY_FD) == REQUEST_BODY_FD
+    assert pinner.decode_pin_at_boundary(REQUEST_BODY_STOCK) == REQUEST_BODY_STOCK
+    pinner.observe_decode_step(256, 262_144)  # band HIGH
+    assert pinner.decode_pin_at_boundary(REQUEST_BODY_STOCK) == REQUEST_BODY_FD
+    assert pinner.decode_pin_at_boundary(REQUEST_BODY_FD) == REQUEST_BODY_FD
+    for pre, dec in ((REQUEST_BODY_STOCK, REQUEST_BODY_STOCK), (REQUEST_BODY_STOCK, REQUEST_BODY_FD), (REQUEST_BODY_FD, REQUEST_BODY_FD)):
+        pinner.record_plan(pre, dec)
+    with pytest.raises(ValueError):
+        pinner.record_plan(REQUEST_BODY_FD, REQUEST_BODY_STOCK)  # FD->stock is never a served plan
+    c = pinner.counters()
+    assert (c["plan_stock_stock"], c["plan_stock_fd"], c["plan_fd_fd"]) == (1, 1, 1)
+    # the band-state criterion keeps the version-2 admission pin
+    band = AdmissionPinner(_cfg(**{"admission.criterion": "decode_band_state"}))
+    assert not band.phase_sticky and band.prefill_pin(10_000) == REQUEST_BODY_STOCK
+    assert band.decode_pin_at_boundary(REQUEST_BODY_STOCK) == REQUEST_BODY_STOCK
 
 
 def test_pinner_inactive_when_switch_off_or_pinning_off() -> None:

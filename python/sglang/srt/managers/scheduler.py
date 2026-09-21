@@ -1055,13 +1055,57 @@ class Scheduler(
             )
 
     def _vp_pin_request(self, req: Req, pin: str) -> None:
-        """Pin ``req`` to ``pin`` for its lifetime and namespace its prefix-cache
-        key by body (the lora_id precedent in Req.__init__): a stock request only
-        reuses stock-computed prefixes and an fd request fd-computed ones."""
+        """Pin ``req``'s PREFILL body and namespace its prefix-cache key by it
+        (the lora_id precedent in Req.__init__): a prompt is only served from
+        prefixes the same body computed. The decode body is decided ONCE at the
+        prefill->decode boundary (_vp_pin_decode_boundary)."""
 
+        req.vp_prefill_body = pin
         req.vp_body = pin
         req.extra_key = (req.extra_key or "") + f"|vpbody={pin}"
         self.vp_pinner.record_admission(pin)
+
+    def _vp_round_prompt_tokens(self, running_bs: int) -> int:
+        """[phase-sticky] Prompt tokens this admission round can take: the
+        waiting queue in order, up to the chunk budget and the allocatable
+        request count (before cache hits -- the key that finds them depends on
+        this decision)."""
+
+        budget = self.server_args.chunked_prefill_size
+        slots = self.get_num_allocatable_reqs(running_bs)
+        total = 0
+        for index, req in enumerate(self.waiting_queue):
+            if index >= slots:
+                break
+            tokens = len(req.origin_input_ids)
+            if budget is not None and budget > 0 and total + tokens > budget and total > 0:
+                break
+            total += tokens
+            if budget is not None and budget > 0 and total >= budget:
+                break
+        return total
+
+    def _vp_pin_decode_boundary(self, req: Req) -> None:
+        """[phase-sticky] Decide ``req``'s DECODE body once, as it leaves prefill:
+        FD after an FD prefill, else the band state now; fixed for the rest of
+        the request. A stock->FD request's finished K/V is inserted under its
+        own plan namespace (never reused by a stock-prefill request)."""
+
+        if not self.vp_pinner.active or req.vp_prefill_body is None:
+            return
+        if req.vp_decode_pinned:
+            # a retracted request re-entering decode keeps its plan
+            req.vp_body = req.vp_decode_body
+            return
+        decode = self.vp_pinner.decode_pin_at_boundary(req.vp_prefill_body)
+        self.vp_pinner.record_plan(req.vp_prefill_body, decode)
+        req.vp_decode_pinned = True
+        req.vp_decode_body = decode
+        if decode != req.vp_prefill_body:
+            req.extra_key = req.extra_key.replace(
+                f"|vpbody={req.vp_prefill_body}", f"|vpbody={req.vp_prefill_body}->{decode}", 1
+            )
+        req.vp_body = decode
 
     def _vp_pin_witness_prefix(self, req: Req) -> None:
         """Runtime witness that the cache namespace held: the matched prefix
@@ -2756,6 +2800,12 @@ class Scheduler(
             if self.last_batch.batch_size() < last_bs:
                 self.running_batch.batch_is_full = False
 
+            # [phase-sticky] the prefill->decode boundary of every request that
+            # completed its prefill in this pass: decide its decode body once.
+            if self.vp_pinner.active:
+                for req in self.last_batch.reqs:
+                    self._vp_pin_decode_boundary(req)
+
             # Merge the new batch into the running batch.
             if not self.last_batch.is_empty():
                 if self.running_batch.is_empty():
@@ -2875,9 +2925,16 @@ class Scheduler(
         # (retracted re-entries) are deferred to a later round, never re-pinned.
         if running_bs == 0 and self.chunked_req is None:
             self.vp_pinner.observe_idle()  # an empty engine is below any band
-        vp_round_pin = self.vp_pinner.current_pin()
+        # [phase-sticky] the round's PREFILL pin from the prompt tokens this round
+        # can admit (the waiting queue in order, up to the chunk budget); a
+        # chunked request in flight fixes the batch pin instead.
+        vp_round_pin = (
+            self.vp_pinner.prefill_pin(self._vp_round_prompt_tokens(running_bs))
+            if self.vp_pinner.active
+            else None
+        )
         vp_batch_pin = (
-            self.chunked_req.vp_body if self.chunked_req is not None else None
+            self.chunked_req.vp_prefill_body if self.chunked_req is not None else None
         )
         # Skipped during a chunked prefill: that pass must proceed regardless.
         if (
@@ -2995,14 +3052,16 @@ class Scheduler(
             # a retract, or this round's) differs from the round's batch pin is
             # deferred: admission rounds are pin-uniform by construction.
             if vp_round_pin is not None:
-                vp_pin = req.vp_body if req.vp_body is not None else vp_round_pin
+                vp_pin = req.vp_prefill_body if req.vp_prefill_body is not None else vp_round_pin
                 if vp_batch_pin is None:
                     vp_batch_pin = vp_pin
                 if vp_pin != vp_batch_pin:
                     self.vp_pin_admission_deferrals += 1
                     continue
-                if req.vp_body is None:
+                if req.vp_prefill_body is None:
                     self._vp_pin_request(req, vp_pin)
+                else:
+                    req.vp_body = req.vp_prefill_body  # a retracted re-entry re-prefills with its prompt body
             req.init_next_round_input(self.tree_cache)
             if vp_round_pin is not None:
                 self._vp_pin_witness_prefix(req)

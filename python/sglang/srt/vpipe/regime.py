@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Optional
 from sglang.srt.vpipe.common import (
+    ADMISSION_CRITERION_PHASE_STICKY,
     RegimeSwitchConfig,
 )
 from sglang.srt.vpipe.common import (
@@ -497,10 +498,51 @@ class AdmissionPinner:
 
     def __init__(self, cfg: Optional[RegimeSwitchConfig]) -> None:
         self._active = cfg is not None and cfg.pinning
+        self._cfg = cfg
         self._hysteresis = DecodeHysteresis(cfg) if self._active else None
         self._steps = 0
         self._flips = 0
         self._admitted = {REQUEST_BODY_STOCK: 0, REQUEST_BODY_FD: 0}
+        # [phase-sticky] per-request plans decided at the prefill->decode boundary
+        self._plans = {"stock_stock": 0, "stock_fd": 0, "fd_fd": 0}
+
+    @property
+    def phase_sticky(self) -> bool:
+        return self._active and self._cfg.admission.criterion == ADMISSION_CRITERION_PHASE_STICKY
+
+    def prefill_pin(self, round_prompt_tokens: int) -> Optional[str]:
+        """[phase-sticky] The PREFILL body of an admission round: FD when the
+        round's prompt tokens reach the prefill leg's threshold (the version-1
+        pass criterion, before any cache hit), else stock. With the prefill leg
+        off, or under the band-state criterion, the band state decides (the
+        version-2 admission pin)."""
+
+        if not self._active:
+            return None
+        if not self.phase_sticky or not self._cfg.prefill.enabled:
+            return self.current_pin()
+        threshold = self._cfg.prefill.min_tokens
+        return REQUEST_BODY_FD if int(round_prompt_tokens) >= threshold else REQUEST_BODY_STOCK
+
+    def decode_pin_at_boundary(self, prefill_pin: str) -> str:
+        """[phase-sticky] The DECODE body of a request leaving prefill: FD after
+        an FD prefill (FD->stock never occurs), else the band state now."""
+
+        if prefill_pin not in _REQUEST_BODIES:
+            raise ValueError(f"unknown request body pin {prefill_pin!r}")
+        if not self.phase_sticky:
+            return prefill_pin
+        if prefill_pin == REQUEST_BODY_FD:
+            return REQUEST_BODY_FD
+        return pin_from_band_state(self._hysteresis.state)
+
+    def record_plan(self, prefill_pin: str, decode_pin: str) -> None:
+        if not self._active:
+            return
+        key = f"{prefill_pin}_{decode_pin}"
+        if key not in self._plans:
+            raise ValueError(f"[D-849] plan {key!r} is not a served plan")
+        self._plans[key] += 1
 
     @property
     def active(self) -> bool:
@@ -569,6 +611,9 @@ class AdmissionPinner:
             "admitted_fd": self._admitted[REQUEST_BODY_FD],
             "steps_observed": self._steps,
             "band_flips": self._flips,
+            "plan_stock_stock": self._plans["stock_stock"],
+            "plan_stock_fd": self._plans["stock_fd"],
+            "plan_fd_fd": self._plans["fd_fd"],
         }
 
 

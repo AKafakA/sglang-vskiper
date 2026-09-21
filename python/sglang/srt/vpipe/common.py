@@ -121,6 +121,11 @@ REQUEST_BODY_FD = "fd"
 _REQUEST_BODIES = frozenset((REQUEST_BODY_STOCK, REQUEST_BODY_FD))
 VP_BODY_MIXED = "mixed"
 ADMISSION_CRITERION_BAND_STATE = "decode_band_state"
+# [D-849 phase-sticky, 2026-09-21] prefill body per admission round from the round's prompt tokens
+# (the version-1 pass threshold); decode body ONCE at the prefill->decode boundary: FD after an FD
+# prefill, else the band state at that moment. Never switched afterwards; FD->stock never occurs.
+ADMISSION_CRITERION_PHASE_STICKY = "phase_sticky"
+_ADMISSION_CRITERIA = frozenset({ADMISSION_CRITERION_BAND_STATE, ADMISSION_CRITERION_PHASE_STICKY})
 ADMISSION_PREFILL_DEMOTION_OBSERVE_ONLY = "observe_only"
 ADMISSION_MIXED_STEP_PARTITION = "partition"
 # [D-849, 2026-09-21 16:xxZ] one routed replay per mixed step: stock-pinned rows forced to RUN
@@ -1076,16 +1081,16 @@ class RegimeSwitchAdmissionConfig(
     """
 
     enabled: bool
-    criterion: str = ADMISSION_CRITERION_BAND_STATE
+    criterion: str = ADMISSION_CRITERION_PHASE_STICKY
     cold_start: str = REQUEST_BODY_STOCK
     prefill_demotion: str = ADMISSION_PREFILL_DEMOTION_OBSERVE_ONLY
     mixed_step: str = ADMISSION_MIXED_STEP_FORCED_RUN
 
     def validate(self) -> None:
-        if self.criterion != ADMISSION_CRITERION_BAND_STATE:
+        if self.criterion not in _ADMISSION_CRITERIA:
             raise ValueError(
-                "regime switch admission.criterion must be "
-                f"{ADMISSION_CRITERION_BAND_STATE!r}; got {self.criterion!r}"
+                "regime switch admission.criterion must be one of "
+                f"{sorted(_ADMISSION_CRITERIA)}; got {self.criterion!r}"
             )
         if self.cold_start != REQUEST_BODY_STOCK:
             raise ValueError(
