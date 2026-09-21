@@ -163,6 +163,7 @@ def regime_switch_attestation(
             "prefill_demotion": config.admission.prefill_demotion,
             "mixed_step": config.admission.mixed_step,
             "decode_after_fd_prefill": config.admission.decode_after_fd_prefill,
+            "decode_upgrade": config.admission.decode_upgrade,
         }
     block["counters"] = (
         regime_switch_zero_counters() if counters is None else counters
@@ -337,6 +338,7 @@ def scheduler_runtime_attestation(scheduler: Any) -> dict[str, Any]:
                 "mixed_steps": int(scheduler.vp_pin_mixed_steps),
                 "mixed_step_rows_stock": int(scheduler.vp_pin_mixed_step_rows_stock),
                 "mixed_step_rows_fd": int(scheduler.vp_pin_mixed_step_rows_fd),
+                "decode_upgraded_rows": int(scheduler.vp_pin_decode_upgraded_rows),
                 "mix_withheld": int(scheduler.vp_pin_mix_withheld),
                 "cross_body_prefix_reuse": int(scheduler.vp_pin_cross_body_prefix_reuse),
                 "prefix_hit_tokens_stock": int(scheduler.vp_pin_prefix_hit_tokens_stock),
@@ -396,6 +398,8 @@ class ReqVPMixin:
         self.vp_prefill_body: Optional[str] = None
         self.vp_decode_body: Optional[str] = None
         self.vp_decode_pinned: bool = False
+        # [D-849 add. 12] the decode body was upgraded stock->fd once (band HIGH)
+        self.vp_decode_upgraded: bool = False
         # finish-time radix insertion suppressed: generated K/V of another body
         self.vp_skip_finish_insert: bool = False
 

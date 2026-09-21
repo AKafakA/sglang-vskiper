@@ -15,6 +15,7 @@ from sglang.srt.vpipe.common import (
     ADMISSION_CRITERION_PHASE_STICKY,
     ADMISSION_DECODE_AFTER_FD_PREFILL_FD,
     RegimeSwitchConfig,
+    ADMISSION_DECODE_UPGRADE_BAND_HIGH,
 )
 from sglang.srt.vpipe.common import (
     DECODE_BODY_HIGH,
@@ -481,6 +482,25 @@ def pin_from_band_state(state: str) -> str:
     raise ValueError(f"unknown decode band state {state!r}")
 
 
+def upgrade_pinned_rows(pinner: "AdmissionPinner", reqs) -> int:
+    """[D-849 add. 12] Apply the one-way stock->fd decode upgrade to every
+    decode-pinned stock row of the running batch, BEFORE the step's forward
+    batch is built (ForwardBatch.init_new reads ``req.vp_body``). A request
+    whose generated K/V now spans two bodies is never inserted into the radix
+    cache at finish. Returns the number of rows upgraded this step."""
+
+    if not pinner.upgrades_enabled or pinner.state != DECODE_BODY_HIGH:
+        return 0
+    upgraded = 0
+    for req in reqs:
+        if req.vp_decode_pinned and req.vp_body == REQUEST_BODY_STOCK:
+            req.vp_body = req.vp_decode_body = pinner.upgrade_pin(REQUEST_BODY_STOCK)
+            req.vp_decode_upgraded = True
+            req.vp_skip_finish_insert = True
+            upgraded += 1
+    return upgraded
+
+
 class AdmissionPinner:
     """Scheduler-owned mirror of the decode band; decides each request's pin.
 
@@ -506,6 +526,7 @@ class AdmissionPinner:
         self._admitted = {REQUEST_BODY_STOCK: 0, REQUEST_BODY_FD: 0}
         # [phase-sticky] per-request plans decided at the prefill->decode boundary
         self._plans = {"stock_stock": 0, "stock_fd": 0, "fd_fd": 0, "fd_stock": 0}
+        self._upgrades = 0  # [D-849 add. 12] stock->fd decode upgrades at band HIGH
 
     @property
     def phase_sticky(self) -> bool:
@@ -540,6 +561,32 @@ class AdmissionPinner:
         ):
             return REQUEST_BODY_FD
         return pin_from_band_state(self._hysteresis.state)
+
+    @property
+    def upgrades_enabled(self) -> bool:
+        """[D-849 add. 12] one-way stock->fd decode upgrade at band HIGH."""
+        return (
+            self._active
+            and self.phase_sticky
+            and self._cfg.admission.decode_upgrade == ADMISSION_DECODE_UPGRADE_BAND_HIGH
+        )
+
+    def upgrade_pin(self, decode_pin: str) -> str:
+        """[D-849 add. 12] The decode body a stock-pinned request runs from the
+        next step on: ``fd`` once the band is HIGH (routed decode pays for the
+        whole running batch, the per-step band says), else unchanged. Never
+        the other way: a routed decode stays routed. Counts each upgrade."""
+
+        if decode_pin not in _REQUEST_BODIES:
+            raise ValueError(f"unknown request body pin {decode_pin!r}")
+        if (
+            decode_pin == REQUEST_BODY_STOCK
+            and self.upgrades_enabled
+            and self._hysteresis.state == DECODE_BODY_HIGH
+        ):
+            self._upgrades += 1
+            return REQUEST_BODY_FD
+        return decode_pin
 
     def record_plan(self, prefill_pin: str, decode_pin: str) -> None:
         if not self._active:
@@ -620,6 +667,7 @@ class AdmissionPinner:
             "plan_stock_fd": self._plans["stock_fd"],
             "plan_fd_fd": self._plans["fd_fd"],
             "plan_fd_stock": self._plans["fd_stock"],
+            "decode_upgrades_stock_fd": self._upgrades,
         }
 
 

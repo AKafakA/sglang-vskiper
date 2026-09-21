@@ -1031,6 +1031,7 @@ class Scheduler(
         self.vp_pin_retract_reentries = 0
         self.vp_pin_admission_deferrals = 0
         self.vp_pin_mixed_steps = 0
+        self.vp_pin_decode_upgraded_rows = 0  # [D-849 add. 12]
         self.vp_pin_mixed_step_rows_stock = 0
         self.vp_pin_mixed_step_rows_fd = 0
         self.vp_pin_mix_withheld = 0
@@ -3439,6 +3440,13 @@ class Scheduler(
                         else None
                     )
                     self.vp_pinner.observe_decode_step(batch.batch_size(), _vp_kv)
+                    # [D-849 add. 12] one-way stock->fd upgrade of stock-pinned decode
+                    # rows once the band is HIGH (before this step's forward batch is built)
+                    from sglang.srt.vpipe.regime import upgrade_pinned_rows
+
+                    self.vp_pin_decode_upgraded_rows += upgrade_pinned_rows(
+                        self.vp_pinner, batch.reqs
+                    )
                     _vp_stock = sum(1 for r in batch.reqs if r.vp_body == "stock")
                     _vp_fd = sum(1 for r in batch.reqs if r.vp_body == "fd")
                     if _vp_stock and _vp_fd:

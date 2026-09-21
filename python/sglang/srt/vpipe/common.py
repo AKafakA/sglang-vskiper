@@ -131,6 +131,12 @@ ADMISSION_CRITERION_PHASE_STICKY = "phase_sticky"
 ADMISSION_DECODE_AFTER_FD_PREFILL_FD = "fd"
 ADMISSION_DECODE_AFTER_FD_PREFILL_BAND = "band"
 _ADMISSION_DECODE_AFTER_FD_PREFILL = frozenset({ADMISSION_DECODE_AFTER_FD_PREFILL_FD, ADMISSION_DECODE_AFTER_FD_PREFILL_BAND})
+# [D-849 add. 12] a stock-pinned DECODE may upgrade to the routed body ONCE, when the
+# band enters HIGH (never back): the plan frozen at the boundary lagged the band on a
+# ramp (coqa knee: 29 % of requests pinned FD->stock below V*, never skipped -> E2E +4.6 %).
+ADMISSION_DECODE_UPGRADE_NONE = "none"
+ADMISSION_DECODE_UPGRADE_BAND_HIGH = "band_high"
+_ADMISSION_DECODE_UPGRADES = frozenset({ADMISSION_DECODE_UPGRADE_NONE, ADMISSION_DECODE_UPGRADE_BAND_HIGH})
 _ADMISSION_CRITERIA = frozenset({ADMISSION_CRITERION_BAND_STATE, ADMISSION_CRITERION_PHASE_STICKY})
 ADMISSION_PREFILL_DEMOTION_OBSERVE_ONLY = "observe_only"
 ADMISSION_MIXED_STEP_PARTITION = "partition"
@@ -1092,8 +1098,14 @@ class RegimeSwitchAdmissionConfig(
     prefill_demotion: str = ADMISSION_PREFILL_DEMOTION_OBSERVE_ONLY
     mixed_step: str = ADMISSION_MIXED_STEP_FORCED_RUN
     decode_after_fd_prefill: str = ADMISSION_DECODE_AFTER_FD_PREFILL_BAND
+    decode_upgrade: str = ADMISSION_DECODE_UPGRADE_BAND_HIGH
 
     def validate(self) -> None:
+        if self.decode_upgrade not in _ADMISSION_DECODE_UPGRADES:
+            raise ValueError(
+                "regime switch admission.decode_upgrade must be one of "
+                f"{sorted(_ADMISSION_DECODE_UPGRADES)}; got {self.decode_upgrade!r}"
+            )
         if self.criterion not in _ADMISSION_CRITERIA:
             raise ValueError(
                 "regime switch admission.criterion must be one of "
@@ -1393,6 +1405,7 @@ def resolved_design_attestation() -> dict[str, Any]:
                     "prefill_demotion": switch.admission.prefill_demotion,
                     "mixed_step": switch.admission.mixed_step,
                     "decode_after_fd_prefill": switch.admission.decode_after_fd_prefill,
+                    "decode_upgrade": switch.admission.decode_upgrade,
                 },
             }
         ),

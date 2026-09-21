@@ -520,3 +520,42 @@ def test_forward_batch_init_refuses_a_mixed_extend_batch() -> None:
     # exercise the predicate the way ForwardBatch.init_new does.
     rows = ["stock", "fd"]
     assert _bpo(rows) == VP_BODY_MIXED and not ForwardMode.EXTEND.is_decode()
+
+
+def test_pinner_one_way_upgrade_stock_to_fd_at_band_high() -> None:
+    """[D-849 add. 12] a stock-pinned decode upgrades to fd once the band is HIGH, never back."""
+    from sglang.srt.vpipe.regime import upgrade_pinned_rows
+
+    class R:  # a decode-pinned request, duck-typed
+        def __init__(self, body, pinned=True):
+            self.vp_body = body
+            self.vp_decode_body = body
+            self.vp_decode_pinned = pinned
+            self.vp_decode_upgraded = False
+            self.vp_skip_finish_insert = False
+
+    pinner = AdmissionPinner(_cfg())
+    assert pinner.upgrades_enabled
+    rows = [R(REQUEST_BODY_STOCK), R(REQUEST_BODY_FD), R(REQUEST_BODY_STOCK, pinned=False)]
+    # band LOW: nothing moves
+    pinner.observe_decode_step(512, 131_072)
+    assert upgrade_pinned_rows(pinner, rows) == 0 and rows[0].vp_body == REQUEST_BODY_STOCK
+    # band HIGH: the pinned stock row upgrades, the prefilling (unpinned) row and the fd row do not
+    pinner.observe_decode_step(256, 262_144)
+    assert upgrade_pinned_rows(pinner, rows) == 1
+    assert rows[0].vp_body == rows[0].vp_decode_body == REQUEST_BODY_FD
+    assert rows[0].vp_decode_upgraded and rows[0].vp_skip_finish_insert
+    assert rows[2].vp_body == REQUEST_BODY_STOCK and not rows[2].vp_decode_upgraded
+    assert pinner.counters()["decode_upgrades_stock_fd"] == 1
+    # band back to LOW: nothing downgrades, nothing re-upgrades
+    for _ in range(8):
+        pinner.observe_decode_step(512, 131_072)
+    assert pinner.current_pin() == REQUEST_BODY_STOCK
+    assert upgrade_pinned_rows(pinner, rows) == 0 and rows[0].vp_body == REQUEST_BODY_FD
+    # "none" keeps the frozen four plans
+    frozen = AdmissionPinner(_cfg(**{"admission.decode_upgrade": "none"}))
+    frozen.observe_decode_step(256, 262_144)
+    assert not frozen.upgrades_enabled and frozen.upgrade_pin(REQUEST_BODY_STOCK) == REQUEST_BODY_STOCK
+    assert upgrade_pinned_rows(frozen, [R(REQUEST_BODY_STOCK)]) == 0
+    with pytest.raises(ValueError):
+        pinner.upgrade_pin("mixed")
