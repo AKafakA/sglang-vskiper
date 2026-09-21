@@ -940,16 +940,22 @@ def fd_prepare_layer_route_full_graph(
     device_tape = getattr(
         forward_batch, "fd_full_graph_device_route_tape", None
     )
+    # [D-849 forced-RUN] rows pinned to the stock body inside a mixed step
+    # (set by the model runner; a static replay buffer under the graph). A
+    # forced row must be the BASE layer: attention unmasked AND the MLP at
+    # weight 1.0 -- under the released gate a RUN row is otherwise scaled by
+    # its router weight w (w*f(x) is FlexiDepth's RUN, not the base model).
+    force_rows = forward_batch.fd_full_graph_force_run_rows
+    if force_rows is not None:
+        if force_rows.shape != (hidden_states.shape[0],):
+            raise RuntimeError(
+                "[D-849] forced-RUN rows are not aligned with the routed rows: "
+                f"{tuple(force_rows.shape)} vs {hidden_states.shape[0]}"
+            )
+        if action_batch.execution_kind == RUN_PROJECT_EXECUTION:
+            action_batch.branch_weights.masked_fill_(force_rows.view(-1, 1), 1.0)
     route_weights = action_batch.route_weights
     fused_maps = None
-    # [D-849 forced-RUN] rows pinned to the stock body inside a mixed step
-    # (set by the model runner; a static replay buffer under the graph).
-    force_rows = forward_batch.fd_full_graph_force_run_rows
-    if force_rows is not None and force_rows.shape != (hidden_states.shape[0],):
-        raise RuntimeError(
-            "[D-849] forced-RUN rows are not aligned with the routed rows: "
-            f"{tuple(force_rows.shape)} vs {hidden_states.shape[0]}"
-        )
     if (
         device_tape is not None
         and action_batch.execution_kind == RUN_PROJECT_EXECUTION
