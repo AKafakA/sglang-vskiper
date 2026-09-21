@@ -403,8 +403,8 @@ def test_partition_keeps_the_first_sub_pass_logits_when_the_next_replay_overwrit
 def test_pinner_admission_onto_an_idle_engine_observes_the_empty_batch() -> None:
     """After a drain the mirror must not hand the last busy state to the next request."""
     from sglang.srt.vpipe.regime import AdmissionPinner
-    pinner = _pinner()  # active, band (3000, 6000)
-    pinner.observe_decode_step(40, 40_000)
+    pinner = AdmissionPinner(_cfg())
+    pinner.observe_decode_step(256, 262_144)  # enter the band
     assert pinner.current_pin() == REQUEST_BODY_FD
     pinner.observe_idle()
     assert pinner.current_pin() == REQUEST_BODY_STOCK
