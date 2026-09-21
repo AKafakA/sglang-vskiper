@@ -336,7 +336,8 @@ ARMS["vskipper_qwen3_4b_sharedband"] = {
 # served arm with a tiny decode K/V band (exit 3k / enter 6k resident tokens), so a 32-request
 # smoke can be driven through both pins deliberately (one request alone -> stock; a burst ->
 # the mirror engages -> later admissions fd; a second burst while the first still decodes ->
-# mixed steps). A declared deviation (`decode_kv_band_policy: "shared"`); NEVER a paper arm.
+# mixed steps). Its own declared deviation, `decode_kv_band_policy: "gate"` (the boot assertion
+# accepts it like "shared" and logs it; the execution-difference gate never sees it); NEVER a paper arm.
 ARMS["vskipper_pingate_lowband"] = {
     **ARMS["vskipper"],
     "decode_kv_band": {
@@ -344,7 +345,7 @@ ARMS["vskipper_pingate_lowband"] = {
         "NVIDIA_A100_40GB": (3000, 6000),
         "NVIDIA_H100_HBM3": (3000, 6000),
     },
-    "decode_kv_band_policy": "shared",
+    "decode_kv_band_policy": "gate",
 }
 
 # [D-830, 2026-09-16] The third model: FlexiDepth-Qwen3-8B, our alignment-only `ste_hard` checkpoint

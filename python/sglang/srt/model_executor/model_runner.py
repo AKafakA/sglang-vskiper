@@ -2684,6 +2684,14 @@ class ModelRunner(ModelRunnerKVCacheMixin):
                         "as a declared deviation from the roofline rule for this arm",
                         _rs.decode.exit_kv_tokens, _rs.decode.enter_kv_tokens,
                     )
+                elif _band_policy == "gate":
+                    # [D-849] A GATE-ONLY declared deviation: a tiny band so the pinning
+                    # correctness checks can drive both pins in a 40-request smoke.
+                    logger.warning(
+                        "decode_kv_band_policy=gate: serving band (exit=%s, enter=%s) "
+                        "as a gate-only declared deviation from the roofline rule (never a paper arm)",
+                        _rs.decode.exit_kv_tokens, _rs.decode.enter_kv_tokens,
+                    )
                 elif _band_policy != "rule":
                     raise ValueError(f"unknown decode_kv_band_policy {_band_policy!r}")
                 else:
