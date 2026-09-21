@@ -178,3 +178,12 @@ def test_mock_sharedband_twins_serve_the_global_band_as_a_declared_deviation():
     assert arm["decode_kv_band_policy"] == "shared" and arm["decode_kv_band"]["NVIDIA_A100"] == (160_000, 200_000)
     assert arm["decode_kv_band"] != own["decode_kv_band"] and arm["design_skip_ratio"] == own["design_skip_ratio"]
     assert len([k for k in design.ARMS if k.endswith("_sharedband") and k.startswith("integrated_randomskip")]) == 12
+
+
+def test_denseprefix_fd_arm_is_the_full_to_fd_plan_for_every_request() -> None:
+    from sglang.srt.vpipe import design
+    arm = design.ARMS["integrated_denseprefix_fd"]
+    assert arm["skipper"] == "flexidepth" and arm["phases"] == "decode" and arm["regime_switch"] is False
+    always = design.ARMS["integrated_alwaysskip"]
+    assert {k: v for k, v in arm.items() if k != "phases"} == {k: v for k, v in always.items() if k != "phases"}
+

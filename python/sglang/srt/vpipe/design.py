@@ -257,6 +257,15 @@ ARMS: Final[dict[str, dict[str, Any]]] = {
         "phases": "both",
         "regime_switch": False,
     },
+    # [D-849 add. 8, 2026-09-21] The legal-plan ablation's Full->FD arm: the prompt is
+    # encoded by the dense body (skipper gated off for prompt tokens), every generated
+    # token by FlexiDepth's native router -- the "stock prefill -> FD decode" plan the
+    # phase-sticky controller can choose, served for EVERY request. No band.
+    "integrated_denseprefix_fd": {
+        "skipper": "flexidepth",
+        "phases": "decode",
+        "regime_switch": False,
+    },
     # Arbitrary per-token routes with no semantics: the substrate-generality arm. Proves
     # the runtime assumes nothing about the policy that produced a route, and carries the
     # skip-rate x depth trade-off study.
