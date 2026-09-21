@@ -186,4 +186,6 @@ def test_denseprefix_fd_arm_is_the_full_to_fd_plan_for_every_request() -> None:
     assert arm["skipper"] == "flexidepth" and arm["phases"] == "decode" and arm["regime_switch"] is False
     always = design.ARMS["integrated_alwaysskip"]
     assert {k: v for k, v in arm.items() if k != "phases"} == {k: v for k, v in always.items() if k != "phases"}
+    mirror = design.ARMS["integrated_fdprefix_stock"]
+    assert mirror["phases"] == "prefill" and mirror["regime_switch"] is False and mirror["skipper"] == "flexidepth"
 

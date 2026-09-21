@@ -267,6 +267,14 @@ ARMS: Final[dict[str, dict[str, Any]]] = {
         "phases": "decode",
         "regime_switch": False,
     },
+    # [D-849 add. 9] The FD->stock legal plan served for EVERY request: the prompt is
+    # encoded by FlexiDepth's native routing, every generated token by the dense body
+    # (skipper gated off for generated tokens) -- the mirror of the dense-prefix plan.
+    "integrated_fdprefix_stock": {
+        "skipper": "flexidepth",
+        "phases": "prefill",
+        "regime_switch": False,
+    },
     # Arbitrary per-token routes with no semantics: the substrate-generality arm. Proves
     # the runtime assumes nothing about the policy that produced a route, and carries the
     # skip-rate x depth trade-off study.
