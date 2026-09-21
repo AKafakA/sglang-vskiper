@@ -618,11 +618,11 @@ def vp_split_decode_forward_batch(forward_batch: Any) -> list[tuple[str, torch.T
     if pins is None or forward_batch.batch_size != len(pins):
         raise RuntimeError("[D-849] vp_body_rows missing or not one per row")
     for name in _VP_SPLIT_REFUSED_FIELDS:
-        if getattr(forward_batch, name, None) is not None:
+        if getattr(forward_batch, name) is not None:
             raise RuntimeError(
                 f"[D-849] cannot partition a decode batch with {name} set"
             )
-    mm = getattr(forward_batch, "mm_inputs", None)
+    mm = forward_batch.mm_inputs
     if mm is not None and any(item is not None for item in mm):
         raise RuntimeError("[D-849] cannot partition a decode batch with multimodal inputs")
     device = forward_batch.input_ids.device
@@ -634,7 +634,7 @@ def vp_split_decode_forward_batch(forward_batch: Any) -> list[tuple[str, torch.T
         index = torch.tensor(rows, dtype=torch.int64, device=device)
         sub = copy.copy(forward_batch)
         for name in _VP_SPLIT_ROW_TENSORS:
-            value = getattr(forward_batch, name, None)
+            value = getattr(forward_batch, name)
             if value is None:
                 continue
             if value.shape[0] != len(pins):
@@ -643,7 +643,7 @@ def vp_split_decode_forward_batch(forward_batch: Any) -> list[tuple[str, torch.T
                 )
             setattr(sub, name, value.index_select(0, index.to(value.device)))
         for name in _VP_SPLIT_ROW_LISTS:
-            value = getattr(forward_batch, name, None)
+            value = getattr(forward_batch, name)
             if value is None:
                 continue
             if len(value) != len(pins):
@@ -692,10 +692,10 @@ def vp_merge_logits_outputs(
     from sglang.srt.layers.logits_processor import LogitsProcessorOutput
 
     def merge(name: str):
-        first = getattr(parts[0][2], name, None)
+        first = getattr(parts[0][2], name)
         if first is None:
             for _, _, out in parts[1:]:
-                if getattr(out, name, None) is not None:
+                if getattr(out, name) is not None:
                     raise RuntimeError(f"[D-849] sub-pass outputs disagree on {name}")
             return None
         merged = torch.empty(

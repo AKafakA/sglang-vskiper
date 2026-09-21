@@ -493,6 +493,7 @@ class Scheduler(
         self.init_running_status()
 
         self.init_vp_batch_composition()
+        self.init_vp_admission_pinning()
 
         # Init chunked prefill
         self.init_chunked_prefill()
@@ -1008,6 +1009,8 @@ class Scheduler(
         self.vp_bc_mixed_decode_rows = 0
         self.vp_bc_mixed_prefill_tokens = 0
         self.vp_bc_decode_passes = 0
+
+    def init_vp_admission_pinning(self):
         # [D-849] Per-request body pinning. The scheduler owns the mirror of the
         # decode band (AdmissionPinner) and hands every request ONE body at
         # admission; the counters are runtime evidence (vp_runtime.admission_pins).
@@ -1035,15 +1038,15 @@ class Scheduler(
 
         args = self.server_args
         problems = []
-        if getattr(args, "pp_size", 1) != 1:
+        if args.pp_size != 1:
             problems.append("pp_size != 1")
-        if getattr(args, "speculative_algorithm", None):
+        if args.speculative_algorithm:
             problems.append("speculative decoding")
-        if getattr(args, "enable_dp_attention", False):
+        if args.enable_dp_attention:
             problems.append("DP attention")
-        if getattr(args, "disaggregation_mode", "null") not in (None, "null", "NULL"):
+        if args.disaggregation_mode not in (None, "null", "NULL"):
             problems.append("P/D disaggregation")
-        if getattr(self, "enable_hicache_storage", False):
+        if self.enable_hicache_storage:
             problems.append("hierarchical-cache storage")
         if problems:
             raise RuntimeError(
@@ -1067,10 +1070,8 @@ class Scheduler(
         prefix_len = len(req.prefix_indices) if req.prefix_indices is not None else 0
         if prefix_len <= 0:
             return
-        node = getattr(req, "last_node", None)
-        node_key = getattr(node, "key", None)
-        node_extra = getattr(node_key, "extra_key", None)
-        if node_extra is not None and node_extra != req.extra_key:
+        node = req.last_node
+        if node is not None and node.key is not None and node.key.extra_key != req.extra_key:
             self.vp_pin_cross_body_prefix_reuse += 1
         if req.vp_body == "stock":
             self.vp_pin_prefix_hit_tokens_stock += prefix_len

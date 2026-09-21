@@ -133,3 +133,41 @@ def test_source_changing_mid_run_is_refused(tmp_path):
     r = _run(b, a)
     assert r.returncode != 0
     assert "counter source changed" in (r.stdout + r.stderr)
+
+
+# --- [D-849] pinned arm below the band: nothing routed is the design, not a defect ---
+
+
+def _pinned_snapshot(path: Path, *, admitted_fd: int, skip: int, allrun: int) -> Path:
+    vp = {"regime_switch": {"enabled": True, "version": 2,
+                            "admission": {"enabled": True},
+                            "counters": {"decode": {"skip": skip, "prod_allrun": allrun},
+                                         "admission": {"coverage_dense_violation_rows": 0}}},
+          "admission_pins": {"enabled": True, "admitted_stock": 40, "admitted_fd": admitted_fd,
+                             "cross_body_prefix_reuse": 0}}
+    path.write_text(json.dumps({"internal_states": [{"vp_runtime": vp}]}))
+    return path
+
+
+def test_pinned_arm_with_no_fd_pins_is_recorded_not_refused(tmp_path):
+    b = _pinned_snapshot(tmp_path / "b.json", admitted_fd=0, skip=0, allrun=0)
+    a = _pinned_snapshot(tmp_path / "a.json", admitted_fd=0, skip=0, allrun=800)
+    r = _run(b, a)
+    assert r.returncode == 0, r.stdout
+    assert "BY CONSTRUCTION" in r.stdout
+
+
+def test_pinned_arm_with_fd_pins_but_no_skip_is_refused(tmp_path):
+    b = _pinned_snapshot(tmp_path / "b.json", admitted_fd=0, skip=0, allrun=0)
+    a = _pinned_snapshot(tmp_path / "a.json", admitted_fd=12, skip=0, allrun=800)
+    r = _run(b, a)
+    assert r.returncode == 1 and "NOTHING ROUTED" in r.stdout
+
+
+def test_pin_violation_counters_are_refused(tmp_path):
+    b = _pinned_snapshot(tmp_path / "b.json", admitted_fd=0, skip=0, allrun=0)
+    a = _pinned_snapshot(tmp_path / "a.json", admitted_fd=12, skip=500, allrun=300)
+    d = json.loads(a.read_text()); d["internal_states"][0]["vp_runtime"]["admission_pins"]["cross_body_prefix_reuse"] = 1
+    a.write_text(json.dumps(d))
+    r = _run(b, a)
+    assert r.returncode == 1 and "other body" in r.stdout

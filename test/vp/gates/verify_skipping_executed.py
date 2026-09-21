@@ -161,6 +161,12 @@ def main() -> int:
 
     # Prefill metrics, checked as deltas over the run window.
     pb, pa = prefill_evidence(a.before), prefill_evidence(a.after)
+    # [D-849] Under per-request pinning a request admitted below the band is stock in BOTH phases,
+    # so a window in which no request was pinned fd legitimately routes nothing: the load-aware
+    # design behaving as designed. Recorded, never refused; refusals below apply once any fd pin exists.
+    vp_after = _vp_runtime(a.after)
+    pins = vp_after.get("admission_pins") or {}
+    pinned_nothing_fd = bool(pins.get("enabled")) and int(pins.get("admitted_fd", 0)) == 0
     if pa is not None and pb is not None:
         d_fd, d_dense = pa["fd"] - pb["fd"], pa["dense"] - pb["dense"]
         d_passes = pa["passes"] - pb["passes"]
@@ -171,10 +177,13 @@ def main() -> int:
             print(f"\nREFUSING: the prefill body counters account for {d_fd + d_dense} passes but the "
                   f"scheduler ran {d_passes}. Counters that do not add up are not evidence.")
             return 1
-        if d_passes > 0 and d_fd == 0:
+        if d_passes > 0 and d_fd == 0 and not pinned_nothing_fd:
             print("\nREFUSING: this arm routes prefill but the routed body ran ZERO prefill passes in "
                   "the window.")
             return 1
+        if d_passes > 0 and d_fd == 0 and pinned_nothing_fd:
+            print("  NOTE: zero routed prefill passes -- every request in the window was pinned stock "
+                  "(band never engaged); the pinned design's low-band behaviour, RECORDED not refused.")
         if pa["engagement_min"] is not None:
             d_samples = pa["engagement_samples"] - pb["engagement_samples"]
             print(f"  engagement escape          : ema={pa['engagement_ema']} samples(+{d_samples})")
@@ -185,9 +194,7 @@ def main() -> int:
 
     # [D-849] Per-request body pinning invariants, checked on the AFTER snapshot
     # (both counters are monotonic and must be zero for the whole boot).
-    vp_after = _vp_runtime(a.after)
     admission = ((vp_after.get("regime_switch") or {}).get("counters") or {}).get("admission") or {}
-    pins = vp_after.get("admission_pins") or {}
     violations = int(admission.get("coverage_dense_violation_rows", 0))
     cross_body = int(pins.get("cross_body_prefix_reuse", 0))
     if pins.get("enabled"):
@@ -222,6 +229,11 @@ def main() -> int:
     # and refusing it discards a row that reproduces the published table. What must still be
     # refused is the case: NOTHING routed anywhere, so the measurement describes the
     # production body while claiming to describe the skipper.
+    if skip == 0 and pinned_nothing_fd:
+        print("\n  NOTE: nothing routed in either phase because NO request was pinned fd in the "
+              "window (the band never engaged): the pinned design's low-band behaviour -- the served "
+              "arm is the stock body here BY CONSTRUCTION. RECORDED, not refused.")
+        return 0
     if skip == 0:
         print("\nREFUSING: NOTHING ROUTED in either phase. This measurement describes the "
               "production all-RUN body, not the skipper.")

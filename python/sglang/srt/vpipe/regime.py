@@ -613,7 +613,7 @@ def pinned_decode_body_of(forward_batch: Any) -> Optional[str]:
     ``None`` for an unpinned batch. A "mixed" batch reaching a dispatch site is
     a defect (the model runner partitions it first) and fails closed."""
 
-    pin = getattr(forward_batch, "vp_body", None)
+    pin = forward_batch.vp_body
     if pin is None:
         return None
     if pin == "mixed":

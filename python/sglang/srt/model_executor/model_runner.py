@@ -425,6 +425,7 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         self.dist_port = nccl_port
         self.server_args = server_args
         self.init_vp_activation(server_args)
+        self.init_vp_admission_split_counters()
         self.is_draft_worker = is_draft_worker
         self.is_generation = model_config.is_generation
         self.device_timer = None
@@ -3391,6 +3392,8 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         )
 
         self._vp_runtime_enabled = vp_runtime_enabled()
+
+    def init_vp_admission_split_counters(self) -> None:
         # [D-849] pinned-dispatch evidence (regime_switch.counters.admission).
         self._vp_split_counters = admission_split_zero_counters()
 

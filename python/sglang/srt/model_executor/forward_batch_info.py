@@ -810,7 +810,7 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
         # batch. Mixed decode batches are partitioned by the model runner;
         # a mixed extend batch cannot be formed by the scheduler's pin-uniform
         # admission rounds, so it is a defect and fails closed here.
-        vp_body_rows = [getattr(req, "vp_body", None) for req in batch.reqs]
+        vp_body_rows = [req.vp_body for req in batch.reqs]
         if any(pin is not None for pin in vp_body_rows):
             from sglang.srt.vpipe.regime import batch_pin_of
 

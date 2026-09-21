@@ -325,8 +325,7 @@ def scheduler_runtime_attestation(scheduler: Any) -> dict[str, Any]:
     # by the scheduler's mirror, deferrals, mixed steps, retract re-entries and
     # the cross-body prefix-reuse witness (MUST be 0). Runtime evidence,
     # identity-stripped like the regime counters; never assert in expectations.
-    pinner = getattr(scheduler, "vp_pinner", None)
-    pinner_counts = pinner.counters() if pinner is not None else None
+    pinner_counts = scheduler.vp_pinner.counters()
     admission_pins = {"enabled": pinner_counts is not None}
     if pinner_counts is not None:
         admission_pins.update(pinner_counts)
