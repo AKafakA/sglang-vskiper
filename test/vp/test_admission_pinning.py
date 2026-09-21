@@ -411,6 +411,27 @@ def test_pinner_admission_onto_an_idle_engine_observes_the_empty_batch() -> None
     assert pinner.counters()["band_flips"] == 2
 
 
+def test_admission_pin_counters_are_not_deployment_identity() -> None:
+    """The manifest is taken at boot and re-read by the runner after warmup; the
+    pin counters advance in between, so they must be stripped like batch_composition."""
+    import importlib.util, pathlib
+
+    spec = importlib.util.spec_from_file_location(
+        "qps_deployment", pathlib.Path(__file__).with_name("qps_deployment.py")
+    )
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+
+    def info(steps):
+        return {"internal_states": [{"vp_runtime": {
+            "regime_switch": {"admission": {"enabled": True}, "counters": {"decode": {"skip": steps}}},
+            "batch_composition": {"steps": steps},
+            "admission_pins": {"enabled": True, "admitted_stock": steps, "steps_observed": steps},
+        }}]}
+    assert mod.stable_server_identity(info(0)) == mod.stable_server_identity(info(1000))
+    text = json.dumps(mod.stable_server_identity(info(5)))
+    assert "admission_pins" not in text and "batch_composition" not in text and "admission" in text
+
+
 def test_split_refuses_uniform_extend_and_speculative_batches() -> None:
     from sglang.srt.model_executor.forward_batch_info import ForwardMode
     from sglang.srt.vpipe.batch import vp_split_decode_forward_batch
