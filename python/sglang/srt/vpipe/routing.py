@@ -684,6 +684,7 @@ def _route_decide_maps_kernel(
     project_rows_ptr,
     counts_ptr,
     decide_stats_ptr,
+    force_ptr,
     row_count: tl.constexpr,
     block_rows: tl.constexpr,
     has_valid: tl.constexpr,

@@ -236,8 +236,7 @@ def test_pinned_decode_body_of_forward_batch() -> None:
     fb.vp_body = REQUEST_BODY_STOCK
     assert pinned_decode_body_of(fb) == DECODE_BODY_LOW
     fb.vp_body = VP_BODY_MIXED
-    with pytest.raises(RuntimeError):
-        pinned_decode_body_of(fb)
+    assert pinned_decode_body_of(fb) == DECODE_BODY_HIGH  # forced_run: one routed replay serves both pins
 
 
 # --- prefill decision under a pin -------------------------------------------------
