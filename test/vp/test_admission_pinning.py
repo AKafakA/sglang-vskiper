@@ -339,6 +339,7 @@ def _decode_batch(pins):
         orig_seq_lens=seq_lens.clone(),
         rids_int=torch.arange(n, dtype=torch.int64) * 7,
         rids=[f"r{i}" for i in range(n)],
+        mm_inputs=[None] * n,  # this fork carries one entry per request, None for text
         vp_body_rows=list(pins),
         vp_body=batch_pin_of(list(pins)),
     )
@@ -363,6 +364,7 @@ def test_split_decode_forward_batch_partitions_and_merges_in_order() -> None:
     assert torch.equal(sub_f.seq_lens, fb.seq_lens.index_select(0, idx_f))
     assert torch.equal(sub_f.rids_int, fb.rids_int.index_select(0, idx_f))
     assert sub_f.rids == ["r1", "r2", "r4"] and sub_f.vp_body_rows == ["fd", "fd", "fd"]
+    assert sub_f.mm_inputs == [None, None, None]
     assert sub_f.seq_lens_sum == int(fb.seq_lens[[1, 2, 4]].sum())
     assert sub_s.forward_metadata_ready is False and sub_f.vp_seam_batch_routed is None
     # the parent is untouched
@@ -390,6 +392,10 @@ def test_split_refuses_uniform_extend_and_speculative_batches() -> None:
         vp_split_decode_forward_batch(fb)
     fb = _decode_batch(["stock", "fd"])
     fb.spec_info = object()
+    with pytest.raises(RuntimeError):
+        vp_split_decode_forward_batch(fb)
+    fb = _decode_batch(["stock", "fd"])
+    fb.mm_inputs = [None, object()]  # a real multimodal row is refused
     with pytest.raises(RuntimeError):
         vp_split_decode_forward_batch(fb)
 

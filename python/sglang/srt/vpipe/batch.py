@@ -576,6 +576,8 @@ _VP_SPLIT_ROW_LISTS = (
     "top_logprobs_nums",
     "token_ids_logprobs",
     "vp_body_rows",
+    # one entry per request in this fork; None for text-only requests
+    "mm_inputs",
 )
 _VP_SPLIT_REFUSED_FIELDS = (
     "spec_info",
@@ -586,7 +588,6 @@ _VP_SPLIT_REFUSED_FIELDS = (
     "mamba_cow_src_indices",
     "mamba_clear_indices",
     "encoder_lens",
-    "mm_inputs",
     "attn_cp_metadata",
     "attn_dcp_metadata",
     "tbo_children",
@@ -621,6 +622,9 @@ def vp_split_decode_forward_batch(forward_batch: Any) -> list[tuple[str, torch.T
             raise RuntimeError(
                 f"[D-849] cannot partition a decode batch with {name} set"
             )
+    mm = getattr(forward_batch, "mm_inputs", None)
+    if mm is not None and any(item is not None for item in mm):
+        raise RuntimeError("[D-849] cannot partition a decode batch with multimodal inputs")
     device = forward_batch.input_ids.device
     parts: list[tuple[str, torch.Tensor, Any]] = []
     for pin in (REQUEST_BODY_STOCK, REQUEST_BODY_FD):
