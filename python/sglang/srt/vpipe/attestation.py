@@ -1181,3 +1181,45 @@ def model_runner_runtime_attestation(
             "routed_layer_rows_eager": eager_rows * loaded_layer_count,
         },
     }
+
+
+def radix_namespace_report(tree_cache: Any, limit: int = 12) -> str:
+    """[D-849 diagnostic] Per-namespace (extra_key) radix-tree accounting and the
+    K/V slots referenced by more than one node -- logged when the scheduler's
+    idle pool check finds evictable+protected != total (2026-09-21 gate: 7 tokens
+    over). Read-only; never raises (a diagnostic must not mask the leak)."""
+
+    try:
+        root = tree_cache.root_node
+        per_ns: dict[str, dict[str, int]] = {}
+        seen: dict[int, tuple[str, int]] = {}
+        dup: list[str] = []
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            for child in node.children.values():
+                stack.append(child)
+            if node is root or node.key is None:
+                continue
+            ns = str(node.key.extra_key)
+            acc = per_ns.setdefault(ns, {"nodes": 0, "tokens": 0, "locked_tokens": 0, "locked_nodes": 0})
+            acc["nodes"] += 1
+            acc["tokens"] += len(node.key)
+            if node.lock_ref > 0:
+                acc["locked_nodes"] += 1
+                acc["locked_tokens"] += len(node.key)
+            value = node.value
+            if value is None:
+                continue
+            for slot in value.tolist():
+                prev = seen.get(int(slot))
+                if prev is None:
+                    seen[int(slot)] = (ns, len(node.key))
+                elif len(dup) < limit:
+                    dup.append(f"slot {int(slot)}: {prev[0]} and {ns} (node {len(node.key)} tokens, lock_ref {node.lock_ref})")
+        lines = [f"radix namespaces: {per_ns}", f"slots referenced twice: {len(dup)}{' (first ' + str(limit) + ')' if len(dup) >= limit else ''}"]
+        lines.extend(dup)
+        return "\n".join(lines)
+    except Exception as exc:  # diagnostic only
+        return f"radix namespace report unavailable: {exc!r}"
+

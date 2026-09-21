@@ -3774,6 +3774,10 @@ class Scheduler(
                 self.pool_stats_observer.get_pool_stats(),
             )
             if has_leak:
+                from sglang.srt.vpipe.attestation import radix_namespace_report
+
+                # [D-849 diagnostic] which namespace / slots over-count before the report raises
+                logger.error(radix_namespace_report(self.tree_cache))
                 self.invariant_checker._report_leak("pool", "\n".join(messages))
             self.invariant_checker._check_req_pool()
 
