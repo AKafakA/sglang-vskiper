@@ -125,6 +125,12 @@ ADMISSION_CRITERION_BAND_STATE = "decode_band_state"
 # (the version-1 pass threshold); decode body ONCE at the prefill->decode boundary: FD after an FD
 # prefill, else the band state at that moment. Never switched afterwards; FD->stock never occurs.
 ADMISSION_CRITERION_PHASE_STICKY = "phase_sticky"
+# [D-849 add. 9, 2026-09-21 18:xxZ] what an FD-prefilled request decodes with: "fd" (FD prefill implies FD decode;
+# H100 0.75x: +13.8 % E2E, every step mixed below the crossover) or "band" (the band state at the boundary decides for
+# every request; FD->stock is then the second declared composition, its finished K/V never inserted).
+ADMISSION_DECODE_AFTER_FD_PREFILL_FD = "fd"
+ADMISSION_DECODE_AFTER_FD_PREFILL_BAND = "band"
+_ADMISSION_DECODE_AFTER_FD_PREFILL = frozenset({ADMISSION_DECODE_AFTER_FD_PREFILL_FD, ADMISSION_DECODE_AFTER_FD_PREFILL_BAND})
 _ADMISSION_CRITERIA = frozenset({ADMISSION_CRITERION_BAND_STATE, ADMISSION_CRITERION_PHASE_STICKY})
 ADMISSION_PREFILL_DEMOTION_OBSERVE_ONLY = "observe_only"
 ADMISSION_MIXED_STEP_PARTITION = "partition"
@@ -1085,6 +1091,7 @@ class RegimeSwitchAdmissionConfig(
     cold_start: str = REQUEST_BODY_STOCK
     prefill_demotion: str = ADMISSION_PREFILL_DEMOTION_OBSERVE_ONLY
     mixed_step: str = ADMISSION_MIXED_STEP_FORCED_RUN
+    decode_after_fd_prefill: str = ADMISSION_DECODE_AFTER_FD_PREFILL_BAND
 
     def validate(self) -> None:
         if self.criterion not in _ADMISSION_CRITERIA:
@@ -1102,6 +1109,11 @@ class RegimeSwitchAdmissionConfig(
                 "regime switch admission.prefill_demotion must be "
                 f"{ADMISSION_PREFILL_DEMOTION_OBSERVE_ONLY!r}; got "
                 f"{self.prefill_demotion!r}"
+            )
+        if self.decode_after_fd_prefill not in _ADMISSION_DECODE_AFTER_FD_PREFILL:
+            raise ValueError(
+                "regime switch admission.decode_after_fd_prefill must be one of "
+                f"{sorted(_ADMISSION_DECODE_AFTER_FD_PREFILL)}; got {self.decode_after_fd_prefill!r}"
             )
         if self.mixed_step not in _ADMISSION_MIXED_STEPS:
             raise ValueError(

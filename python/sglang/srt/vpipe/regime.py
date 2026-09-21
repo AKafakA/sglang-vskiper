@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Callable, Optional
 from sglang.srt.vpipe.common import (
     ADMISSION_CRITERION_PHASE_STICKY,
+    ADMISSION_DECODE_AFTER_FD_PREFILL_FD,
     RegimeSwitchConfig,
 )
 from sglang.srt.vpipe.common import (
@@ -504,7 +505,7 @@ class AdmissionPinner:
         self._flips = 0
         self._admitted = {REQUEST_BODY_STOCK: 0, REQUEST_BODY_FD: 0}
         # [phase-sticky] per-request plans decided at the prefill->decode boundary
-        self._plans = {"stock_stock": 0, "stock_fd": 0, "fd_fd": 0}
+        self._plans = {"stock_stock": 0, "stock_fd": 0, "fd_fd": 0, "fd_stock": 0}
 
     @property
     def phase_sticky(self) -> bool:
@@ -525,14 +526,18 @@ class AdmissionPinner:
         return REQUEST_BODY_FD if int(round_prompt_tokens) >= threshold else REQUEST_BODY_STOCK
 
     def decode_pin_at_boundary(self, prefill_pin: str) -> str:
-        """[phase-sticky] The DECODE body of a request leaving prefill: FD after
-        an FD prefill (FD->stock never occurs), else the band state now."""
+        """[phase-sticky] The DECODE body of a request leaving prefill: the band
+        state now (``decode_after_fd_prefill: "band"``, every request), or FD
+        after an FD prefill (``"fd"``); a stock prefill always follows the band."""
 
         if prefill_pin not in _REQUEST_BODIES:
             raise ValueError(f"unknown request body pin {prefill_pin!r}")
         if not self.phase_sticky:
             return prefill_pin
-        if prefill_pin == REQUEST_BODY_FD:
+        if (
+            prefill_pin == REQUEST_BODY_FD
+            and self._cfg.admission.decode_after_fd_prefill == ADMISSION_DECODE_AFTER_FD_PREFILL_FD
+        ):
             return REQUEST_BODY_FD
         return pin_from_band_state(self._hysteresis.state)
 
@@ -614,6 +619,7 @@ class AdmissionPinner:
             "plan_stock_stock": self._plans["stock_stock"],
             "plan_stock_fd": self._plans["stock_fd"],
             "plan_fd_fd": self._plans["fd_fd"],
+            "plan_fd_stock": self._plans["fd_stock"],
         }
 
 

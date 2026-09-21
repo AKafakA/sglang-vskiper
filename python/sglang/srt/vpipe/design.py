@@ -55,6 +55,7 @@ SERVED_REGIME_SWITCH: Final[dict[str, Any]] = {
         "cold_start": "stock",
         "prefill_demotion": "observe_only",
         "mixed_step": "forced_run",
+        "decode_after_fd_prefill": "band",
     },
     "prefill": {
         "enabled": True,

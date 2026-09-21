@@ -1086,14 +1086,15 @@ class Scheduler(
         return total
 
     def _vp_pin_decode_boundary(self, req: Req) -> None:
-        """[phase-sticky] Decide ``req``'s DECODE body once, as it leaves prefill:
-        FD after an FD prefill, else the band state now; fixed for the rest of
-        the request. A stock->FD request's finished K/V is NOT inserted into
-        the radix cache (its generated tokens are FD-computed; its prompt prefix
-        stays under the stock namespace it was matched in). The cache key is
-        never changed after the match: re-inserting under another key would
-        reference the matched prefix slots from two nodes (the 2026-09-21
-        pool-invariant trip)."""
+        """[phase-sticky] Decide ``req``'s DECODE body once, as it leaves prefill
+        (the band state now; or FD after an FD prefill under
+        ``decode_after_fd_prefill: "fd"``); fixed for the rest of the request.
+        A request whose decode body differs from its prefill body (stock->FD,
+        FD->stock) is NOT inserted into the radix cache at finish: its generated
+        K/V belongs to the other body; its prompt prefix stays under the
+        namespace it was matched in. The cache key never changes after the
+        match (re-inserting under another key would reference the matched
+        prefix slots from two nodes -- the 2026-09-21 pool-invariant trip)."""
 
         if not self.vp_pinner.active or req.vp_prefill_body is None:
             return

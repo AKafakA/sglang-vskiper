@@ -49,6 +49,7 @@ SERVED_V2 = {
         "cold_start": "stock",
         "prefill_demotion": "observe_only",
         "mixed_step": "forced_run",
+        "decode_after_fd_prefill": "band",
     },
     "prefill": {
         "enabled": True,
@@ -206,18 +207,21 @@ def test_pinner_phase_sticky_prefill_round_and_decode_boundary() -> None:
     # prefill body per round from the round's prompt tokens (the v1 pass threshold, 1536)
     assert pinner.prefill_pin(1535) == REQUEST_BODY_STOCK
     assert pinner.prefill_pin(1536) == REQUEST_BODY_FD
-    # decode body at the boundary: FD after FD prefill regardless of the band; band state after stock prefill
-    assert pinner.decode_pin_at_boundary(REQUEST_BODY_FD) == REQUEST_BODY_FD
+    # decode body at the boundary ("band", the served default): the band state for EVERY request
+    assert pinner.decode_pin_at_boundary(REQUEST_BODY_FD) == REQUEST_BODY_STOCK
     assert pinner.decode_pin_at_boundary(REQUEST_BODY_STOCK) == REQUEST_BODY_STOCK
     pinner.observe_decode_step(256, 262_144)  # band HIGH
     assert pinner.decode_pin_at_boundary(REQUEST_BODY_STOCK) == REQUEST_BODY_FD
     assert pinner.decode_pin_at_boundary(REQUEST_BODY_FD) == REQUEST_BODY_FD
-    for pre, dec in ((REQUEST_BODY_STOCK, REQUEST_BODY_STOCK), (REQUEST_BODY_STOCK, REQUEST_BODY_FD), (REQUEST_BODY_FD, REQUEST_BODY_FD)):
+    for pre, dec in ((REQUEST_BODY_STOCK, REQUEST_BODY_STOCK), (REQUEST_BODY_STOCK, REQUEST_BODY_FD), (REQUEST_BODY_FD, REQUEST_BODY_FD), (REQUEST_BODY_FD, REQUEST_BODY_STOCK)):
         pinner.record_plan(pre, dec)
     with pytest.raises(ValueError):
-        pinner.record_plan(REQUEST_BODY_FD, REQUEST_BODY_STOCK)  # FD->stock is never a served plan
+        pinner.record_plan("mixed", REQUEST_BODY_STOCK)
     c = pinner.counters()
-    assert (c["plan_stock_stock"], c["plan_stock_fd"], c["plan_fd_fd"]) == (1, 1, 1)
+    assert (c["plan_stock_stock"], c["plan_stock_fd"], c["plan_fd_fd"], c["plan_fd_stock"]) == (1, 1, 1, 1)
+    # "fd": FD prefill implies FD decode whatever the band (the H100 0.75x loss variant)
+    fdfd = AdmissionPinner(_cfg(**{"admission.decode_after_fd_prefill": "fd"}))
+    assert fdfd.decode_pin_at_boundary(REQUEST_BODY_FD) == REQUEST_BODY_FD and fdfd.decode_pin_at_boundary(REQUEST_BODY_STOCK) == REQUEST_BODY_STOCK
     # the band-state criterion keeps the version-2 admission pin
     band = AdmissionPinner(_cfg(**{"admission.criterion": "decode_band_state"}))
     assert not band.phase_sticky and band.prefill_pin(10_000) == REQUEST_BODY_STOCK
