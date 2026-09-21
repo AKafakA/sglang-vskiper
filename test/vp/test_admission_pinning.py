@@ -400,6 +400,17 @@ def test_partition_keeps_the_first_sub_pass_logits_when_the_next_replay_overwrit
     assert undetached.next_token_logits.eq(2.0).all()  # the view alone would have lost the rows
 
 
+def test_pinner_admission_onto_an_idle_engine_observes_the_empty_batch() -> None:
+    """After a drain the mirror must not hand the last busy state to the next request."""
+    from sglang.srt.vpipe.regime import AdmissionPinner
+    pinner = _pinner()  # active, band (3000, 6000)
+    pinner.observe_decode_step(40, 40_000)
+    assert pinner.current_pin() == REQUEST_BODY_FD
+    pinner.observe_idle()
+    assert pinner.current_pin() == REQUEST_BODY_STOCK
+    assert pinner.counters()["band_flips"] == 2
+
+
 def test_split_refuses_uniform_extend_and_speculative_batches() -> None:
     from sglang.srt.model_executor.forward_batch_info import ForwardMode
     from sglang.srt.vpipe.batch import vp_split_decode_forward_batch

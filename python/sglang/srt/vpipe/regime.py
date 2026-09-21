@@ -512,6 +512,21 @@ class AdmissionPinner:
         if after != before:
             self._flips += 1
 
+    def observe_idle(self) -> None:
+        """[D-849] The mirror is advanced by decode steps only, so after a drain
+        to an empty running batch it keeps the last busy state; a request
+        admitted onto an idle engine would then inherit it (2026-09-21 gate: the
+        first request after a drained tiny-band cell was pinned to the routed
+        body). Admission onto an empty batch observes the empty batch first:
+        zero rows, zero resident K/V -- the level the band actually has."""
+
+        if not self._active:
+            return
+        before = self._hysteresis.state
+        after = self._hysteresis.update(0, 0)
+        if after != before:
+            self._flips += 1
+
     def current_pin(self) -> Optional[str]:
         """The pin a request admitted NOW would receive (``None`` when
         inactive); does not count anything."""

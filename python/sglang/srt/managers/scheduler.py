@@ -2873,6 +2873,8 @@ class Scheduler(
         # the round's batch pin: a chunked request in flight fixes it, otherwise
         # the first admitted request does. Requests carrying another pin
         # (retracted re-entries) are deferred to a later round, never re-pinned.
+        if running_bs == 0 and self.chunked_req is None:
+            self.vp_pinner.observe_idle()  # an empty engine is below any band
         vp_round_pin = self.vp_pinner.current_pin()
         vp_batch_pin = (
             self.chunked_req.vp_body if self.chunked_req is not None else None
