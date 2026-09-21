@@ -134,6 +134,12 @@ _ADMISSION_DECODE_AFTER_FD_PREFILL = frozenset({ADMISSION_DECODE_AFTER_FD_PREFIL
 # [D-849 add. 12] a stock-pinned DECODE may upgrade to the routed body ONCE, when the
 # band enters HIGH (never back): the plan frozen at the boundary lagged the band on a
 # ramp (coqa knee: 29 % of requests pinned FD->stock below V*, never skipped -> E2E +4.6 %).
+# [D-849 add. 17] which prompt tokens the admission round's prefill criterion counts: "uncached" = the tokens a routed pass would
+# actually compute (prompt minus the prefix already cached in the routed namespace -- version 1 decided on the pass's extend
+# tokens, i.e. after cache hits; bbh at 91 % hits ran dense in v1.7 but routed under the "prompt" count); "prompt" = whole prompt.
+ADMISSION_PREFILL_TOKENS_UNCACHED = "uncached"
+ADMISSION_PREFILL_TOKENS_PROMPT = "prompt"
+_ADMISSION_PREFILL_TOKENS = frozenset({ADMISSION_PREFILL_TOKENS_UNCACHED, ADMISSION_PREFILL_TOKENS_PROMPT})
 ADMISSION_DECODE_UPGRADE_NONE = "none"
 ADMISSION_DECODE_UPGRADE_BAND_HIGH = "band_high"
 _ADMISSION_DECODE_UPGRADES = frozenset({ADMISSION_DECODE_UPGRADE_NONE, ADMISSION_DECODE_UPGRADE_BAND_HIGH})
@@ -1104,8 +1110,14 @@ class RegimeSwitchAdmissionConfig(
     mixed_step: str = ADMISSION_MIXED_STEP_FORCED_RUN
     decode_after_fd_prefill: str = ADMISSION_DECODE_AFTER_FD_PREFILL_BAND
     decode_upgrade: str = ADMISSION_DECODE_UPGRADE_BAND_HIGH
+    prefill_tokens: str = ADMISSION_PREFILL_TOKENS_UNCACHED
 
     def validate(self) -> None:
+        if self.prefill_tokens not in _ADMISSION_PREFILL_TOKENS:
+            raise ValueError(
+                "regime switch admission.prefill_tokens must be one of "
+                f"{sorted(_ADMISSION_PREFILL_TOKENS)}; got {self.prefill_tokens!r}"
+            )
         if self.decode_upgrade not in _ADMISSION_DECODE_UPGRADES:
             raise ValueError(
                 "regime switch admission.decode_upgrade must be one of "
@@ -1410,6 +1422,7 @@ def resolved_design_attestation() -> dict[str, Any]:
                     "mixed_step": switch.admission.mixed_step,
                     "decode_after_fd_prefill": switch.admission.decode_after_fd_prefill,
                     "decode_upgrade": switch.admission.decode_upgrade,
+                    "prefill_tokens": switch.admission.prefill_tokens,
                 },
             }
         ),

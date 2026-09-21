@@ -164,6 +164,7 @@ def regime_switch_attestation(
             "mixed_step": config.admission.mixed_step,
             "decode_after_fd_prefill": config.admission.decode_after_fd_prefill,
             "decode_upgrade": config.admission.decode_upgrade,
+            "prefill_tokens": config.admission.prefill_tokens,
         }
     block["counters"] = (
         regime_switch_zero_counters() if counters is None else counters
@@ -339,6 +340,8 @@ def scheduler_runtime_attestation(scheduler: Any) -> dict[str, Any]:
                 "mixed_step_rows_stock": int(scheduler.vp_pin_mixed_step_rows_stock),
                 "mixed_step_rows_fd": int(scheduler.vp_pin_mixed_step_rows_fd),
                 "decode_upgraded_rows": int(scheduler.vp_pin_decode_upgraded_rows),
+                "round_prompt_tokens": int(scheduler.vp_pin_round_prompt_tokens),
+                "round_uncached_tokens": int(scheduler.vp_pin_round_uncached_tokens),
                 "mix_withheld": int(scheduler.vp_pin_mix_withheld),
                 "cross_body_prefix_reuse": int(scheduler.vp_pin_cross_body_prefix_reuse),
                 "prefix_hit_tokens_stock": int(scheduler.vp_pin_prefix_hit_tokens_stock),

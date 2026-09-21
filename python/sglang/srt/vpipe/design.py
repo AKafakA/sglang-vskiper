@@ -57,6 +57,7 @@ SERVED_REGIME_SWITCH: Final[dict[str, Any]] = {
         "mixed_step": "forced_run",
         "decode_after_fd_prefill": "band",
         "decode_upgrade": "band_high",
+        "prefill_tokens": "uncached",
     },
     "prefill": {
         "enabled": True,

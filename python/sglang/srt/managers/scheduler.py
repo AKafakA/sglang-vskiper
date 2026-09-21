@@ -1055,6 +1055,8 @@ class Scheduler(
         self.vp_pin_admission_deferrals = 0
         self.vp_pin_mixed_steps = 0
         self.vp_pin_decode_upgraded_rows = 0  # [D-849 add. 12]
+        self.vp_pin_round_prompt_tokens = 0  # [D-849 add. 17] prompt tokens counted at admission rounds
+        self.vp_pin_round_uncached_tokens = 0  # [D-849 add. 17] ... of which not cached in the routed namespace
         self.vp_pin_mixed_step_rows_stock = 0
         self.vp_pin_mixed_step_rows_fd = 0
         self.vp_pin_mix_withheld = 0
@@ -1099,20 +1101,49 @@ class Scheduler(
         req.extra_key = (req.extra_key or "") + f"|vpbody={pin}"
         self.vp_pinner.record_admission(pin)
 
+    def _vp_uncached_prompt_tokens(self, req: Req) -> int:
+        """[D-849 add. 17] The prompt tokens a ROUTED pass would compute for
+        ``req``: its prompt minus the prefix already cached in the routed
+        namespace (a read-only radix match with the routed key; an already
+        pinned re-entry matches in its own namespace). Version 1 decided the
+        prefill body on the pass's extend tokens, i.e. after cache hits."""
+
+        from sglang.srt.mem_cache.base_prefix_cache import MatchPrefixParams
+        from sglang.srt.mem_cache.radix_cache import RadixKey
+        from sglang.srt.vpipe.common import REQUEST_BODY_FD
+
+        tokens = len(req.origin_input_ids)
+        if self.tree_cache is None or tokens == 0:
+            return tokens
+        extra = req.extra_key if req.vp_prefill_body is not None else (req.extra_key or "") + f"|vpbody={REQUEST_BODY_FD}"
+        result = self.tree_cache.match_prefix(
+            MatchPrefixParams(key=RadixKey(token_ids=req.origin_input_ids, extra_key=extra))
+        )
+        cached = len(result.device_indices) if result.device_indices is not None else 0
+        # the last prompt token is always computed (it produces the first output)
+        return max(1, tokens - min(cached, tokens - 1))
+
     def _vp_round_prompt_tokens(self, running_bs: int) -> tuple[int, int]:
         """[phase-sticky] Prompt tokens this admission round can take: the
         waiting queue in order, up to the chunk budget and the allocatable
-        request count (before cache hits -- the key that finds them depends on
-        this decision)."""
+        request count. Under ``prefill_tokens: "uncached"`` each request counts
+        only the tokens a routed pass would compute (version 1's pass-token
+        criterion); under "prompt" the whole prompt (the key that finds the
+        cached prefix depends on the pin, so the routed namespace is matched
+        speculatively)."""
 
         budget = self.server_args.chunked_prefill_size
         slots = self.get_num_allocatable_reqs(running_bs)
+        uncached_mode = self.vp_pinner.prefill_tokens_uncached
         total = 0
         count = 0
         for index, req in enumerate(self.waiting_queue):
             if index >= slots:
                 break
-            tokens = len(req.origin_input_ids)
+            prompt = len(req.origin_input_ids)
+            tokens = self._vp_uncached_prompt_tokens(req) if uncached_mode else prompt
+            self.vp_pin_round_prompt_tokens += prompt
+            self.vp_pin_round_uncached_tokens += tokens
             if budget is not None and budget > 0 and total + tokens > budget and total > 0:
                 break
             total += tokens

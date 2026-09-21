@@ -583,3 +583,13 @@ def test_pinner_prefill_pin_reproduces_the_version_one_engagement_demotion() -> 
     # no verdict wired: bracket only
     bare = AdmissionPinner(_cfg(**{"admission.prefill_demotion": "admission"}))
     assert bare.prefill_pin(4000, 8) == REQUEST_BODY_FD
+
+
+def test_prefill_tokens_criterion_is_declared_and_validated() -> None:
+    """[D-849 add. 17] the round's prefill criterion counts UNCACHED prompt tokens (version 1's pass tokens)."""
+    cfg = _cfg()
+    assert cfg.admission.prefill_tokens == "uncached"
+    assert AdmissionPinner(cfg).prefill_tokens_uncached
+    assert not AdmissionPinner(_cfg(**{"admission.prefill_tokens": "prompt"})).prefill_tokens_uncached
+    with pytest.raises(ValueError):
+        _cfg(**{"admission.prefill_tokens": "extend"})

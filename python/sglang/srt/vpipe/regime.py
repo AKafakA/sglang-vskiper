@@ -17,6 +17,7 @@ from sglang.srt.vpipe.common import (
     RegimeSwitchConfig,
     ADMISSION_DECODE_UPGRADE_BAND_HIGH,
     ADMISSION_PREFILL_DEMOTION_ADMISSION,
+    ADMISSION_PREFILL_TOKENS_UNCACHED,
 )
 from sglang.srt.vpipe.common import (
     DECODE_BODY_HIGH,
@@ -596,6 +597,15 @@ class AdmissionPinner:
         ):
             return REQUEST_BODY_FD
         return pin_from_band_state(self._hysteresis.state)
+
+    @property
+    def prefill_tokens_uncached(self) -> bool:
+        """[D-849 add. 17] the round's prefill criterion counts uncached tokens."""
+        return (
+            self._active
+            and self.phase_sticky
+            and self._cfg.admission.prefill_tokens == ADMISSION_PREFILL_TOKENS_UNCACHED
+        )
 
     @property
     def upgrades_enabled(self) -> bool:
