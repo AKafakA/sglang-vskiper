@@ -48,7 +48,7 @@ SERVED_V2 = {
         "criterion": "decode_band_state",
         "cold_start": "stock",
         "prefill_demotion": "observe_only",
-        "mixed_step": "partition",
+        "mixed_step": "forced_run",
     },
     "prefill": {
         "enabled": True,
@@ -140,13 +140,9 @@ def test_declared_and_resolved_admission_agree_for_the_served_arm(monkeypatch) -
 
 def test_zero_counters_carry_the_admission_block() -> None:
     zeros = regime_switch_zero_counters()
-    assert zeros["admission"] == {
-        "split_passes": 0,
-        "split_rows_stock": 0,
-        "split_rows_fd": 0,
-        "coverage_dense_violation_rows": 0,
-        "stock_eager_passes": 0,
-    }
+    from sglang.srt.vpipe.regime import admission_split_zero_counters
+    assert zeros["admission"] == admission_split_zero_counters()
+    assert {"split_passes", "coverage_dense_violation_rows", "ladder_chunked_passes", "forced_run_passes", "forced_run_rows"} <= set(zeros["admission"])
 
 
 # --- body mappings -------------------------------------------------------------
@@ -378,6 +374,20 @@ def test_split_decode_forward_batch_partitions_and_merges_in_order() -> None:
     merged = vp_merge_logits_outputs(outs, fb.batch_size)
     assert merged.next_token_logits[:, 0].tolist() == [0.0, 1.0, 2.0, 3.0, 4.0]
     assert merged.hidden_states[:, 0].tolist() == [10.0, 11.0, 12.0, 13.0, 14.0]
+
+
+def test_force_run_rows_marks_the_stock_pinned_rows_of_a_mixed_batch() -> None:
+    from sglang.srt.vpipe.batch import vp_force_run_rows, vp_split_decode_forward_batch
+
+    fb = _decode_batch(["fd", "stock", "fd", "stock", "stock"])
+    force = vp_force_run_rows(fb)
+    assert force.dtype == torch.bool and force.tolist() == [False, True, False, True, True]
+    assert vp_force_run_rows(_decode_batch(["fd", "fd"])) is None
+    # size-only chunks keep their rows' pins; a mixed chunk stays mixed, a uniform one is uniform
+    parts = vp_split_decode_forward_batch(fb, max_rows=2, by_pin=False)
+    assert [(p, i.tolist()) for p, i, _ in parts] == [("mixed", [0, 1]), ("mixed", [2, 3]), ("stock", [4])]
+    assert vp_force_run_rows(parts[0][2]).tolist() == [False, True]
+    assert all(sub.fd_full_graph_force_run_rows is None for _, _, sub in parts)
 
 
 def test_split_chunks_each_pin_group_to_the_ladder_top_in_order() -> None:

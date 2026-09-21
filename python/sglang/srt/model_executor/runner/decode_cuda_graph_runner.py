@@ -417,6 +417,14 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
             flexidepth_execution_mode() == FD_EXECUTION_FULL_GRAPH
             or self._vp_regime_dispatch.active
         )
+        # [D-849 forced-RUN] static per-row replay input: rows pinned to the
+        # stock body inside a MIXED decode step (forced to RUN in the routed
+        # body). Zeroed for uniform passes; read by the fused route decision.
+        self._vp_force_run_rows = (
+            torch.zeros(self.max_bs, dtype=torch.bool, device=self.model_runner.device)
+            if self._vp_fill_num_token_non_padded
+            else None
+        )
 
         # --- capture --------------------------------------------------
         try:
@@ -737,6 +745,9 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
             rids_int=rids_int,
             bootstrap_room_ids_int=bootstrap_room_ids_int,
         )
+
+        if self._vp_force_run_rows is not None:
+            forward_batch.fd_full_graph_force_run_rows = self._vp_force_run_rows[:bs]
 
         # Trip the coordinator so the hisparse code path is captured into the
         # graph; backends read it from self.model_runner.hisparse_coordinator.
@@ -1101,6 +1112,12 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
         # restored verbatim exactly where nothing reads the scalar.
         if self._vp_fill_num_token_non_padded:
             buffers.num_token_non_padded.fill_(raw_num_token)
+            # [D-849 forced-RUN] per-row static input for this replay
+            force = forward_batch.fd_full_graph_force_run_rows
+            if force is None:
+                self._vp_force_run_rows[:raw_bs].zero_()
+            else:
+                self._vp_force_run_rows[:raw_bs].copy_(force)
 
         if self.require_mlp_tp_gather:
             max_num_tokens = max(forward_batch.global_num_tokens_cpu)

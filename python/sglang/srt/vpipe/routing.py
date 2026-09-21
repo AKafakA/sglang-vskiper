@@ -688,8 +688,13 @@ def _route_decide_maps_kernel(
     block_rows: tl.constexpr,
     has_valid: tl.constexpr,
     has_weight_tape: tl.constexpr,
+    has_force: tl.constexpr,
 ):
     """Lane-2 Track B / F1: route DECISION + tape writes + route maps, one launch.
+
+    [D-849 forced-RUN] ``force_ptr`` (bool per row, ``has_force``): rows the
+    scheduler pinned to the STOCK body inside a mixed step are forced to RUN
+    (all layers computed, K/V written) so one routed replay serves both pins.
 
     Fuses, per routed layer, ``torch.gt(branch_weights, threshold, out=tape_row)``
     (the RUN mask), the branch-weight tape copy, and the Block 1B-1 route
@@ -707,6 +712,9 @@ def _route_decide_maps_kernel(
     in_range = rows < row_count
     w = tl.load(weights_ptr + rows, mask=in_range, other=0.0)
     run = w.to(tl.float32) > threshold
+    if has_force:
+        force = tl.load(force_ptr + rows, mask=in_range, other=0).to(tl.int32)
+        run = run | (force != 0)
     tl.store(run_mask_out_ptr + rows, run.to(tl.uint8), mask=in_range)
     if has_weight_tape:
         tl.store(
@@ -753,9 +761,10 @@ def route_decide_and_maps(
     valid_rows: Optional[torch.Tensor],
     run_mask_out: torch.Tensor,
     weight_tape_out: Optional[torch.Tensor],
+    force_rows: Optional[torch.Tensor] = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Fused route decision (F1): writes ``run_mask_out`` (= ``branch_weights >
-    threshold``) and ``weight_tape_out`` (= a copy of ``branch_weights``), and
+    threshold``, OR ``force_rows`` when given) and ``weight_tape_out`` (= a copy of ``branch_weights``), and
     returns the Block 1B-1 route maps ``(run_rows, project_rows, counts)`` for
     the executing body. Stats are NOT accumulated here (see
     ``accumulate_route_counts``). Every operand is 1-D, contiguous, on one CUDA
@@ -803,6 +812,9 @@ def route_decide_and_maps(
     block_rows = 256
     has_valid = valid_rows is not None
     has_weight_tape = weight_tape_out is not None
+    has_force = force_rows is not None
+    if has_force and (force_rows.shape != (rows,) or force_rows.dtype != torch.bool or not force_rows.is_contiguous()):
+        raise ValueError("forced-RUN rows must be a contiguous bool vector aligned with the route rows")
     _route_decide_maps_kernel[(triton.cdiv(rows, block_rows),)](
         branch_weights,
         float(threshold),
@@ -813,10 +825,12 @@ def route_decide_and_maps(
         project_rows,
         counts,
         _route_decide_stats(device),
+        force_rows.view(torch.uint8) if has_force else branch_weights,
         row_count=rows,
         block_rows=block_rows,
         has_valid=has_valid,
         has_weight_tape=has_weight_tape,
+        has_force=has_force,
     )
     return run_rows, project_rows, counts
 def accumulate_route_counts(counts: torch.Tensor, stats: torch.Tensor) -> None:
@@ -927,6 +941,14 @@ def fd_prepare_layer_route_full_graph(
     )
     route_weights = action_batch.route_weights
     fused_maps = None
+    # [D-849 forced-RUN] rows pinned to the stock body inside a mixed step
+    # (set by the model runner; a static replay buffer under the graph).
+    force_rows = forward_batch.fd_full_graph_force_run_rows
+    if force_rows is not None and force_rows.shape != (hidden_states.shape[0],):
+        raise RuntimeError(
+            "[D-849] forced-RUN rows are not aligned with the routed rows: "
+            f"{tuple(force_rows.shape)} vs {hidden_states.shape[0]}"
+        )
     if (
         device_tape is not None
         and action_batch.execution_kind == RUN_PROJECT_EXECUTION
@@ -948,14 +970,19 @@ def fd_prepare_layer_route_full_graph(
             int(layer.layer_id),
             action_batch,
             forward_batch.fd_full_graph_valid_rows,
+            force_rows,
         )
     elif device_tape is not None:
         run_mask = device_tape.action_mask(
             int(layer.layer_id),
             action_batch,
         )
+        if force_rows is not None:
+            run_mask.logical_or_(force_rows.view(-1, 1))
     else:
         run_mask = action_batch.write_run_storage()
+        if force_rows is not None:
+            run_mask = run_mask.logical_or(force_rows.view(-1, 1))
     inline_kv_index = (
         device_tape.reserve_inline_kv_layer(layer_id)
         if device_tape is not None

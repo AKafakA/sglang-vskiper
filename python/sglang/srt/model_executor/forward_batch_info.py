@@ -441,6 +441,10 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
     fd_full_graph_route_masks: object = None
     fd_full_graph_compact_stats: object = None
     fd_full_graph_valid_rows: Optional[torch.Tensor] = None
+    # [D-849 forced-RUN] bool per row: rows pinned to the stock body inside a
+    # MIXED decode step, forced to RUN in the routed body (one replay per step).
+    # Set by the model runner per pass; a static replay buffer under the graph.
+    fd_full_graph_force_run_rows: Optional[torch.Tensor] = None
     fd_full_graph_compact_phase_enabled: bool = False
     # [W1] Regime switch, decode leg (I6b): the decode cuda-graph backend stamps
     # this True on the dummies ForwardBatch it captures for a "prod_allrun" low

@@ -3440,13 +3440,13 @@ class ModelRunner(ModelRunnerKVCacheMixin):
 
         if pp_proxy_tensors is not None:
             raise RuntimeError("[D-849] partitioned decode is single-stage only")
-        parts = vp_split_decode_forward_batch(forward_batch, max_rows)
+        # [D-849 forced-RUN] size-only chunks in row order (a mixed chunk stays
+        # mixed and is served by one routed replay with forced-RUN rows).
+        parts = vp_split_decode_forward_batch(forward_batch, max_rows, by_pin=False)
         outputs = []
         can_run_graph = True
-        pins_seen = {pin for pin, _, _ in parts}
-        if len(parts) > len(pins_seen):
-            self._vp_split_counters["ladder_chunked_passes"] += 1
-            self._vp_split_counters["ladder_chunk_replays"] += len(parts)
+        self._vp_split_counters["ladder_chunked_passes"] += 1
+        self._vp_split_counters["ladder_chunk_replays"] += len(parts)
         for pin, index, sub in parts:
             out = self._forward_raw(sub, None)
             can_run_graph = can_run_graph and bool(out.can_run_graph)
@@ -3478,17 +3478,26 @@ class ModelRunner(ModelRunnerKVCacheMixin):
             # partitioned into two uniform sub-passes (stock first), each
             # dispatched through its own captured graph, and the logits merged
             # back in row order. Uniform steps take the unchanged path below.
-            if forward_batch.vp_body is not None:
+            if forward_batch.vp_body is not None and forward_batch.forward_mode.is_decode():
                 ladder_top = self._vp_ladder_top(forward_batch)
-                if forward_batch.vp_body == VP_BODY_MIXED or (
-                    ladder_top is not None and int(forward_batch.batch_size) > ladder_top
-                ):
-                    # Mixed pins, or a pinned batch above the captured ladder:
-                    # pin-uniform chunks of <= ladder-top rows, each replayed
-                    # by its captured graph (never the dense fall-through).
+                if ladder_top is not None and int(forward_batch.batch_size) > ladder_top:
+                    # A pinned batch above the captured ladder: chunks of
+                    # <= ladder-top rows, each a captured replay (never the
+                    # dense fall-through).
                     return self._vp_forward_partitioned(
                         forward_batch, pp_proxy_tensors, ladder_top
                     )
+                if forward_batch.vp_body == VP_BODY_MIXED:
+                    # [D-849 forced-RUN] ONE routed replay serves both pins:
+                    # the stock-pinned rows are forced to RUN inside it.
+                    from sglang.srt.vpipe.batch import vp_force_run_rows
+
+                    force = vp_force_run_rows(forward_batch)
+                    forward_batch.fd_full_graph_force_run_rows = force
+                    self._vp_split_counters["forced_run_passes"] += 1
+                    self._vp_split_counters["forced_run_rows"] += int(force.sum().item())
+                else:
+                    forward_batch.fd_full_graph_force_run_rows = None
             mode_check = (
                 forward_batch.forward_mode.is_cpu_graph
                 if self.device == "cpu"
@@ -3547,12 +3556,15 @@ class ModelRunner(ModelRunnerKVCacheMixin):
                     can_run_graph=can_run_graph,
                     w1_active=regime_switch_config() is not None,
                 )
-                if coverage_stamped and forward_batch.vp_body == REQUEST_BODY_FD:
+                if coverage_stamped and forward_batch.vp_body in (REQUEST_BODY_FD, VP_BODY_MIXED):
                     # A pin violation: fd-pinned rows served by the dense
                     # fall-through. Counted; verify_skipping_executed refuses > 0.
-                    self._vp_split_counters["coverage_dense_violation_rows"] += int(
-                        forward_batch.batch_size
+                    fd_rows = (
+                        int(forward_batch.batch_size)
+                        if forward_batch.vp_body == REQUEST_BODY_FD
+                        else sum(1 for p in forward_batch.vp_body_rows if p == REQUEST_BODY_FD)
                     )
+                    self._vp_split_counters["coverage_dense_violation_rows"] += fd_rows
                 if not coverage_stamped:
                     account_covered_dispatch(forward_batch, band_body)
             elif (

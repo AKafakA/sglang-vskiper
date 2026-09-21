@@ -431,7 +431,9 @@ def admission_split_zero_counters() -> dict[str, int]:
     (sub-)passes served by the eager dense fall-through (uncovered rows);
     ``ladder_chunked_passes``: decode steps whose pinned batch exceeded the
     captured ladder and was cut into <= ladder-top chunks (each a captured
-    replay); ``ladder_chunk_replays``: the chunk replays those steps issued.
+    replay); ``ladder_chunk_replays``: the chunk replays those steps issued;
+    ``forced_run_passes`` / ``forced_run_rows``: mixed (sub-)passes served by
+    ONE routed replay and the stock-pinned rows forced to RUN inside them.
     """
 
     return {
@@ -442,6 +444,8 @@ def admission_split_zero_counters() -> dict[str, int]:
         "stock_eager_passes": 0,
         "ladder_chunked_passes": 0,
         "ladder_chunk_replays": 0,
+        "forced_run_passes": 0,
+        "forced_run_rows": 0,
     }
 
 
@@ -637,7 +641,7 @@ def pinned_decode_body_of(forward_batch: Any) -> Optional[str]:
     if pin is None:
         return None
     if pin == "mixed":
-        raise RuntimeError(
-            "[D-849] a mixed-pin decode batch reached dispatch unpartitioned"
-        )
+        # [D-849 forced-RUN] a mixed step executes ONE routed replay: the
+        # stock-pinned rows are forced to RUN inside it.
+        return DECODE_BODY_HIGH
     return request_body_decode_body(pin)

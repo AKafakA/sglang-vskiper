@@ -594,8 +594,27 @@ _VP_SPLIT_REFUSED_FIELDS = (
 )
 
 
+def vp_force_run_rows(forward_batch: Any) -> Optional[torch.Tensor]:
+    """[D-849 forced-RUN] The bool-per-row mask of a MIXED decode batch's
+    stock-pinned rows (forced to RUN inside the routed body), or ``None`` for a
+    uniform / unpinned batch."""
+
+    from sglang.srt.vpipe.common import REQUEST_BODY_STOCK, VP_BODY_MIXED
+
+    if forward_batch.vp_body != VP_BODY_MIXED:
+        return None
+    pins = forward_batch.vp_body_rows
+    if pins is None or len(pins) != int(forward_batch.batch_size):
+        raise RuntimeError("[D-849] vp_body_rows missing or not one per row")
+    return torch.tensor(
+        [p == REQUEST_BODY_STOCK for p in pins],
+        dtype=torch.bool,
+        device=forward_batch.input_ids.device,
+    )
+
+
 def vp_split_decode_forward_batch(
-    forward_batch: Any, max_rows: Optional[int] = None
+    forward_batch: Any, max_rows: Optional[int] = None, by_pin: bool = True
 ) -> list[tuple[str, torch.Tensor, Any]]:
     """Split a pinned DECODE forward batch into pin-uniform sub-batches.
 
@@ -637,16 +656,27 @@ def vp_split_decode_forward_batch(
     parts: list[tuple[str, torch.Tensor, Any]] = []
     if max_rows is not None and int(max_rows) < 1:
         raise RuntimeError(f"[D-849] max_rows must be >= 1, got {max_rows!r}")
+    from sglang.srt.vpipe.regime import batch_pin_of
+
     groups: list[tuple[str, list[int]]] = []
-    for pin in (REQUEST_BODY_STOCK, REQUEST_BODY_FD):
-        rows = [i for i, p in enumerate(pins) if p == pin]
-        if not rows:
-            continue
+    if by_pin:
+        for pin in (REQUEST_BODY_STOCK, REQUEST_BODY_FD):
+            rows = [i for i, p in enumerate(pins) if p == pin]
+            if not rows:
+                continue
+            if max_rows is None:
+                groups.append((pin, rows))
+            else:
+                step = int(max_rows)
+                groups.extend((pin, rows[i : i + step]) for i in range(0, len(rows), step))
+    else:
+        # size-only chunks in row order; a chunk keeps whatever pins it holds
+        # (a mixed chunk is served by ONE routed replay with forced-RUN rows)
         if max_rows is None:
-            groups.append((pin, rows))
-        else:
-            step = int(max_rows)
-            groups.extend((pin, rows[i : i + step]) for i in range(0, len(rows), step))
+            raise RuntimeError("[D-849] size-only chunking needs max_rows")
+        step = int(max_rows)
+        all_rows = list(range(len(pins)))
+        groups = [(batch_pin_of([pins[i] for i in all_rows[i0 : i0 + step]]), all_rows[i0 : i0 + step]) for i0 in range(0, len(pins), step)]
     for pin, rows in groups:
         index = torch.tensor(rows, dtype=torch.int64, device=device)
         sub = copy.copy(forward_batch)
@@ -689,6 +719,7 @@ def vp_split_decode_forward_batch(
         sub.fd_full_graph_route_masks = None
         sub.fd_full_graph_compact_stats = None
         sub.fd_full_graph_valid_rows = None
+        sub.fd_full_graph_force_run_rows = None
         sub.fd_full_graph_attention_run_mask = None
         sub.fd_full_graph_kv_write_mask = None
         parts.append((pin, index, sub))

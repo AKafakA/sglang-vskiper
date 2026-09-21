@@ -123,6 +123,9 @@ VP_BODY_MIXED = "mixed"
 ADMISSION_CRITERION_BAND_STATE = "decode_band_state"
 ADMISSION_PREFILL_DEMOTION_OBSERVE_ONLY = "observe_only"
 ADMISSION_MIXED_STEP_PARTITION = "partition"
+# [D-849, 2026-09-21 16:xxZ] one routed replay per mixed step: stock-pinned rows forced to RUN
+ADMISSION_MIXED_STEP_FORCED_RUN = "forced_run"
+_ADMISSION_MIXED_STEPS = frozenset({ADMISSION_MIXED_STEP_PARTITION, ADMISSION_MIXED_STEP_FORCED_RUN})
 _FD_PARITY_EPOCHS = {}
 def full_graph_contiguous_routed_qkv_config(
     environ: Optional[Mapping[str, str]] = None,
@@ -455,8 +458,10 @@ class FullGraphDeviceRouteTape:
         layer_id: int,
         action_batch: FullGraphActionBatch,
         valid_rows: Optional[torch.Tensor],
+        force_rows: Optional[torch.Tensor] = None,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
         """`action_mask` for a router-driven RUN/PROJECT batch, fused (F1).
+        ``force_rows`` (D-849): rows forced to RUN inside a mixed step.
 
         Same checks and the same tape writes as `action_mask` (branch-weight
         row copy + `branch_weights > threshold` into the bool action row), in
@@ -507,6 +512,7 @@ class FullGraphDeviceRouteTape:
             valid_rows,
             target.reshape(-1),
             weight_target,
+            force_rows,
         )
         self.recorded_layers += 1
         return target, maps
@@ -1073,7 +1079,7 @@ class RegimeSwitchAdmissionConfig(
     criterion: str = ADMISSION_CRITERION_BAND_STATE
     cold_start: str = REQUEST_BODY_STOCK
     prefill_demotion: str = ADMISSION_PREFILL_DEMOTION_OBSERVE_ONLY
-    mixed_step: str = ADMISSION_MIXED_STEP_PARTITION
+    mixed_step: str = ADMISSION_MIXED_STEP_FORCED_RUN
 
     def validate(self) -> None:
         if self.criterion != ADMISSION_CRITERION_BAND_STATE:
@@ -1092,10 +1098,10 @@ class RegimeSwitchAdmissionConfig(
                 f"{ADMISSION_PREFILL_DEMOTION_OBSERVE_ONLY!r}; got "
                 f"{self.prefill_demotion!r}"
             )
-        if self.mixed_step != ADMISSION_MIXED_STEP_PARTITION:
+        if self.mixed_step not in _ADMISSION_MIXED_STEPS:
             raise ValueError(
-                "regime switch admission.mixed_step must be "
-                f"{ADMISSION_MIXED_STEP_PARTITION!r}; got {self.mixed_step!r}"
+                "regime switch admission.mixed_step must be one of "
+                f"{sorted(_ADMISSION_MIXED_STEPS)}; got {self.mixed_step!r}"
             )
 
 
