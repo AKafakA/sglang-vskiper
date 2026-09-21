@@ -332,6 +332,21 @@ ARMS["vskipper_qwen3_4b_sharedband"] = {
     "decode_kv_band_policy": "shared",
 }
 
+# [D-849, 2026-09-21] GATE-ONLY arm for the per-request body-pinning correctness checks: the
+# served arm with a tiny decode K/V band (exit 3k / enter 6k resident tokens), so a 32-request
+# smoke can be driven through both pins deliberately (one request alone -> stock; a burst ->
+# the mirror engages -> later admissions fd; a second burst while the first still decodes ->
+# mixed steps). A declared deviation (`decode_kv_band_policy: "shared"`); NEVER a paper arm.
+ARMS["vskipper_pingate_lowband"] = {
+    **ARMS["vskipper"],
+    "decode_kv_band": {
+        "NVIDIA_A100": (3000, 6000),
+        "NVIDIA_A100_40GB": (3000, 6000),
+        "NVIDIA_H100_HBM3": (3000, 6000),
+    },
+    "decode_kv_band_policy": "shared",
+}
+
 # [D-830, 2026-09-16] The third model: FlexiDepth-Qwen3-8B, our alignment-only `ste_hard` checkpoint
 # (coef 2.5e-5; CloudLab d8545 campaign 2026-09-16, model of record = the last checkpoint that passed
 # the on-node quality gate, D-828). Same family port as Qwen3-4B (36 layers, routed 18..35, 8 K/V heads
