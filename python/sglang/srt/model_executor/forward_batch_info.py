@@ -468,6 +468,15 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
     # never re-decide the variant the raw shape chose.
     vp_fd_prefill_dense: bool = False
     vp_fd_prefill_variant_pinned: bool = False
+    # [D-849] Per-request body pinning. ``vp_body_rows`` is the pin of each
+    # request in ``batch.reqs`` order ("stock" | "fd"; None when pinning is off
+    # or the request was never admitted under it); ``vp_body`` is the batch's
+    # uniform pin, or "mixed" for a decode batch carrying both, which the model
+    # runner partitions into two uniform sub-passes before dispatch. An EXTEND
+    # batch is never mixed (admission rounds are pin-uniform; a mixed extend
+    # batch raises at construction).
+    vp_body: Optional[str] = None
+    vp_body_rows: Optional[List[Optional[str]]] = None
     # Lane-2 cut8 (2026-09-03): per-PASS memo of the two batch-level seam
     # predicates. `maybe_fd_layer_forward` runs once per decoder layer (32 for
     # Llama-3-8B) and each call re-read and re-parsed SGLANG_FD_* environment
@@ -795,6 +804,23 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
         ret._maybe_init_non_generation_fields(batch)
 
         device = model_runner.device
+
+        # [D-849] Carry each request's pinned body onto the forward batch, in
+        # batch.reqs order (the same order rids_int uses), and classify the
+        # batch. Mixed decode batches are partitioned by the model runner;
+        # a mixed extend batch cannot be formed by the scheduler's pin-uniform
+        # admission rounds, so it is a defect and fails closed here.
+        vp_body_rows = [getattr(req, "vp_body", None) for req in batch.reqs]
+        if any(pin is not None for pin in vp_body_rows):
+            from sglang.srt.vpipe.regime import batch_pin_of
+
+            ret.vp_body_rows = vp_body_rows
+            ret.vp_body = batch_pin_of(vp_body_rows)
+            if ret.vp_body == "mixed" and not batch.forward_mode.is_decode():
+                raise RuntimeError(
+                    "[D-849] an extend/mixed-chunk batch carries requests pinned "
+                    "to both bodies; admission rounds must be pin-uniform"
+                )
 
         kv_canary_ids = envs.SGLANG_KV_CANARY_ENABLE_TOKEN_ORACLE.get()
         if kv_canary_ids or _VP_REQUEST_IDENTITY_REQUIRED:

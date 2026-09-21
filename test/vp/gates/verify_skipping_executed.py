@@ -183,6 +183,25 @@ def main() -> int:
                       "routed passes ran -- the escape is not executing.")
                 return 1
 
+    # [D-849] Per-request body pinning invariants, checked on the AFTER snapshot
+    # (both counters are monotonic and must be zero for the whole boot).
+    vp_after = _vp_runtime(a.after)
+    admission = ((vp_after.get("regime_switch") or {}).get("counters") or {}).get("admission") or {}
+    pins = vp_after.get("admission_pins") or {}
+    violations = int(admission.get("coverage_dense_violation_rows", 0))
+    cross_body = int(pins.get("cross_body_prefix_reuse", 0))
+    if pins.get("enabled"):
+        print(f"admission pins               : stock={pins.get('admitted_stock')} fd={pins.get('admitted_fd')} "
+              f"flips={pins.get('band_flips')} mixed_steps={pins.get('mixed_steps')} "
+              f"split_passes={admission.get('split_passes')} prefix_hits(fd)={pins.get('prefix_hit_tokens_fd')}")
+    if violations > 0:
+        print(f"\nREFUSING: {violations} fd-pinned decode rows were served by the coverage-dense "
+              "fall-through -- a pin violation (the ladder does not cover the running batch).")
+        return 1
+    if cross_body > 0:
+        print(f"\nREFUSING: {cross_body} prefix-cache hits reused K/V computed under the other body.")
+        return 1
+
     print(f"counter source               : {source}")
     print(f"routed work during the run   : {total}")
     print(f"  skip body (routed)         : {skip}")

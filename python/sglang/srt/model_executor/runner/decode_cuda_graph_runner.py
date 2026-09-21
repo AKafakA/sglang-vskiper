@@ -123,6 +123,7 @@ from sglang.srt.vpipe.common import (
 from sglang.srt.vpipe.regime import (
     DecodeRegimeDispatch,
     compose_regime_variant_label,
+    pinned_decode_body_of as _pinned_decode_body,
     regime_body_dispatches_stock_decode,
 )
 
@@ -1052,8 +1053,14 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
         # Lane-2 cut1: seq_lens_sum is the batch's resident KV tokens (host int,
         # no sync) -- the kv criterion keys the band on it; the rows criterion
         # ignores it.
-        self._vp_regime_dispatch.observe(
-            int(forward_batch.batch_size), int(forward_batch.seq_lens_sum)
+        # [D-849] A pinned pass (vp_body set; never "mixed" here -- the model
+        # runner partitions mixed batches before dispatch) records its pinned
+        # body instead of advancing the band: the band state lives in the
+        # scheduler's AdmissionPinner under pinning.
+        self._vp_regime_dispatch.observe_or_pin(
+            int(forward_batch.batch_size),
+            int(forward_batch.seq_lens_sum),
+            _pinned_decode_body(forward_batch),
         )
 
         if not forward_batch.needs_forward_metadata_init():

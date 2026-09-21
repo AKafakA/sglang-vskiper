@@ -100,10 +100,29 @@ from sglang.srt.vpipe.kv_commit import (
 )
 
 
-REGIME_SWITCH_CONFIG_VERSION = 1
+REGIME_SWITCH_CONFIG_VERSION = 2
 DECODE_BODY_LOW = "prod_allrun"
 DECODE_BODY_HIGH = "skip"
 _DECODE_BODIES = frozenset((DECODE_BODY_LOW, DECODE_BODY_HIGH))
+# [D-849, 2026-09-21] Per-request body pinning. A request's body is decided ONCE
+# at admission from the switch's band state and kept for its whole lifetime
+# (prefill and every decode step), so every served request is exactly one
+# model's computation: "stock" = the base model's dense body (decode
+# prod_allrun, prefill dense), "fd" = the routed FlexiDepth body (decode skip,
+# prefill fd). Per-PASS selection (version 1) let a request receive both bodies;
+# at the GSM8K knee 3,163 of 3,600 served requests matched neither model's
+# token sequence and ran away at 4.7 % against the checkpoint's own 2.2 %.
+# VP_BODY_MIXED marks a decode ForwardBatch that carries both pins; the model
+# runner partitions it into two uniform sub-passes (never a forced-RUN row
+# inside the routed graph, which is neither byte-identical nor same-speed vs
+# the stock graph -- see regime_body_dispatches_stock_decode).
+REQUEST_BODY_STOCK = "stock"
+REQUEST_BODY_FD = "fd"
+_REQUEST_BODIES = frozenset((REQUEST_BODY_STOCK, REQUEST_BODY_FD))
+VP_BODY_MIXED = "mixed"
+ADMISSION_CRITERION_BAND_STATE = "decode_band_state"
+ADMISSION_PREFILL_DEMOTION_OBSERVE_ONLY = "observe_only"
+ADMISSION_MIXED_STEP_PARTITION = "partition"
 _FD_PARITY_EPOCHS = {}
 def full_graph_contiguous_routed_qkv_config(
     environ: Optional[Mapping[str, str]] = None,
@@ -1035,6 +1054,51 @@ class FDLayerRoute:
     kept_rows: int
     branch: str
     mask_key: Optional[str]
+class RegimeSwitchAdmissionConfig(
+    msgspec.Struct, frozen=True, forbid_unknown_fields=True
+):
+    """[D-849] Per-request body pinning at admission (version 2 of the switch).
+
+    ``enabled``: pin one body per request for its lifetime. ``criterion``: what
+    decides the pin (the scheduler's mirror of the decode band state).
+    ``cold_start``: the pin before the band has ever engaged. ``prefill_demotion``:
+    under pinning the prefill engagement escape only OBSERVES (it may not hand
+    a routed-pinned request a dense prefill). ``mixed_step``: a decode step whose
+    running batch carries both pins is PARTITIONED into two uniform sub-passes.
+    Every string has exactly one legal value: the field exists so the served
+    design is attested and diffable, not so it can be tuned.
+    """
+
+    enabled: bool
+    criterion: str = ADMISSION_CRITERION_BAND_STATE
+    cold_start: str = REQUEST_BODY_STOCK
+    prefill_demotion: str = ADMISSION_PREFILL_DEMOTION_OBSERVE_ONLY
+    mixed_step: str = ADMISSION_MIXED_STEP_PARTITION
+
+    def validate(self) -> None:
+        if self.criterion != ADMISSION_CRITERION_BAND_STATE:
+            raise ValueError(
+                "regime switch admission.criterion must be "
+                f"{ADMISSION_CRITERION_BAND_STATE!r}; got {self.criterion!r}"
+            )
+        if self.cold_start != REQUEST_BODY_STOCK:
+            raise ValueError(
+                "regime switch admission.cold_start must be "
+                f"{REQUEST_BODY_STOCK!r}; got {self.cold_start!r}"
+            )
+        if self.prefill_demotion != ADMISSION_PREFILL_DEMOTION_OBSERVE_ONLY:
+            raise ValueError(
+                "regime switch admission.prefill_demotion must be "
+                f"{ADMISSION_PREFILL_DEMOTION_OBSERVE_ONLY!r}; got "
+                f"{self.prefill_demotion!r}"
+            )
+        if self.mixed_step != ADMISSION_MIXED_STEP_PARTITION:
+            raise ValueError(
+                "regime switch admission.mixed_step must be "
+                f"{ADMISSION_MIXED_STEP_PARTITION!r}; got {self.mixed_step!r}"
+            )
+
+
 class RegimeSwitchConfig(
     msgspec.Struct, frozen=True, forbid_unknown_fields=True
 ):
@@ -1043,6 +1107,9 @@ class RegimeSwitchConfig(
     version: int
     prefill: RegimeSwitchPrefillConfig
     decode: RegimeSwitchDecodeConfig
+    # [D-849] version 2: REQUIRED, so a version-1 literal (no admission block)
+    # fails closed at decode instead of silently serving per-pass selection.
+    admission: RegimeSwitchAdmissionConfig
 
     def validate(self) -> None:
         if self.version != REGIME_SWITCH_CONFIG_VERSION:
@@ -1052,6 +1119,18 @@ class RegimeSwitchConfig(
             )
         self.prefill.validate()
         self.decode.validate()
+        self.admission.validate()
+        if self.admission.enabled and not self.decode.enabled:
+            raise ValueError(
+                "regime switch admission.enabled requires decode.enabled: the "
+                "pin is decided from the decode band state"
+            )
+
+    @property
+    def pinning(self) -> bool:
+        """Per-request body pinning is in force for this served config."""
+
+        return self.admission.enabled and self.decode.enabled
 def fdvp_fused_project_input_enabled():
     # design constant, not an environment read
     return mechanism(SERVED_FUSED_PROJECT_INPUT)
@@ -1195,6 +1274,11 @@ def regime_switch_config(
     for leg in ("prefill", "decode"):
         if leg not in phases:
             design[leg] = {**design[leg], "enabled": False}
+    # [D-849] The pin is decided from the decode band state, so an arm without a
+    # decode leg (prefill-only) cannot pin: its admission block resolves disabled
+    # and the version-1 per-pass prefill decision governs that arm unchanged.
+    if not design["decode"]["enabled"]:
+        design["admission"] = {**design["admission"], "enabled": False}
     # The K/V band is declared per device (design.SERVED_DECODE_KV_BAND_BY_DEVICE) and
     # asserted against the roofline rule at boot (model_runner). On the A100 the entry equals
     # the base declaration, so the served config is byte-identical to before this line.
@@ -1259,7 +1343,7 @@ def resolved_design_attestation() -> dict[str, Any]:
             None
             if switch is None
             else {
-                "version": 1,
+                "version": switch.version,
                 "prefill": {
                     "enabled": switch.prefill.enabled,
                     "min_tokens": switch.prefill.min_tokens,
@@ -1276,6 +1360,15 @@ def resolved_design_attestation() -> dict[str, Any]:
                     "high_body": switch.decode.high_body,
                     "enter_kv_tokens": switch.decode.enter_kv_tokens,
                     "exit_kv_tokens": switch.decode.exit_kv_tokens,
+                },
+                # [D-849] per-request body pinning, as RESOLVED (an arm without a
+                # decode leg resolves enabled=False; the gate diffs this block).
+                "admission": {
+                    "enabled": switch.admission.enabled,
+                    "criterion": switch.admission.criterion,
+                    "cold_start": switch.admission.cold_start,
+                    "prefill_demotion": switch.admission.prefill_demotion,
+                    "mixed_step": switch.admission.mixed_step,
                 },
             }
         ),

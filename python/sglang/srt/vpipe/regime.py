@@ -17,7 +17,10 @@ from sglang.srt.vpipe.common import (
 from sglang.srt.vpipe.common import (
     DECODE_BODY_HIGH,
     DECODE_BODY_LOW,
+    REQUEST_BODY_FD,
+    REQUEST_BODY_STOCK,
     _DECODE_BODIES,
+    _REQUEST_BODIES,
 )
 
 
@@ -165,6 +168,35 @@ class DecodeRegimeDispatch:
         if not self._active:
             return None
         return dict(self._counts)
+
+    def pin(self, body: str) -> Optional[str]:
+        """[D-849] Record the body a PINNED decode pass executes, without
+        advancing the hysteresis (under pinning the band state lives in the
+        scheduler's mirror; the runner only sees uniform sub-batches, whose
+        rows/KV would mis-drive a band). Counts the pass so
+        ``regime_switch.counters.decode`` keeps meaning "decode passes by
+        executed body", which is what verify_skipping_executed consumes."""
+
+        if not self._active:
+            self._current_body = None
+            return None
+        if body not in _DECODE_BODIES:
+            raise ValueError(f"unknown decode body {body!r}")
+        self._counts[body] += 1
+        self._current_body = body
+        return body
+
+    def observe_or_pin(
+        self,
+        rows: int,
+        kv_tokens: Optional[int],
+        pinned_decode_body: Optional[str],
+    ) -> Optional[str]:
+        """``pin`` when the pass carries a pin, else the version-1 ``observe``."""
+
+        if pinned_decode_body is not None:
+            return self.pin(pinned_decode_body)
+        return self.observe(rows, kv_tokens)
 def prefill_regime_decision(
     extend_num_tokens: int,
     batch_size: int,
@@ -379,4 +411,213 @@ def regime_switch_zero_counters() -> dict[str, dict[str, int]]:
     return {
         "prefill": {PREFILL_BODY_DENSE: 0, PREFILL_BODY_FD: 0},
         "decode": {DECODE_BODY_LOW: 0, DECODE_BODY_HIGH: 0},
+        "admission": admission_split_zero_counters(),
     }
+
+
+# ---------------------------------------------------------------------------
+# [D-849, 2026-09-21] Per-request body pinning.
+# ---------------------------------------------------------------------------
+
+
+def admission_split_zero_counters() -> dict[str, int]:
+    """Model-runner-side evidence of pinned decode dispatch, zeroed.
+
+    ``split_passes``: decode steps whose running batch carried both pins and
+    were partitioned; ``split_rows_stock/fd``: rows dispatched through each
+    sub-pass of a partitioned step; ``coverage_dense_violation_rows``: rows of
+    an fd-pinned (sub-)pass that the (c3) coverage stamp forced dense -- a pin
+    violation, MUST be 0 in a served cell; ``stock_eager_passes``: stock-pinned
+    (sub-)passes served by the eager dense fall-through (uncovered rows).
+    """
+
+    return {
+        "split_passes": 0,
+        "split_rows_stock": 0,
+        "split_rows_fd": 0,
+        "coverage_dense_violation_rows": 0,
+        "stock_eager_passes": 0,
+    }
+
+
+def request_body_decode_body(pin: str) -> str:
+    """The decode body a pinned request executes (stock -> prod_allrun, fd -> skip)."""
+
+    if pin == REQUEST_BODY_STOCK:
+        return DECODE_BODY_LOW
+    if pin == REQUEST_BODY_FD:
+        return DECODE_BODY_HIGH
+    raise ValueError(f"unknown request body pin {pin!r}")
+
+
+def request_body_prefill_body(pin: str) -> str:
+    """The prefill body a pinned request executes (stock -> dense, fd -> fd)."""
+
+    if pin == REQUEST_BODY_STOCK:
+        return PREFILL_BODY_DENSE
+    if pin == REQUEST_BODY_FD:
+        return PREFILL_BODY_FD
+    raise ValueError(f"unknown request body pin {pin!r}")
+
+
+def pin_from_band_state(state: str) -> str:
+    """Map the decode band state to the pin new admissions receive."""
+
+    if state == DECODE_BODY_HIGH:
+        return REQUEST_BODY_FD
+    if state == DECODE_BODY_LOW:
+        return REQUEST_BODY_STOCK
+    raise ValueError(f"unknown decode band state {state!r}")
+
+
+class AdmissionPinner:
+    """Scheduler-owned mirror of the decode band; decides each request's pin.
+
+    Fed ONCE per decode step from ``Scheduler.run_batch`` with the same two
+    numbers the runner's ``observe`` receives (rows, resident KV tokens), so the
+    band state it holds is exactly the version-1 state, but owned by the
+    scheduler thread: under the overlap scheduler the runner's dispatch runs on
+    the forward thread, and reading its state at admission would be racy and
+    could diverge across TP ranks. Inactive (config ``None`` or pinning off)
+    means ``pin_for_admission()`` returns ``None`` and nothing is pinned --
+    byte-identical version-1 behaviour.
+
+    Cold start (no decode step observed yet) is the band's initial low state,
+    so the first admissions pin ``stock`` (``admission.cold_start``).
+    """
+
+    def __init__(self, cfg: Optional[RegimeSwitchConfig]) -> None:
+        self._active = cfg is not None and cfg.pinning
+        self._hysteresis = DecodeHysteresis(cfg) if self._active else None
+        self._steps = 0
+        self._flips = 0
+        self._admitted = {REQUEST_BODY_STOCK: 0, REQUEST_BODY_FD: 0}
+
+    @property
+    def active(self) -> bool:
+        return self._active
+
+    @property
+    def state(self) -> Optional[str]:
+        return self._hysteresis.state if self._active else None
+
+    def observe_decode_step(self, rows: int, kv_tokens: Optional[int]) -> None:
+        """Advance the mirror by one decode step (the whole running batch)."""
+
+        if not self._active:
+            return
+        before = self._hysteresis.state
+        after = self._hysteresis.update(int(rows), kv_tokens)
+        self._steps += 1
+        if after != before:
+            self._flips += 1
+
+    def current_pin(self) -> Optional[str]:
+        """The pin a request admitted NOW would receive (``None`` when
+        inactive); does not count anything."""
+
+        if not self._active:
+            return None
+        return pin_from_band_state(self._hysteresis.state)
+
+    def record_admission(self, pin: str) -> None:
+        """Count one request pinned to ``pin``."""
+
+        if not self._active:
+            return
+        if pin not in _REQUEST_BODIES:
+            raise ValueError(f"unknown request body pin {pin!r}")
+        self._admitted[pin] += 1
+
+    def pin_for_admission(self) -> Optional[str]:
+        """The pin for a request admitted NOW, counted (``None`` when inactive)."""
+
+        pin = self.current_pin()
+        if pin is not None:
+            self.record_admission(pin)
+        return pin
+
+    def counters(self) -> Optional[dict[str, int]]:
+        if not self._active:
+            return None
+        return {
+            "admitted_stock": self._admitted[REQUEST_BODY_STOCK],
+            "admitted_fd": self._admitted[REQUEST_BODY_FD],
+            "steps_observed": self._steps,
+            "band_flips": self._flips,
+        }
+
+
+def prefill_variant_for_pass(
+    pin: Optional[str],
+    extend_num_tokens: int,
+    batch_size: int,
+    is_mixed: bool,
+    running_bs: int,
+    cfg: RegimeSwitchConfig,
+    tracker: Optional["PrefillEngagementTracker"],
+    dense_streak: int,
+) -> tuple[str, int]:
+    """The prefill body for one pass and the updated engagement dense streak.
+
+    A PINNED pass (``pin`` not None) runs its pin's body unconditionally: the
+    token bracket and the engagement demotion are bypassed (they would hand a
+    routed-pinned request a dense prefill, i.e. a mixed-body request again);
+    the streak is untouched. An unpinned pass reproduces the version-1
+    decision verbatim: the bracket (``prefill_regime_decision``, or FD on a
+    mixed pass with mixed switching disabled), then the engagement demotion
+    with one routed probe pass per ``engagement_probe_every`` dense passes.
+    """
+
+    if pin is not None:
+        return request_body_prefill_body(pin), dense_streak
+    if is_mixed and not cfg.prefill.include_mixed:
+        variant = PREFILL_BODY_FD
+    else:
+        variant = prefill_regime_decision(
+            extend_num_tokens, batch_size, is_mixed, running_bs, cfg
+        )
+    if (
+        variant == PREFILL_BODY_FD
+        and cfg.prefill.engagement_min is not None
+        and tracker is not None
+        and tracker.demote(cfg.prefill.engagement_min)
+    ):
+        if dense_streak < cfg.prefill.engagement_probe_every:
+            variant = PREFILL_BODY_DENSE
+            dense_streak += 1
+        else:
+            dense_streak = 0
+    elif variant == PREFILL_BODY_FD:
+        dense_streak = 0
+    return variant, dense_streak
+
+
+def batch_pin_of(pins: list[Optional[str]]) -> Optional[str]:
+    """The uniform pin of a batch: ``None`` when no row is pinned, the pin when
+    every pinned row agrees, ``"mixed"`` when both pins are present."""
+
+    seen = {p for p in pins if p is not None}
+    if not seen:
+        return None
+    if len(seen) == 1:
+        (pin,) = seen
+        if pin not in _REQUEST_BODIES:
+            raise ValueError(f"unknown request body pin {pin!r}")
+        return pin
+    return "mixed"
+
+
+def pinned_decode_body_of(forward_batch: Any) -> Optional[str]:
+    """The decode body a pinned (uniform) forward batch must execute, or
+    ``None`` for an unpinned batch. A "mixed" batch reaching a dispatch site is
+    a defect (the model runner partitions it first) and fails closed."""
+
+    pin = getattr(forward_batch, "vp_body", None)
+    if pin is None:
+        return None
+    if pin == "mixed":
+        raise RuntimeError(
+            "[D-849] a mixed-pin decode batch reached dispatch unpartitioned"
+        )
+    return request_body_decode_body(pin)

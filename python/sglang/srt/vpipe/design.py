@@ -38,7 +38,24 @@ from typing import Any, Final, Mapping
 # upper gate is deleted , because a hand-set token threshold pre-empted the
 # engagement gate that makes the same decision from measurement.
 SERVED_REGIME_SWITCH: Final[dict[str, Any]] = {
-    "version": 1,
+    # [D-849, 2026-09-21] version 2 = per-request body pinning (the `admission`
+    # block). The bands, thresholds and bodies below are unchanged from version 1;
+    # what changed is WHEN the decision is taken: once per request at admission,
+    # from the scheduler's mirror of the decode band state, and kept for the
+    # request's prefill and every decode step. Version 1 selected the body per
+    # pass, so a request could receive both bodies; in the natural-lane GSM8K
+    # knee cell 3,163 of 3,600 served requests matched neither model's token
+    # sequence and ran away at 4.7 % against the checkpoint's own 2.2 %
+    # (always-route 77/3,600, upstream 4/3,600). Requests that reproduced either
+    # model's sequence ran away at that model's own rate (3/292, 0/145).
+    "version": 2,
+    "admission": {
+        "enabled": True,
+        "criterion": "decode_band_state",
+        "cold_start": "stock",
+        "prefill_demotion": "observe_only",
+        "mixed_step": "partition",
+    },
     "prefill": {
         "enabled": True,
         "min_tokens": 1536,

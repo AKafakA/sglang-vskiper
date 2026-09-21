@@ -155,6 +155,14 @@ def regime_switch_attestation(
             # deployments keep their byte-identical block.
             block["decode"]["enter_kv_tokens"] = config.decode.enter_kv_tokens
             block["decode"]["exit_kv_tokens"] = config.decode.exit_kv_tokens
+        # [D-849] per-request body pinning, as resolved for this arm.
+        block["admission"] = {
+            "enabled": config.admission.enabled,
+            "criterion": config.admission.criterion,
+            "cold_start": config.admission.cold_start,
+            "prefill_demotion": config.admission.prefill_demotion,
+            "mixed_step": config.admission.mixed_step,
+        }
     block["counters"] = (
         regime_switch_zero_counters() if counters is None else counters
     )
@@ -305,6 +313,36 @@ def scheduler_runtime_attestation(scheduler: Any) -> dict[str, Any]:
         engagement = prefill_engagement()
         if engagement is not None:
             regime_counters["prefill_engagement"] = engagement
+    # [D-849] Model-runner-side pinned-dispatch evidence (partitioned steps,
+    # rows per sub-pass, pin violations) overlays the zero placeholder.
+    split_counters = getattr(model_runner, "vp_admission_split_counters", None)
+    if regime_counters is not None and callable(split_counters):
+        split_counts = split_counters()
+        if split_counts is not None:
+            regime_counters["admission"] = split_counts
+
+    # [D-849] Scheduler-side admission evidence: pins handed out, band flips seen
+    # by the scheduler's mirror, deferrals, mixed steps, retract re-entries and
+    # the cross-body prefix-reuse witness (MUST be 0). Runtime evidence,
+    # identity-stripped like the regime counters; never assert in expectations.
+    pinner = getattr(scheduler, "vp_pinner", None)
+    pinner_counts = pinner.counters() if pinner is not None else None
+    admission_pins = {"enabled": pinner_counts is not None}
+    if pinner_counts is not None:
+        admission_pins.update(pinner_counts)
+        admission_pins.update(
+            {
+                "retract_reentries": int(scheduler.vp_pin_retract_reentries),
+                "admission_deferrals": int(scheduler.vp_pin_admission_deferrals),
+                "mixed_steps": int(scheduler.vp_pin_mixed_steps),
+                "mixed_step_rows_stock": int(scheduler.vp_pin_mixed_step_rows_stock),
+                "mixed_step_rows_fd": int(scheduler.vp_pin_mixed_step_rows_fd),
+                "mix_withheld": int(scheduler.vp_pin_mix_withheld),
+                "cross_body_prefix_reuse": int(scheduler.vp_pin_cross_body_prefix_reuse),
+                "prefix_hit_tokens_stock": int(scheduler.vp_pin_prefix_hit_tokens_stock),
+                "prefix_hit_tokens_fd": int(scheduler.vp_pin_prefix_hit_tokens_fd),
+            }
+        )
 
     result = {
         "schema_version": 1,
@@ -323,6 +361,7 @@ def scheduler_runtime_attestation(scheduler: Any) -> dict[str, Any]:
             "mixed_prefill_tokens": int(scheduler.vp_bc_mixed_prefill_tokens),
             "decode_passes": int(scheduler.vp_bc_decode_passes),
         },
+        "admission_pins": admission_pins,
         "model": model_state,
         # [, Codex F7/F8] TOP-LEVEL and RESOLVED. The first attempt put these inside
         # the seam's dict, which lands under "model" -- so the gate looked one level too
@@ -347,6 +386,11 @@ class ReqVPMixin:
         # block-position state (advanced by VPDecodeManager); valid only when vp_enabled.
         self.current_block: int = 0
         self.skip_blocks_remaining: int = 0
+        # [D-849] The body this request is pinned to for its whole lifetime
+        # ("stock" | "fd"), decided once at admission by the scheduler's
+        # AdmissionPinner; None until admitted (or forever when pinning is off).
+        # Survives a retract/re-admit round trip: the pin is never re-decided.
+        self.vp_body: Optional[str] = None
 
 
 def _env_scan() -> bool:

@@ -242,7 +242,14 @@ from sglang.srt.vpipe.coverage import (
     stamp_coverage_dense,
 )
 from sglang.srt.vpipe.common import (
+    REQUEST_BODY_FD,
+    REQUEST_BODY_STOCK,
+    VP_BODY_MIXED,
     regime_switch_config,
+)
+from sglang.srt.vpipe.regime import (
+    admission_split_zero_counters,
+    pinned_decode_body_of,
 )
 from sglang.srt.weight_sync.tensor_bucket import (
     FlattenedTensorBucket,
@@ -3384,7 +3391,47 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         )
 
         self._vp_runtime_enabled = vp_runtime_enabled()
+        # [D-849] pinned-dispatch evidence (regime_switch.counters.admission).
+        self._vp_split_counters = admission_split_zero_counters()
 
+    def vp_admission_split_counters(self) -> dict:
+        """[D-849] Model-runner-side pinned-dispatch counters (runtime evidence,
+        identity-stripped; read by scheduler_runtime_attestation)."""
+
+        return dict(self._vp_split_counters)
+
+    def vp_reset_admission_split_counters(self) -> None:
+        self._vp_split_counters = admission_split_zero_counters()
+
+    def _vp_forward_partitioned(
+        self,
+        forward_batch: ForwardBatch,
+        pp_proxy_tensors: Optional[PPProxyTensors],
+    ) -> ModelRunnerOutput:
+        """[D-849] Run a mixed-pin decode step as two uniform sub-passes."""
+
+        from sglang.srt.vpipe.batch import (
+            vp_merge_logits_outputs,
+            vp_split_decode_forward_batch,
+        )
+
+        if pp_proxy_tensors is not None:
+            raise RuntimeError("[D-849] partitioned decode is single-stage only")
+        parts = vp_split_decode_forward_batch(forward_batch)
+        outputs = []
+        can_run_graph = True
+        for pin, index, sub in parts:
+            out = self._forward_raw(sub, None)
+            can_run_graph = can_run_graph and bool(out.can_run_graph)
+            outputs.append((pin, index, out.logits_output))
+            rows = int(index.numel())
+            if pin == REQUEST_BODY_STOCK:
+                self._vp_split_counters["split_rows_stock"] += rows
+            else:
+                self._vp_split_counters["split_rows_fd"] += rows
+        self._vp_split_counters["split_passes"] += 1
+        merged = vp_merge_logits_outputs(outputs, int(forward_batch.batch_size))
+        return ModelRunnerOutput(logits_output=merged, can_run_graph=can_run_graph)
 
     def _forward_raw(
         self,
@@ -3398,6 +3445,12 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         else:
             ctx_mgr = forward_context(ForwardContext(attn_backend=self.attn_backend))
         with ctx_mgr:
+            # [D-849] A decode step whose running batch carries both pins is
+            # partitioned into two uniform sub-passes (stock first), each
+            # dispatched through its own captured graph, and the logits merged
+            # back in row order. Uniform steps take the unchanged path below.
+            if forward_batch.vp_body == VP_BODY_MIXED:
+                return self._vp_forward_partitioned(forward_batch, pp_proxy_tensors)
             mode_check = (
                 forward_batch.forward_mode.is_cpu_graph
                 if self.device == "cpu"
@@ -3431,19 +3484,24 @@ class ModelRunner(ModelRunnerKVCacheMixin):
             # observe keeps the W1 band + its attestation live through eager
             # episodes; level-triggered and idempotent in rows (F22).
             coverage_stamped = False
+            stock_eager_stamped = False
             if (
                 forward_batch.forward_mode.is_decode()
                 and fd_skip_decode_deployed()
                 and coverage_dense_enabled()
             ):
                 runner = self.decode_cuda_graph_runner
+                # [D-849] A pinned (uniform) pass records its pinned body; an
+                # unpinned pass advances the band exactly as in version 1.
+                pinned_body = pinned_decode_body_of(forward_batch)
                 band_body = (
-                    runner._vp_regime_dispatch.observe(
+                    runner._vp_regime_dispatch.observe_or_pin(
                         int(forward_batch.batch_size),
                         int(forward_batch.seq_lens_sum),
+                        pinned_body,
                     )
                     if runner is not None
-                    else None
+                    else pinned_body
                 )
                 coverage_stamped = stamp_coverage_dense(
                     forward_batch,
@@ -3451,8 +3509,29 @@ class ModelRunner(ModelRunnerKVCacheMixin):
                     can_run_graph=can_run_graph,
                     w1_active=regime_switch_config() is not None,
                 )
+                if coverage_stamped and forward_batch.vp_body == REQUEST_BODY_FD:
+                    # A pin violation: fd-pinned rows served by the dense
+                    # fall-through. Counted; verify_skipping_executed refuses > 0.
+                    self._vp_split_counters["coverage_dense_violation_rows"] += int(
+                        forward_batch.batch_size
+                    )
                 if not coverage_stamped:
                     account_covered_dispatch(forward_batch, band_body)
+            elif (
+                forward_batch.forward_mode.is_decode()
+                and forward_batch.vp_body == REQUEST_BODY_STOCK
+                and not can_run_graph
+                and fd_skip_decode_deployed()
+            ):
+                # [D-849] Stock-pinned rows outside graph coverage with the (c3)
+                # stamp off: honour the pin on the eager path with the same
+                # pairing the captured stock graph uses.
+                forward_batch.vp_fd_decode_dense = True
+                forward_batch.fd_full_graph_force_production_attention = True
+                forward_batch.vp_seam_batch_routed = None
+                forward_batch.vp_seam_batch_eager = None
+                stock_eager_stamped = True
+                self._vp_split_counters["stock_eager_passes"] += 1
             try:
                 if (
                     forward_batch.forward_mode.is_decode()
@@ -3538,6 +3617,12 @@ class ModelRunner(ModelRunnerKVCacheMixin):
                 # flexidepth_full_graph.fd_execute_prepared_layer_route_full_graph).
                 if coverage_stamped:
                     reset_coverage_stamps(forward_batch)
+                if stock_eager_stamped:
+                    # [D-849] the eager stock-pin stamp is per pass, like (c3)'s.
+                    forward_batch.vp_fd_decode_dense = False
+                    forward_batch.fd_full_graph_force_production_attention = False
+                    forward_batch.vp_seam_batch_routed = None
+                    forward_batch.vp_seam_batch_eager = None
 
 
     def _preprocess_logits(

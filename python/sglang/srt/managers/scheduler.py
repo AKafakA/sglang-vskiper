@@ -1008,6 +1008,87 @@ class Scheduler(
         self.vp_bc_mixed_decode_rows = 0
         self.vp_bc_mixed_prefill_tokens = 0
         self.vp_bc_decode_passes = 0
+        # [D-849] Per-request body pinning. The scheduler owns the mirror of the
+        # decode band (AdmissionPinner) and hands every request ONE body at
+        # admission; the counters are runtime evidence (vp_runtime.admission_pins).
+        from sglang.srt.vpipe.common import regime_switch_config
+        from sglang.srt.vpipe.regime import AdmissionPinner
+
+        self.vp_pinner = AdmissionPinner(regime_switch_config())
+        self.vp_pin_retract_reentries = 0
+        self.vp_pin_admission_deferrals = 0
+        self.vp_pin_mixed_steps = 0
+        self.vp_pin_mixed_step_rows_stock = 0
+        self.vp_pin_mixed_step_rows_fd = 0
+        self.vp_pin_mix_withheld = 0
+        self.vp_pin_cross_body_prefix_reuse = 0
+        self.vp_pin_prefix_hit_tokens_stock = 0
+        self.vp_pin_prefix_hit_tokens_fd = 0
+        if self.vp_pinner.active:
+            self._vp_pin_boot_guards()
+
+    def _vp_pin_boot_guards(self) -> None:
+        """[D-849] Pinning is defined for the served configuration only: one
+        pipeline stage, no speculative decoding, no DP attention, no P/D
+        disaggregation, no hierarchical-cache storage prefetch (it builds the
+        radix key before admission, i.e. before the pin exists)."""
+
+        args = self.server_args
+        problems = []
+        if getattr(args, "pp_size", 1) != 1:
+            problems.append("pp_size != 1")
+        if getattr(args, "speculative_algorithm", None):
+            problems.append("speculative decoding")
+        if getattr(args, "enable_dp_attention", False):
+            problems.append("DP attention")
+        if getattr(args, "disaggregation_mode", "null") not in (None, "null", "NULL"):
+            problems.append("P/D disaggregation")
+        if getattr(self, "enable_hicache_storage", False):
+            problems.append("hierarchical-cache storage")
+        if problems:
+            raise RuntimeError(
+                "[D-849] per-request body pinning is not defined with: "
+                + ", ".join(problems)
+            )
+
+    def _vp_pin_request(self, req: Req, pin: str) -> None:
+        """Pin ``req`` to ``pin`` for its lifetime and namespace its prefix-cache
+        key by body (the lora_id precedent in Req.__init__): a stock request only
+        reuses stock-computed prefixes and an fd request fd-computed ones."""
+
+        req.vp_body = pin
+        req.extra_key = (req.extra_key or "") + f"|vpbody={pin}"
+        self.vp_pinner.record_admission(pin)
+
+    def _vp_pin_witness_prefix(self, req: Req) -> None:
+        """Runtime witness that the cache namespace held: the matched prefix
+        node (if any) must carry this request's body-tagged extra_key."""
+
+        prefix_len = len(req.prefix_indices) if req.prefix_indices is not None else 0
+        if prefix_len <= 0:
+            return
+        node = getattr(req, "last_node", None)
+        node_key = getattr(node, "key", None)
+        node_extra = getattr(node_key, "extra_key", None)
+        if node_extra is not None and node_extra != req.extra_key:
+            self.vp_pin_cross_body_prefix_reuse += 1
+        if req.vp_body == "stock":
+            self.vp_pin_prefix_hit_tokens_stock += prefix_len
+        else:
+            self.vp_pin_prefix_hit_tokens_fd += prefix_len
+
+    def _vp_pin_mix_allowed(self, new_batch: ScheduleBatch) -> bool:
+        """A mixed chunk (running decode rows appended to a prefill pass) is
+        allowed only when every running pin equals the new batch's pin."""
+
+        if not self.vp_pinner.active:
+            return True
+        new_pins = {r.vp_body for r in new_batch.reqs}
+        run_pins = {r.vp_body for r in self.running_batch.reqs if not r.finished()}
+        if len(new_pins | run_pins) <= 1:
+            return True
+        self.vp_pin_mix_withheld += 1
+        return False
 
     def init_chunked_prefill(self):
         self.chunked_prefill_size = self.server_args.chunked_prefill_size
@@ -2786,6 +2867,15 @@ class Scheduler(
             return None
 
         running_bs = len(self.running_batch.reqs)
+        # [D-849] The pin every request admitted in THIS round receives (the
+        # scheduler's mirror of the decode band, unchanged within a round), and
+        # the round's batch pin: a chunked request in flight fixes it, otherwise
+        # the first admitted request does. Requests carrying another pin
+        # (retracted re-entries) are deferred to a later round, never re-pinned.
+        vp_round_pin = self.vp_pinner.current_pin()
+        vp_batch_pin = (
+            self.chunked_req.vp_body if self.chunked_req is not None else None
+        )
         # Skipped during a chunked prefill: that pass must proceed regardless.
         if (
             self.min_free_slots_delayer is not None
@@ -2897,7 +2987,22 @@ class Scheduler(
                     req.rid
                 )
 
+            # [D-849] Pin BEFORE init_next_round_input builds the radix key: the
+            # pin is part of the key. A request whose pin (its own, kept across
+            # a retract, or this round's) differs from the round's batch pin is
+            # deferred: admission rounds are pin-uniform by construction.
+            if vp_round_pin is not None:
+                vp_pin = req.vp_body if req.vp_body is not None else vp_round_pin
+                if vp_batch_pin is None:
+                    vp_batch_pin = vp_pin
+                if vp_pin != vp_batch_pin:
+                    self.vp_pin_admission_deferrals += 1
+                    continue
+                if req.vp_body is None:
+                    self._vp_pin_request(req, vp_pin)
             req.init_next_round_input(self.tree_cache)
+            if vp_round_pin is not None:
+                self._vp_pin_witness_prefix(req)
             res = adder.add_one_req(
                 req,
                 has_chunked_req=(self.chunked_req is not None),
@@ -3009,6 +3114,8 @@ class Scheduler(
             and not (new_batch.return_logprob or self.running_batch.return_logprob)
             # mix_with_running cats input_ids but not input_embeds — shapes would mismatch
             and new_batch.input_embeds is None
+            # [D-849] never append running rows of another pin to a prefill pass
+            and self._vp_pin_mix_allowed(new_batch)
         ):
             # TODO (lianmin): support return_logprob + mixed chunked prefill
             self.running_batch.filter_batch()
@@ -3128,6 +3235,10 @@ class Scheduler(
             logger.warning(msg_prefix + msg_details)
 
             for req in retracted_reqs:
+                # [D-849] a retracted request keeps its pin (and its body-tagged
+                # cache key); it is re-admitted only in a round of the same pin.
+                if req.vp_body is not None:
+                    self.vp_pin_retract_reentries += 1
                 self._add_request_to_queue(req, is_retracted=True)
         else:
             self.new_token_ratio_tracker.decay_step()
@@ -3237,6 +3348,23 @@ class Scheduler(
                         )
             elif _vp_bc_mode.is_decode():
                 self.vp_bc_decode_passes += 1
+                # [D-849] Advance the scheduler's mirror of the decode band ONCE
+                # per decode step with the same two numbers the runner's observe
+                # receives (rows, resident KV tokens of the WHOLE running batch,
+                # before any partition), and account mixed steps.
+                if self.vp_pinner.active:
+                    _vp_kv = (
+                        int(batch.seq_lens_cpu.sum())
+                        if batch.seq_lens_cpu is not None
+                        else None
+                    )
+                    self.vp_pinner.observe_decode_step(batch.batch_size(), _vp_kv)
+                    _vp_stock = sum(1 for r in batch.reqs if r.vp_body == "stock")
+                    _vp_fd = sum(1 for r in batch.reqs if r.vp_body == "fd")
+                    if _vp_stock and _vp_fd:
+                        self.vp_pin_mixed_steps += 1
+                        self.vp_pin_mixed_step_rows_stock += _vp_stock
+                        self.vp_pin_mixed_step_rows_fd += _vp_fd
 
         # Whether to run the profiler
         self.profiler_manager._profile_batch_predicate(batch)

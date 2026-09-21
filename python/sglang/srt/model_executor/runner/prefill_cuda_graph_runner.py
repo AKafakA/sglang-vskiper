@@ -74,6 +74,7 @@ from sglang.srt.vpipe.regime import (
     PREFILL_BODY_FD,
     PrefillEngagementTracker,
     prefill_regime_decision,
+    prefill_variant_for_pass,
 )
 from sglang.srt.vpipe.attestation import _BINARY_COHORT_STATS
 from sglang.srt.vpipe.seam import _vp_regime_prefill_mixed_running_bs
@@ -1085,41 +1086,25 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
                 # a non-blocking snapshot folded when its event completes.
                 self._vp_prefill_engagement.snapshot(_BINARY_COHORT_STATS)
             is_mixed = forward_batch.forward_mode.is_mixed()
-            if is_mixed and not cfg.prefill.include_mixed:
-                # Mixed switching disabled: FD body unchanged (W1 contract).
-                variant = PREFILL_BODY_FD
-            else:
-                running_bs = (
-                    _vp_regime_prefill_mixed_running_bs(forward_batch)
-                    if is_mixed
-                    else 0
-                )
-                variant = prefill_regime_decision(
-                    len(forward_batch.input_ids),
-                    forward_batch.batch_size,
-                    is_mixed,
-                    running_bs,
-                    cfg,
-                )
-            # [P8 v2] Engagement override: a token-bracket FD decision is
-            # demoted to dense while the measured engagement sits below the
-            # floor — except one routed probe pass per streak window so the
-            # estimate can recover when the workload shifts.
-            if (
-                variant == PREFILL_BODY_FD
-                and cfg.prefill.engagement_min is not None
-                and self._vp_prefill_engagement.demote(cfg.prefill.engagement_min)
-            ):
-                if (
-                    self._vp_prefill_dense_streak
-                    < cfg.prefill.engagement_probe_every
-                ):
-                    variant = PREFILL_BODY_DENSE
-                    self._vp_prefill_dense_streak += 1
-                else:
-                    self._vp_prefill_dense_streak = 0
-            elif variant == PREFILL_BODY_FD:
-                self._vp_prefill_dense_streak = 0
+            running_bs = (
+                _vp_regime_prefill_mixed_running_bs(forward_batch)
+                if is_mixed
+                else 0
+            )
+            # [D-849] A pinned pass runs its pin's body; the token bracket and
+            # the [P8 v2] engagement demotion (one routed probe pass per streak
+            # window) apply only to unpinned passes -- both live in
+            # prefill_variant_for_pass, byte-identical to the version-1 block.
+            variant, self._vp_prefill_dense_streak = prefill_variant_for_pass(
+                forward_batch.vp_body,
+                len(forward_batch.input_ids),
+                forward_batch.batch_size,
+                is_mixed,
+                running_bs,
+                cfg,
+                self._vp_prefill_engagement,
+                self._vp_prefill_dense_streak,
+            )
             if (
                 variant == PREFILL_BODY_FD
                 and cfg.prefill.engagement_min is not None
