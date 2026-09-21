@@ -16,6 +16,7 @@ from sglang.srt.vpipe.common import (
     ADMISSION_DECODE_AFTER_FD_PREFILL_FD,
     RegimeSwitchConfig,
     ADMISSION_DECODE_UPGRADE_BAND_HIGH,
+    ADMISSION_PREFILL_DEMOTION_ADMISSION,
 )
 from sglang.srt.vpipe.common import (
     DECODE_BODY_HIGH,
@@ -527,24 +528,58 @@ class AdmissionPinner:
         # [phase-sticky] per-request plans decided at the prefill->decode boundary
         self._plans = {"stock_stock": 0, "stock_fd": 0, "fd_fd": 0, "fd_stock": 0}
         self._upgrades = 0  # [D-849 add. 12] stock->fd decode upgrades at band HIGH
+        # [D-849 add. 13] version-1 engagement demotion at admission: the verdict comes
+        # from the runner's PrefillEngagementTracker (set_engagement_demote); the dense
+        # streak / probe window is the version-1 one, kept here per admission round.
+        self._engagement_demote = None
+        self._dense_streak = 0
+        self._prefill_demoted_rounds = 0
+        self._prefill_probe_rounds = 0
 
     @property
     def phase_sticky(self) -> bool:
         return self._active and self._cfg.admission.criterion == ADMISSION_CRITERION_PHASE_STICKY
 
-    def prefill_pin(self, round_prompt_tokens: int) -> Optional[str]:
-        """[phase-sticky] The PREFILL body of an admission round: FD when the
-        round's prompt tokens reach the prefill leg's threshold (the version-1
-        pass criterion, before any cache hit), else stock. With the prefill leg
-        off, or under the band-state criterion, the band state decides (the
-        version-2 admission pin)."""
+    def set_engagement_demote(self, verdict) -> None:
+        """[D-849 add. 13] ``verdict()`` -> True when the version-1 engagement
+        escape would demote the next routed pass (the runner tracker's
+        ``demote(engagement_min)``)."""
+
+        self._engagement_demote = verdict
+
+    def prefill_pin(self, round_prompt_tokens: int, round_requests: int = 1) -> Optional[str]:
+        """[phase-sticky] The PREFILL body of an admission round = the version-1
+        pass decision made at admission: the token bracket
+        (``prefill_regime_decision`` on the round's prompt tokens, before any
+        cache hit -- the key that finds them depends on this) and, under
+        ``prefill_demotion: "admission"``, the engagement demotion with its
+        one-probe-per-window streak. With the prefill leg off, or under the
+        band-state criterion, the band state decides (the version-2 pin)."""
 
         if not self._active:
             return None
         if not self.phase_sticky or not self._cfg.prefill.enabled:
             return self.current_pin()
-        threshold = self._cfg.prefill.min_tokens
-        return REQUEST_BODY_FD if int(round_prompt_tokens) >= threshold else REQUEST_BODY_STOCK
+        variant = prefill_regime_decision(
+            int(round_prompt_tokens), int(round_requests), False, 0, self._cfg
+        )
+        if (
+            variant == PREFILL_BODY_FD
+            and self._cfg.admission.prefill_demotion == ADMISSION_PREFILL_DEMOTION_ADMISSION
+            and self._cfg.prefill.engagement_min is not None
+            and self._engagement_demote is not None
+            and self._engagement_demote()
+        ):
+            if self._dense_streak < self._cfg.prefill.engagement_probe_every:
+                variant = PREFILL_BODY_DENSE
+                self._dense_streak += 1
+                self._prefill_demoted_rounds += 1
+            else:
+                self._dense_streak = 0
+                self._prefill_probe_rounds += 1
+        elif variant == PREFILL_BODY_FD:
+            self._dense_streak = 0
+        return REQUEST_BODY_FD if variant == PREFILL_BODY_FD else REQUEST_BODY_STOCK
 
     def decode_pin_at_boundary(self, prefill_pin: str) -> str:
         """[phase-sticky] The DECODE body of a request leaving prefill: the band
@@ -668,6 +703,8 @@ class AdmissionPinner:
             "plan_fd_fd": self._plans["fd_fd"],
             "plan_fd_stock": self._plans["fd_stock"],
             "decode_upgrades_stock_fd": self._upgrades,
+            "prefill_demoted_rounds": self._prefill_demoted_rounds,
+            "prefill_probe_rounds": self._prefill_probe_rounds,
         }
 
 

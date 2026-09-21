@@ -139,6 +139,11 @@ ADMISSION_DECODE_UPGRADE_BAND_HIGH = "band_high"
 _ADMISSION_DECODE_UPGRADES = frozenset({ADMISSION_DECODE_UPGRADE_NONE, ADMISSION_DECODE_UPGRADE_BAND_HIGH})
 _ADMISSION_CRITERIA = frozenset({ADMISSION_CRITERION_BAND_STATE, ADMISSION_CRITERION_PHASE_STICKY})
 ADMISSION_PREFILL_DEMOTION_OBSERVE_ONLY = "observe_only"
+# [D-849 add. 13] the version-1 engagement demotion (EMA < engagement_min -> dense, one routed
+# probe round per engagement_probe_every dense rounds) applied to the ADMISSION round's prefill
+# pin, so a pinned request gets exactly the prefill body version 1 would have run (coqa: dense).
+ADMISSION_PREFILL_DEMOTION_ADMISSION = "admission"
+_ADMISSION_PREFILL_DEMOTIONS = frozenset({ADMISSION_PREFILL_DEMOTION_OBSERVE_ONLY, ADMISSION_PREFILL_DEMOTION_ADMISSION})
 ADMISSION_MIXED_STEP_PARTITION = "partition"
 # [D-849, 2026-09-21 16:xxZ] one routed replay per mixed step: stock-pinned rows forced to RUN
 ADMISSION_MIXED_STEP_FORCED_RUN = "forced_run"
@@ -1116,11 +1121,10 @@ class RegimeSwitchAdmissionConfig(
                 "regime switch admission.cold_start must be "
                 f"{REQUEST_BODY_STOCK!r}; got {self.cold_start!r}"
             )
-        if self.prefill_demotion != ADMISSION_PREFILL_DEMOTION_OBSERVE_ONLY:
+        if self.prefill_demotion not in _ADMISSION_PREFILL_DEMOTIONS:
             raise ValueError(
-                "regime switch admission.prefill_demotion must be "
-                f"{ADMISSION_PREFILL_DEMOTION_OBSERVE_ONLY!r}; got "
-                f"{self.prefill_demotion!r}"
+                "regime switch admission.prefill_demotion must be one of "
+                f"{sorted(_ADMISSION_PREFILL_DEMOTIONS)}; got {self.prefill_demotion!r}"
             )
         if self.decode_after_fd_prefill not in _ADMISSION_DECODE_AFTER_FD_PREFILL:
             raise ValueError(

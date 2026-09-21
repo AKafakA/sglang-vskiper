@@ -559,3 +559,27 @@ def test_pinner_one_way_upgrade_stock_to_fd_at_band_high() -> None:
     assert upgrade_pinned_rows(frozen, [R(REQUEST_BODY_STOCK)]) == 0
     with pytest.raises(ValueError):
         pinner.upgrade_pin("mixed")
+
+
+def test_pinner_prefill_pin_reproduces_the_version_one_engagement_demotion() -> None:
+    """[D-849 add. 13] the admission round's prefill pin = v1's bracket + engagement demotion
+    (EMA below the floor -> dense, one routed probe round per engagement_probe_every)."""
+    pinner = AdmissionPinner(_cfg(**{"admission.prefill_demotion": "admission"}))
+    verdict = {"demote": False}
+    pinner.set_engagement_demote(lambda: verdict["demote"])
+    assert pinner.prefill_pin(1535, 3) == REQUEST_BODY_STOCK      # below the bracket
+    assert pinner.prefill_pin(1536, 3) == REQUEST_BODY_FD         # engaged: routed
+    verdict["demote"] = True                                      # engagement fell below the floor
+    every = pinner._cfg.prefill.engagement_probe_every
+    assert all(pinner.prefill_pin(4000, 8) == REQUEST_BODY_STOCK for _ in range(every))
+    assert pinner.prefill_pin(4000, 8) == REQUEST_BODY_FD         # the probe round
+    assert pinner.prefill_pin(4000, 8) == REQUEST_BODY_STOCK      # window restarts
+    c = pinner.counters()
+    assert c["prefill_demoted_rounds"] == every + 1 and c["prefill_probe_rounds"] == 1
+    # observe_only keeps the pure bracket (the four-plan behaviour)
+    obs = AdmissionPinner(_cfg(**{"admission.prefill_demotion": "observe_only"}))
+    obs.set_engagement_demote(lambda: True)
+    assert obs.prefill_pin(4000, 8) == REQUEST_BODY_FD
+    # no verdict wired: bracket only
+    bare = AdmissionPinner(_cfg(**{"admission.prefill_demotion": "admission"}))
+    assert bare.prefill_pin(4000, 8) == REQUEST_BODY_FD

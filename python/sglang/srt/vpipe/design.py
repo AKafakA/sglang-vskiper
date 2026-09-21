@@ -53,7 +53,7 @@ SERVED_REGIME_SWITCH: Final[dict[str, Any]] = {
         "enabled": True,
         "criterion": "phase_sticky",
         "cold_start": "stock",
-        "prefill_demotion": "observe_only",
+        "prefill_demotion": "admission",
         "mixed_step": "forced_run",
         "decode_after_fd_prefill": "band",
         "decode_upgrade": "band_high",

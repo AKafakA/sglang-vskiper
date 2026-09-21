@@ -1018,6 +1018,29 @@ class Scheduler(
         from sglang.srt.vpipe.regime import AdmissionPinner
 
         self.vp_pinner = AdmissionPinner(regime_switch_config())
+        # [D-849 add. 13] the version-1 engagement escape verdict for the admission
+        # round's prefill pin: the runner's tracker (fed by routed passes' device
+        # counters, non-blocking; identical on every TP rank since the router is
+        # replicated), read from the scheduler thread when a round is pinned.
+        if self.vp_pinner.active:
+            _cfg = regime_switch_config()
+            from sglang.srt.model_executor.runner.prefill_cuda_graph_runner import (
+                PrefillCudaGraphRunner,
+            )
+
+            _runner = self.tp_worker.model_runner.prefill_cuda_graph_runner
+            if (
+                isinstance(_runner, PrefillCudaGraphRunner)
+                and _cfg.prefill.engagement_min is not None
+            ):
+                _tracker = _runner._vp_prefill_engagement
+                _floor = _cfg.prefill.engagement_min
+                self.vp_pinner.set_engagement_demote(lambda: _tracker.demote(_floor))
+            elif _cfg.prefill.engagement_min is not None:
+                raise RuntimeError(
+                    "[D-849 add. 13] admission prefill demotion needs the prefill graph "
+                    f"runner's engagement tracker; got {type(_runner).__name__}"
+                )
         # [D-849 add. 11] a fixed-composition arm (exactly one phase routed, no band:
         # integrated_denseprefix_fd / integrated_fdprefix_stock) makes EVERY request
         # cross-body: its finished K/V is never inserted and running decode rows are
@@ -1076,7 +1099,7 @@ class Scheduler(
         req.extra_key = (req.extra_key or "") + f"|vpbody={pin}"
         self.vp_pinner.record_admission(pin)
 
-    def _vp_round_prompt_tokens(self, running_bs: int) -> int:
+    def _vp_round_prompt_tokens(self, running_bs: int) -> tuple[int, int]:
         """[phase-sticky] Prompt tokens this admission round can take: the
         waiting queue in order, up to the chunk budget and the allocatable
         request count (before cache hits -- the key that finds them depends on
@@ -1085,6 +1108,7 @@ class Scheduler(
         budget = self.server_args.chunked_prefill_size
         slots = self.get_num_allocatable_reqs(running_bs)
         total = 0
+        count = 0
         for index, req in enumerate(self.waiting_queue):
             if index >= slots:
                 break
@@ -1092,9 +1116,10 @@ class Scheduler(
             if budget is not None and budget > 0 and total + tokens > budget and total > 0:
                 break
             total += tokens
+            count += 1
             if budget is not None and budget > 0 and total >= budget:
                 break
-        return total
+        return total, count
 
     def _vp_pin_decode_boundary(self, req: Req) -> None:
         """[phase-sticky] Decide ``req``'s DECODE body once, as it leaves prefill
@@ -2948,7 +2973,7 @@ class Scheduler(
         # can admit (the waiting queue in order, up to the chunk budget); a
         # chunked request in flight fixes the batch pin instead.
         vp_round_pin = (
-            self.vp_pinner.prefill_pin(self._vp_round_prompt_tokens(running_bs))
+            self.vp_pinner.prefill_pin(*self._vp_round_prompt_tokens(running_bs))
             if self.vp_pinner.active
             else None
         )
