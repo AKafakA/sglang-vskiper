@@ -177,4 +177,4 @@ def test_mock_sharedband_twins_serve_the_global_band_as_a_declared_deviation():
     arm = design.ARMS["integrated_randomskip_r50_d50_sharedband"]; own = design.ARMS["integrated_randomskip_r50_d50"]
     assert arm["decode_kv_band_policy"] == "shared" and arm["decode_kv_band"]["NVIDIA_A100"] == (160_000, 200_000)
     assert arm["decode_kv_band"] != own["decode_kv_band"] and arm["design_skip_ratio"] == own["design_skip_ratio"]
-    assert len([k for k in design.ARMS if k.endswith("_sharedband") and k.startswith("integrated_randomskip")]) == 9
+    assert len([k for k in design.ARMS if k.endswith("_sharedband") and k.startswith("integrated_randomskip")]) == 12
