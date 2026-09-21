@@ -3414,12 +3414,23 @@ class ModelRunner(ModelRunnerKVCacheMixin):
     def vp_reset_admission_split_counters(self) -> None:
         self._vp_split_counters = admission_split_zero_counters()
 
+    def _vp_ladder_top(self, forward_batch: ForwardBatch) -> Optional[int]:
+        """[D-849] The captured decode ladder's top for a pinned decode batch
+        (None when no decode graph runner serves this batch)."""
+
+        runner = self.decode_cuda_graph_runner
+        if runner is None or not forward_batch.forward_mode.is_decode():
+            return None
+        return int(runner.max_bs)
+
     def _vp_forward_partitioned(
         self,
         forward_batch: ForwardBatch,
         pp_proxy_tensors: Optional[PPProxyTensors],
+        max_rows: Optional[int] = None,
     ) -> ModelRunnerOutput:
-        """[D-849] Run a mixed-pin decode step as two uniform sub-passes."""
+        """[D-849] Run a mixed-pin or above-ladder decode step as pin-uniform
+        sub-passes of at most ``max_rows`` rows each."""
 
         from sglang.srt.vpipe.batch import (
             vp_detach_logits_output,
@@ -3429,9 +3440,13 @@ class ModelRunner(ModelRunnerKVCacheMixin):
 
         if pp_proxy_tensors is not None:
             raise RuntimeError("[D-849] partitioned decode is single-stage only")
-        parts = vp_split_decode_forward_batch(forward_batch)
+        parts = vp_split_decode_forward_batch(forward_batch, max_rows)
         outputs = []
         can_run_graph = True
+        pins_seen = {pin for pin, _, _ in parts}
+        if len(parts) > len(pins_seen):
+            self._vp_split_counters["ladder_chunked_passes"] += 1
+            self._vp_split_counters["ladder_chunk_replays"] += len(parts)
         for pin, index, sub in parts:
             out = self._forward_raw(sub, None)
             can_run_graph = can_run_graph and bool(out.can_run_graph)
@@ -3463,8 +3478,17 @@ class ModelRunner(ModelRunnerKVCacheMixin):
             # partitioned into two uniform sub-passes (stock first), each
             # dispatched through its own captured graph, and the logits merged
             # back in row order. Uniform steps take the unchanged path below.
-            if forward_batch.vp_body == VP_BODY_MIXED:
-                return self._vp_forward_partitioned(forward_batch, pp_proxy_tensors)
+            if forward_batch.vp_body is not None:
+                ladder_top = self._vp_ladder_top(forward_batch)
+                if forward_batch.vp_body == VP_BODY_MIXED or (
+                    ladder_top is not None and int(forward_batch.batch_size) > ladder_top
+                ):
+                    # Mixed pins, or a pinned batch above the captured ladder:
+                    # pin-uniform chunks of <= ladder-top rows, each replayed
+                    # by its captured graph (never the dense fall-through).
+                    return self._vp_forward_partitioned(
+                        forward_batch, pp_proxy_tensors, ladder_top
+                    )
             mode_check = (
                 forward_batch.forward_mode.is_cpu_graph
                 if self.device == "cpu"

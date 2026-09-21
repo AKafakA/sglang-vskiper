@@ -380,6 +380,29 @@ def test_split_decode_forward_batch_partitions_and_merges_in_order() -> None:
     assert merged.hidden_states[:, 0].tolist() == [10.0, 11.0, 12.0, 13.0, 14.0]
 
 
+def test_split_chunks_each_pin_group_to_the_ladder_top_in_order() -> None:
+    from sglang.srt.layers.logits_processor import LogitsProcessorOutput
+    from sglang.srt.vpipe.batch import vp_merge_logits_outputs, vp_split_decode_forward_batch
+
+    # a UNIFORM fd batch above a 2-row ladder must also be partitioned
+    fb = _decode_batch(["fd"] * 5)
+    assert fb.vp_body == "fd"
+    parts = vp_split_decode_forward_batch(fb, max_rows=2)
+    assert [(p, i.tolist()) for p, i, _ in parts] == [("fd", [0, 1]), ("fd", [2, 3]), ("fd", [4])]
+    assert all(sub.batch_size <= 2 and sub.vp_body == "fd" for _, _, sub in parts)
+    outs = [(p, i, LogitsProcessorOutput(next_token_logits=torch.stack([torch.full((3,), float(r)) for r in i.tolist()]), hidden_states=None)) for p, i, _ in parts]
+    assert vp_merge_logits_outputs(outs, 5).next_token_logits[:, 0].tolist() == [0.0, 1.0, 2.0, 3.0, 4.0]
+    # mixed AND above the ladder: stock chunks first, then fd chunks
+    fb = _decode_batch(["fd", "stock", "fd", "fd", "stock", "fd"])
+    parts = vp_split_decode_forward_batch(fb, max_rows=2)
+    assert [(p, i.tolist()) for p, i, _ in parts] == [("stock", [1, 4]), ("fd", [0, 2]), ("fd", [3, 5])]
+    # below the ladder and uniform: nothing to partition
+    with pytest.raises(RuntimeError):
+        vp_split_decode_forward_batch(_decode_batch(["fd", "fd"]), max_rows=4)
+    with pytest.raises(RuntimeError):
+        vp_split_decode_forward_batch(_decode_batch(["fd", "fd"]), max_rows=0)
+
+
 def test_partition_keeps_the_first_sub_pass_logits_when_the_next_replay_overwrites_the_buffer() -> None:
     """The graph backend returns views of one static output tensor per shape; the
     second sub-pass's replay overwrites it. Detaching must materialise the rows."""

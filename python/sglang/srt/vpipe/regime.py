@@ -428,7 +428,10 @@ def admission_split_zero_counters() -> dict[str, int]:
     sub-pass of a partitioned step; ``coverage_dense_violation_rows``: rows of
     an fd-pinned (sub-)pass that the (c3) coverage stamp forced dense -- a pin
     violation, MUST be 0 in a served cell; ``stock_eager_passes``: stock-pinned
-    (sub-)passes served by the eager dense fall-through (uncovered rows).
+    (sub-)passes served by the eager dense fall-through (uncovered rows);
+    ``ladder_chunked_passes``: decode steps whose pinned batch exceeded the
+    captured ladder and was cut into <= ladder-top chunks (each a captured
+    replay); ``ladder_chunk_replays``: the chunk replays those steps issued.
     """
 
     return {
@@ -437,6 +440,8 @@ def admission_split_zero_counters() -> dict[str, int]:
         "split_rows_fd": 0,
         "coverage_dense_violation_rows": 0,
         "stock_eager_passes": 0,
+        "ladder_chunked_passes": 0,
+        "ladder_chunk_replays": 0,
     }
 
 

@@ -594,8 +594,16 @@ _VP_SPLIT_REFUSED_FIELDS = (
 )
 
 
-def vp_split_decode_forward_batch(forward_batch: Any) -> list[tuple[str, torch.Tensor, Any]]:
-    """Split a mixed-pin DECODE forward batch into one sub-batch per pin.
+def vp_split_decode_forward_batch(
+    forward_batch: Any, max_rows: Optional[int] = None
+) -> list[tuple[str, torch.Tensor, Any]]:
+    """Split a pinned DECODE forward batch into pin-uniform sub-batches.
+
+    With ``max_rows`` (the captured decode ladder's top), every pin group is
+    further cut into consecutive chunks of at most ``max_rows`` rows, so an
+    fd-pinned batch larger than the ladder is served by its captured graph in
+    several replays instead of falling to the dense body (a pin violation;
+    2026-09-21 bbh overload: 22 % of steps above 1,024 rows).
 
     Returns ``[(pin, row_index_tensor, sub_forward_batch), ...]`` with the
     stock sub-batch first. Each sub-batch is a shallow copy whose per-row
@@ -627,10 +635,19 @@ def vp_split_decode_forward_batch(forward_batch: Any) -> list[tuple[str, torch.T
         raise RuntimeError("[D-849] cannot partition a decode batch with multimodal inputs")
     device = forward_batch.input_ids.device
     parts: list[tuple[str, torch.Tensor, Any]] = []
+    if max_rows is not None and int(max_rows) < 1:
+        raise RuntimeError(f"[D-849] max_rows must be >= 1, got {max_rows!r}")
+    groups: list[tuple[str, list[int]]] = []
     for pin in (REQUEST_BODY_STOCK, REQUEST_BODY_FD):
         rows = [i for i, p in enumerate(pins) if p == pin]
         if not rows:
             continue
+        if max_rows is None:
+            groups.append((pin, rows))
+        else:
+            step = int(max_rows)
+            groups.extend((pin, rows[i : i + step]) for i in range(0, len(rows), step))
+    for pin, rows in groups:
         index = torch.tensor(rows, dtype=torch.int64, device=device)
         sub = copy.copy(forward_batch)
         for name in _VP_SPLIT_ROW_TENSORS:
@@ -676,7 +693,9 @@ def vp_split_decode_forward_batch(forward_batch: Any) -> list[tuple[str, torch.T
         sub.fd_full_graph_kv_write_mask = None
         parts.append((pin, index, sub))
     if len(parts) < 2:
-        raise RuntimeError("[D-849] partition called on a batch that is not mixed")
+        raise RuntimeError(
+            "[D-849] partition called on a batch that is neither mixed nor above the ladder"
+        )
     return parts
 
 
