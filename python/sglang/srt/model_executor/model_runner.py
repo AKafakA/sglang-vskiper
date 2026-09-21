@@ -3400,6 +3400,18 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         )
 
         self._vp_runtime_enabled = vp_runtime_enabled()
+        # [D-849 add. 11] a band-less arm whose DECODE phase is routed (always-route,
+        # integrated_denseprefix_fd) executes the routed body for every row: above the
+        # captured ladder its batch is chunked like a pinned fd batch instead of
+        # falling to the dense body (which would silently break the plan).
+        from sglang.srt.vpipe.common import (
+            flexidepth_active_phases,
+            regime_switch_config,
+        )
+
+        self._vp_fixed_fd_decode = (
+            regime_switch_config() is None and "decode" in flexidepth_active_phases()
+        )
 
     def init_vp_admission_split_counters(self) -> None:
         # [D-849] pinned-dispatch evidence (regime_switch.counters.admission).
@@ -3478,6 +3490,16 @@ class ModelRunner(ModelRunnerKVCacheMixin):
             # partitioned into two uniform sub-passes (stock first), each
             # dispatched through its own captured graph, and the logits merged
             # back in row order. Uniform steps take the unchanged path below.
+            if (
+                forward_batch.vp_body is None
+                and self._vp_fixed_fd_decode
+                and forward_batch.forward_mode.is_decode()
+                and forward_batch.vp_body_rows is None
+            ):
+                ladder_top = self._vp_ladder_top(forward_batch)
+                if ladder_top is not None and int(forward_batch.batch_size) > ladder_top:
+                    forward_batch.vp_body_rows = [REQUEST_BODY_FD] * int(forward_batch.batch_size)
+                    forward_batch.vp_body = REQUEST_BODY_FD
             if forward_batch.vp_body is not None and forward_batch.forward_mode.is_decode():
                 ladder_top = self._vp_ladder_top(forward_batch)
                 if ladder_top is not None and int(forward_batch.batch_size) > ladder_top:

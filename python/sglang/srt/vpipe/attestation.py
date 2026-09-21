@@ -395,6 +395,8 @@ class ReqVPMixin:
         self.vp_prefill_body: Optional[str] = None
         self.vp_decode_body: Optional[str] = None
         self.vp_decode_pinned: bool = False
+        # finish-time radix insertion suppressed: generated K/V of another body
+        self.vp_skip_finish_insert: bool = False
 
 
 def _env_scan() -> bool:

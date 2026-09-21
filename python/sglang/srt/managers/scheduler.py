@@ -1018,6 +1018,16 @@ class Scheduler(
         from sglang.srt.vpipe.regime import AdmissionPinner
 
         self.vp_pinner = AdmissionPinner(regime_switch_config())
+        # [D-849 add. 11] a fixed-composition arm (exactly one phase routed, no band:
+        # integrated_denseprefix_fd / integrated_fdprefix_stock) makes EVERY request
+        # cross-body: its finished K/V is never inserted and running decode rows are
+        # never appended to a prefill pass.
+        from sglang.srt.vpipe.common import flexidepth_active_phases
+
+        _phases = flexidepth_active_phases()
+        self.vp_fixed_cross_body = (
+            not self.vp_pinner.active and len(_phases) == 1
+        )
         self.vp_pin_retract_reentries = 0
         self.vp_pin_admission_deferrals = 0
         self.vp_pin_mixed_steps = 0
@@ -1107,7 +1117,7 @@ class Scheduler(
         req.vp_decode_pinned = True
         req.vp_decode_body = decode
         if decode != req.vp_prefill_body:
-            req.skip_radix_cache_insert = True
+            req.vp_skip_finish_insert = True
         req.vp_body = decode
 
     def _vp_pin_witness_prefix(self, req: Req) -> None:
@@ -1129,6 +1139,9 @@ class Scheduler(
         """A mixed chunk (running decode rows appended to a prefill pass) is
         allowed only when every running pin equals the new batch's pin."""
 
+        if self.vp_fixed_cross_body:
+            self.vp_pin_mix_withheld += 1
+            return False
         if not self.vp_pinner.active:
             return True
         new_pins = {r.vp_body for r in new_batch.reqs}
@@ -2441,6 +2454,8 @@ class Scheduler(
                 )
 
     def _add_request_to_queue(self, req: Req, is_retracted: bool = False):
+        if self.vp_fixed_cross_body:
+            req.vp_skip_finish_insert = True  # [D-849 add. 11] prompt and generation come from different bodies
         if not self._set_or_validate_priority(req):
             return
         if self.disaggregation_mode == DisaggregationMode.NULL:
