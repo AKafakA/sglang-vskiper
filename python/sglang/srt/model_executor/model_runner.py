@@ -3422,6 +3422,7 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         """[D-849] Run a mixed-pin decode step as two uniform sub-passes."""
 
         from sglang.srt.vpipe.batch import (
+            vp_detach_logits_output,
             vp_merge_logits_outputs,
             vp_split_decode_forward_batch,
         )
@@ -3434,7 +3435,9 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         for pin, index, sub in parts:
             out = self._forward_raw(sub, None)
             can_run_graph = can_run_graph and bool(out.can_run_graph)
-            outputs.append((pin, index, out.logits_output))
+            # A replay returns views of the backend's static output tensors;
+            # the second sub-pass's replay overwrites them, so copy out now.
+            outputs.append((pin, index, vp_detach_logits_output(out.logits_output)))
             rows = int(index.numel())
             if pin == REQUEST_BODY_STOCK:
                 self._vp_split_counters["split_rows_stock"] += rows

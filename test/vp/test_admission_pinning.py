@@ -380,6 +380,26 @@ def test_split_decode_forward_batch_partitions_and_merges_in_order() -> None:
     assert merged.hidden_states[:, 0].tolist() == [10.0, 11.0, 12.0, 13.0, 14.0]
 
 
+def test_partition_keeps_the_first_sub_pass_logits_when_the_next_replay_overwrites_the_buffer() -> None:
+    """The graph backend returns views of one static output tensor per shape; the
+    second sub-pass's replay overwrites it. Detaching must materialise the rows."""
+    from sglang.srt.layers.logits_processor import LogitsProcessorOutput
+    from sglang.srt.vpipe.batch import vp_detach_logits_output, vp_merge_logits_outputs
+
+    static = torch.zeros(4, 6)
+    static[:2] = 1.0  # first (stock) replay writes its rows
+    first = vp_detach_logits_output(LogitsProcessorOutput(next_token_logits=static[:2], hidden_states=None))
+    static.fill_(2.0)  # second (fd) replay overwrites the same tensor
+    second = LogitsProcessorOutput(next_token_logits=static[:3], hidden_states=None)
+    merged = vp_merge_logits_outputs(
+        [("stock", torch.tensor([0, 3]), first), ("fd", torch.tensor([1, 2, 4]), second)], 5
+    )
+    assert merged.next_token_logits[[0, 3]].eq(1.0).all()
+    assert merged.next_token_logits[[1, 2, 4]].eq(2.0).all()
+    undetached = LogitsProcessorOutput(next_token_logits=static[:2], hidden_states=None)
+    assert undetached.next_token_logits.eq(2.0).all()  # the view alone would have lost the rows
+
+
 def test_split_refuses_uniform_extend_and_speculative_batches() -> None:
     from sglang.srt.model_executor.forward_batch_info import ForwardMode
     from sglang.srt.vpipe.batch import vp_split_decode_forward_batch

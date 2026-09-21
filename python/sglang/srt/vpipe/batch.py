@@ -680,6 +680,31 @@ def vp_split_decode_forward_batch(forward_batch: Any) -> list[tuple[str, torch.T
     return parts
 
 
+def vp_detach_logits_output(out: Any) -> Any:
+    """Copy a sub-pass's forward-produced rows out of the graph runner's static buffers.
+
+    A captured-graph replay hands back views of the backend's per-shape output
+    tensors (``FullCudaGraphBackend.replay`` returns ``self._outputs[shape_key]``),
+    which the NEXT replay overwrites. A partitioned step runs two replays before
+    it merges, so the first sub-pass's logits must be materialised before the
+    second sub-pass runs (2026-09-21 tiny-band gate: every stock-pinned row
+    sampled the fd rows' tokens, 16/16 for 12 consecutive steps).
+    """
+
+    from sglang.srt.layers.logits_processor import LogitsProcessorOutput
+
+    if not isinstance(out, LogitsProcessorOutput):
+        raise RuntimeError("[D-849] pinned sub-pass returned a non-logits output")
+    return LogitsProcessorOutput(
+        next_token_logits=(
+            out.next_token_logits.clone() if out.next_token_logits is not None else None
+        ),
+        full_logits=out.full_logits.clone() if out.full_logits is not None else None,
+        hidden_states=out.hidden_states.clone() if out.hidden_states is not None else None,
+        customized_info=out.customized_info,
+    )
+
+
 def vp_merge_logits_outputs(
     parts: list[tuple[str, torch.Tensor, Any]], batch_size: int
 ) -> Any:
