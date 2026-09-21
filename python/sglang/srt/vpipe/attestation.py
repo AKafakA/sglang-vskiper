@@ -162,6 +162,7 @@ def regime_switch_attestation(
             "cold_start": config.admission.cold_start,
             "prefill_demotion": config.admission.prefill_demotion,
             "mixed_step": config.admission.mixed_step,
+            "decode_after_fd_prefill": config.admission.decode_after_fd_prefill,
         }
     block["counters"] = (
         regime_switch_zero_counters() if counters is None else counters

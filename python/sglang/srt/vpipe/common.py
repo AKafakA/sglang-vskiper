@@ -1392,6 +1392,7 @@ def resolved_design_attestation() -> dict[str, Any]:
                     "cold_start": switch.admission.cold_start,
                     "prefill_demotion": switch.admission.prefill_demotion,
                     "mixed_step": switch.admission.mixed_step,
+                    "decode_after_fd_prefill": switch.admission.decode_after_fd_prefill,
                 },
             }
         ),
