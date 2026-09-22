@@ -163,6 +163,7 @@ def regime_switch_attestation(
             "prefill_demotion": config.admission.prefill_demotion,
             "mixed_step": config.admission.mixed_step,
             "decode_after_fd_prefill": config.admission.decode_after_fd_prefill,
+            "decode_after_stock_prefill": config.admission.decode_after_stock_prefill,
             "decode_upgrade": config.admission.decode_upgrade,
             "prefill_tokens": config.admission.prefill_tokens,
         }

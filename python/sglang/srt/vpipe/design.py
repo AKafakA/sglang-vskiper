@@ -56,8 +56,17 @@ SERVED_REGIME_SWITCH: Final[dict[str, Any]] = {
         "prefill_demotion": "admission",
         "mixed_step": "forced_run",
         "decode_after_fd_prefill": "band",
-        "decode_upgrade": "band_high",
-        "prefill_tokens": "uncached",
+        # [D-849 add. 28] A dense-prefilled request decodes dense for its whole life and
+        # nothing promotes it: routed generation over a dense-computed prompt is the
+        # checkpoint's loop mode (served Full->FD leg on the natural gsm8k knee suite:
+        # 382 runaways of 3,600 vs always-route 83, mean output 884 vs 301 tokens). The
+        # legal plans are fd->fd, fd->stock and stock->stock. The prefill body is the
+        # version-1 bracket on the request's prompt tokens (with the engagement
+        # demotion); the uncached-token count made warm prompts dense and thereby
+        # decode-dense, which is the wrong trade once dense->routed is illegal.
+        "decode_after_stock_prefill": "stock",
+        "decode_upgrade": "none",
+        "prefill_tokens": "prompt",
     },
     "prefill": {
         "enabled": True,
@@ -375,6 +384,18 @@ ARMS["vskipper_monotone"] = {
 ARMS["vskipper_noupgrade"] = {
     **ARMS["vskipper"],
     "admission_overrides": {"decode_upgrade": "none"},
+}
+
+# [D-849 add. 28] The A/B REFERENCE for the loop finding: the served design as it stood before add. 28
+# (dense-prefilled requests follow the band at the boundary and are promoted at band HIGH; uncached-token
+# prefill criterion) -- the plan mix that served dense->routed for 56-86 % of coqa/bbh requests. Never a paper arm.
+ARMS["vskipper_denseprefix_routed"] = {
+    **ARMS["vskipper"],
+    "admission_overrides": {
+        "decode_after_stock_prefill": "band",
+        "decode_upgrade": "band_high",
+        "prefill_tokens": "uncached",
+    },
 }
 
 ARMS["vskipper_pingate_lowband"] = {

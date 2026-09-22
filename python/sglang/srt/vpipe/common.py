@@ -135,6 +135,15 @@ ADMISSION_CRITERION_MONOTONE_DECODE = "monotone_decode"
 ADMISSION_DECODE_AFTER_FD_PREFILL_FD = "fd"
 ADMISSION_DECODE_AFTER_FD_PREFILL_BAND = "band"
 _ADMISSION_DECODE_AFTER_FD_PREFILL = frozenset({ADMISSION_DECODE_AFTER_FD_PREFILL_FD, ADMISSION_DECODE_AFTER_FD_PREFILL_BAND})
+# [D-849 add. 28] The decode body after a DENSE prefill. "stock": a dense-prefilled
+# request decodes dense for its whole life -- routed generation over a dense-
+# computed prompt is the checkpoint's loop mode (served leg on the natural gsm8k
+# knee suite: 382 runaways of 3,600 vs always-route 83; the 639ec4435d natural
+# collapse served that plan for 75 % of requests: 305). "band": the legacy
+# behaviour (the band state at the boundary), kept only for the A/B reference arm.
+ADMISSION_DECODE_AFTER_STOCK_PREFILL_STOCK = "stock"
+ADMISSION_DECODE_AFTER_STOCK_PREFILL_BAND = "band"
+_ADMISSION_DECODE_AFTER_STOCK_PREFILL = frozenset({ADMISSION_DECODE_AFTER_STOCK_PREFILL_STOCK, ADMISSION_DECODE_AFTER_STOCK_PREFILL_BAND})
 # [D-849 add. 12] a stock-pinned DECODE may upgrade to the routed body ONCE, when the
 # band enters HIGH (never back): the plan frozen at the boundary lagged the band on a
 # ramp (coqa knee: 29 % of requests pinned FD->stock below V*, never skipped -> E2E +4.6 %).
@@ -1113,6 +1122,7 @@ class RegimeSwitchAdmissionConfig(
     prefill_demotion: str = ADMISSION_PREFILL_DEMOTION_OBSERVE_ONLY
     mixed_step: str = ADMISSION_MIXED_STEP_FORCED_RUN
     decode_after_fd_prefill: str = ADMISSION_DECODE_AFTER_FD_PREFILL_BAND
+    decode_after_stock_prefill: str = ADMISSION_DECODE_AFTER_STOCK_PREFILL_BAND
     decode_upgrade: str = ADMISSION_DECODE_UPGRADE_BAND_HIGH
     prefill_tokens: str = ADMISSION_PREFILL_TOKENS_UNCACHED
 
@@ -1151,6 +1161,20 @@ class RegimeSwitchAdmissionConfig(
             raise ValueError(
                 "regime switch admission.mixed_step must be one of "
                 f"{sorted(_ADMISSION_MIXED_STEPS)}; got {self.mixed_step!r}"
+            )
+        if self.decode_after_stock_prefill not in _ADMISSION_DECODE_AFTER_STOCK_PREFILL:
+            raise ValueError(
+                "regime switch admission.decode_after_stock_prefill must be one of "
+                f"{sorted(_ADMISSION_DECODE_AFTER_STOCK_PREFILL)}; got {self.decode_after_stock_prefill!r}"
+            )
+        if (
+            self.decode_after_stock_prefill == ADMISSION_DECODE_AFTER_STOCK_PREFILL_STOCK
+            and self.decode_upgrade != ADMISSION_DECODE_UPGRADE_NONE
+        ):
+            raise ValueError(
+                "regime switch admission: a dense-prefilled request must stay dense "
+                "(decode_after_stock_prefill 'stock' requires decode_upgrade 'none'); "
+                f"got decode_upgrade {self.decode_upgrade!r}"
             )
 
 
@@ -1430,6 +1454,7 @@ def resolved_design_attestation() -> dict[str, Any]:
                     "prefill_demotion": switch.admission.prefill_demotion,
                     "mixed_step": switch.admission.mixed_step,
                     "decode_after_fd_prefill": switch.admission.decode_after_fd_prefill,
+                    "decode_after_stock_prefill": switch.admission.decode_after_stock_prefill,
                     "decode_upgrade": switch.admission.decode_upgrade,
                     "prefill_tokens": switch.admission.prefill_tokens,
                 },

@@ -534,8 +534,9 @@ def test_pinner_one_way_upgrade_stock_to_fd_at_band_high() -> None:
             self.vp_decode_upgraded = False
             self.vp_skip_finish_insert = False
 
-    pinner = AdmissionPinner(_cfg())
-    assert pinner.upgrades_enabled
+    # [add. 28] the served design has no upgrade; the legacy reference arm's settings exercise it
+    pinner = AdmissionPinner(_cfg(**{"admission.decode_after_stock_prefill": "band", "admission.decode_upgrade": "band_high"}))
+    assert pinner.upgrades_enabled and not AdmissionPinner(_cfg()).upgrades_enabled
     rows = [R(REQUEST_BODY_STOCK), R(REQUEST_BODY_FD), R(REQUEST_BODY_STOCK, pinned=False)]
     # band LOW: nothing moves
     pinner.observe_decode_step(512, 131_072)
@@ -588,9 +589,9 @@ def test_pinner_prefill_pin_reproduces_the_version_one_engagement_demotion() -> 
 def test_prefill_tokens_criterion_is_declared_and_validated() -> None:
     """[D-849 add. 17] the round's prefill criterion counts UNCACHED prompt tokens (version 1's pass tokens)."""
     cfg = _cfg()
-    assert cfg.admission.prefill_tokens == "uncached"
-    assert AdmissionPinner(cfg).prefill_tokens_uncached
-    assert not AdmissionPinner(_cfg(**{"admission.prefill_tokens": "prompt"})).prefill_tokens_uncached
+    assert cfg.admission.prefill_tokens == "prompt"  # [add. 28] the served design counts the prompt again
+    assert not AdmissionPinner(cfg).prefill_tokens_uncached
+    assert AdmissionPinner(_cfg(**{"admission.prefill_tokens": "uncached"})).prefill_tokens_uncached
     with pytest.raises(ValueError):
         _cfg(**{"admission.prefill_tokens": "extend"})
 
@@ -691,3 +692,30 @@ def test_uncached_prompt_tokens_counts_the_longer_prefix_of_either_namespace() -
     # memoised within the window: no second walk
     assert Scheduler._vp_uncached_prompt_tokens(s, r) == 900
     assert s.vp_pin_speculative_matches == 1
+
+
+def test_dense_prefill_decodes_dense_and_the_legacy_arm_follows_the_band() -> None:
+    """[D-849 add. 28] routed generation over a dense-computed prompt is illegal in the served
+    design: a stock prefill decodes stock whatever the band; nothing promotes it (the config
+    refuses an upgrade with it). The legacy reference arm keeps the band at the boundary."""
+    from sglang.srt.vpipe import design
+
+    pinner = AdmissionPinner(_cfg())
+    assert pinner.decode_pin_at_boundary(REQUEST_BODY_STOCK) == REQUEST_BODY_STOCK
+    pinner.observe_decode_step(256, 262_144)  # band HIGH
+    assert pinner.current_pin() == REQUEST_BODY_FD
+    assert pinner.decode_pin_at_boundary(REQUEST_BODY_STOCK) == REQUEST_BODY_STOCK
+    assert pinner.decode_pin_at_boundary(REQUEST_BODY_FD) == REQUEST_BODY_FD
+    assert not pinner.upgrades_enabled and pinner.upgrade_pin(REQUEST_BODY_STOCK) == REQUEST_BODY_STOCK
+    with pytest.raises(ValueError):
+        _cfg(**{"admission.decode_upgrade": "band_high"})  # would promote a dense-prefilled request
+    with pytest.raises(ValueError):
+        _cfg(**{"admission.decode_after_stock_prefill": "never"})
+    legacy = AdmissionPinner(_cfg(**{"admission.decode_after_stock_prefill": "band", "admission.decode_upgrade": "band_high"}))
+    legacy.observe_decode_step(256, 262_144)
+    assert legacy.decode_pin_at_boundary(REQUEST_BODY_STOCK) == REQUEST_BODY_FD
+    ref = design.ARMS["vskipper_denseprefix_routed"]["admission_overrides"]
+    assert ref == {"decode_after_stock_prefill": "band", "decode_upgrade": "band_high", "prefill_tokens": "uncached"}
+    served = design.SERVED_REGIME_SWITCH["admission"]
+    assert (served["decode_after_stock_prefill"], served["decode_upgrade"], served["prefill_tokens"]) == ("stock", "none", "prompt")
+

@@ -15,6 +15,7 @@ from sglang.srt.vpipe.common import (
     ADMISSION_CRITERION_MONOTONE_DECODE,
     ADMISSION_CRITERION_PHASE_STICKY,
     ADMISSION_DECODE_AFTER_FD_PREFILL_FD,
+    ADMISSION_DECODE_AFTER_STOCK_PREFILL_STOCK,
     RegimeSwitchConfig,
     ADMISSION_DECODE_UPGRADE_BAND_HIGH,
     ADMISSION_PREFILL_DEMOTION_ADMISSION,
@@ -613,13 +614,21 @@ class AdmissionPinner:
 
     def decode_pin_at_boundary(self, prefill_pin: str) -> str:
         """[phase-sticky] The DECODE body of a request leaving prefill: the band
-        state now (``decode_after_fd_prefill: "band"``, every request), or FD
-        after an FD prefill (``"fd"``); a stock prefill always follows the band."""
+        state now (``decode_after_fd_prefill: "band"``), or FD after an FD
+        prefill (``"fd"``). A stock prefill decodes STOCK under
+        ``decode_after_stock_prefill: "stock"`` (the served design, add. 28:
+        routed generation over a dense-computed prompt is the checkpoint's loop
+        mode) and follows the band under the legacy ``"band"``."""
 
         if prefill_pin not in _REQUEST_BODIES:
             raise ValueError(f"unknown request body pin {prefill_pin!r}")
         if not self.phase_sticky:
             return prefill_pin
+        if (
+            prefill_pin == REQUEST_BODY_STOCK
+            and self._cfg.admission.decode_after_stock_prefill == ADMISSION_DECODE_AFTER_STOCK_PREFILL_STOCK
+        ):
+            return REQUEST_BODY_STOCK
         if (
             prefill_pin == REQUEST_BODY_FD
             and self._cfg.admission.decode_after_fd_prefill == ADMISSION_DECODE_AFTER_FD_PREFILL_FD
