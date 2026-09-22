@@ -295,6 +295,10 @@ _is_npu = is_npu()
 _is_hip = is_hip()
 
 
+# [D-849 add. 22] how long a waiting request's speculative uncached-token estimate is reused (s)
+VP_UNCACHED_MEMO_S = 0.25
+
+
 class Scheduler(
     SchedulerDisaggregationDecodeMixin,
     SchedulerDisaggregationPrefillMixin,
@@ -1058,6 +1062,7 @@ class Scheduler(
         self.vp_pin_decode_upgraded_rows = 0  # [D-849 add. 12]
         self.vp_pin_round_prompt_tokens = 0  # [D-849 add. 17] prompt tokens counted at admission rounds
         self.vp_pin_round_uncached_tokens = 0  # [D-849 add. 17] ... of which not cached in the routed namespace
+        self.vp_pin_speculative_matches = 0  # [D-849 add. 22] radix walks actually performed for the estimate
         self.vp_pin_mixed_step_rows_stock = 0
         self.vp_pin_mixed_step_rows_fd = 0
         self.vp_pin_mix_withheld = 0
@@ -1116,13 +1121,25 @@ class Scheduler(
         tokens = len(req.origin_input_ids)
         if self.tree_cache is None or tokens == 0:
             return tokens
+        # [D-849 add. 22] Memoised: the estimate is re-walked at most every
+        # VP_UNCACHED_MEMO_S per request. The walk ran on EVERY scheduler
+        # iteration for every waiting request (a 2.5k-token radix walk each
+        # on bbh at overload, ~12 deep queue) and is the suspected cause of the
+        # bbh-overload TTFT p50 +75 % (admission-side, service rate untouched).
+        now = time.monotonic()
+        memo = req.vp_uncached_memo
+        if memo is not None and now - memo[0] < VP_UNCACHED_MEMO_S:
+            return memo[1]
         extra = req.extra_key if req.vp_prefill_body is not None else (req.extra_key or "") + f"|vpbody={REQUEST_BODY_FD}"
         result = self.tree_cache.match_prefix(
             MatchPrefixParams(key=RadixKey(token_ids=req.origin_input_ids, extra_key=extra))
         )
+        self.vp_pin_speculative_matches += 1
         cached = len(result.device_indices) if result.device_indices is not None else 0
         # the last prompt token is always computed (it produces the first output)
-        return max(1, tokens - min(cached, tokens - 1))
+        value = max(1, tokens - min(cached, tokens - 1))
+        req.vp_uncached_memo = (now, value)
+        return value
 
     def _vp_round_prompt_tokens(self, running_bs: int) -> tuple[int, int]:
         """[phase-sticky] Prompt tokens this admission round can take: the
@@ -1150,6 +1167,10 @@ class Scheduler(
             total += tokens
             count += 1
             if budget is not None and budget > 0 and total >= budget:
+                break
+            # [D-849 add. 22] the decision is fixed once the round crosses the
+            # prefill threshold (row correction is 0): stop walking the queue.
+            if uncached_mode and total >= self.vp_pinner.prefill_min_tokens:
                 break
         return total, count
 

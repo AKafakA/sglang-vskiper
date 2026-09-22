@@ -608,6 +608,11 @@ class AdmissionPinner:
         )
 
     @property
+    def prefill_min_tokens(self) -> int:
+        """[D-849 add. 22] the prefill leg's token threshold (the round walk stops there)."""
+        return int(self._cfg.prefill.min_tokens) if self._active else 0
+
+    @property
     def upgrades_enabled(self) -> bool:
         """[D-849 add. 12] one-way stock->fd decode upgrade at band HIGH."""
         return (

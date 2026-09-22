@@ -343,6 +343,7 @@ def scheduler_runtime_attestation(scheduler: Any) -> dict[str, Any]:
                 "decode_upgraded_rows": int(scheduler.vp_pin_decode_upgraded_rows),
                 "round_prompt_tokens": int(scheduler.vp_pin_round_prompt_tokens),
                 "round_uncached_tokens": int(scheduler.vp_pin_round_uncached_tokens),
+                "speculative_matches": int(scheduler.vp_pin_speculative_matches),
                 "mix_withheld": int(scheduler.vp_pin_mix_withheld),
                 "cross_body_prefix_reuse": int(scheduler.vp_pin_cross_body_prefix_reuse),
                 "prefix_hit_tokens_stock": int(scheduler.vp_pin_prefix_hit_tokens_stock),
@@ -404,6 +405,8 @@ class ReqVPMixin:
         self.vp_decode_pinned: bool = False
         # [D-849 add. 12] the decode body was upgraded stock->fd once (band HIGH)
         self.vp_decode_upgraded: bool = False
+        # [D-849 add. 22] memo of the speculative uncached-token estimate: (monotonic s, value)
+        self.vp_uncached_memo: Optional[tuple] = None
         # finish-time radix insertion suppressed: generated K/V of another body
         self.vp_skip_finish_insert: bool = False
 
