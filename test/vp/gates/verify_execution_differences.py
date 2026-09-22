@@ -64,8 +64,9 @@ def effective(info: dict) -> dict:
         "sampling_backend": info.get("sampling_backend"),
         "decode_kv_band": [rs.get("exit_kv_tokens"), rs.get("enter_kv_tokens")] if rs else None,
         # a fork arm served with the mode switch OFF (always-route, the fixed-plan knee legs: design.ARMS regime_switch False)
-        # attests no vp_runtime.regime_switch block at all: it executes no band, so there is nothing to hold to the rule
-        "mode_switch_executed": bool(vp) and (vp.get("regime_switch") not in (None, False)),
+        # attests vp_runtime.regime_switch = {"enabled": false, "counters": ...} with no decode block: it executes no band, so
+        # there is nothing to hold to the rule (read the attested flag, not the block's presence)
+        "mode_switch_executed": bool(vp) and isinstance(vp.get("regime_switch"), dict) and vp["regime_switch"].get("enabled") is True,
         "decode_kv_band_policy": md.get("decode_kv_band_policy"),
         "routed_layers": md.get("routed_layers"),
         "design_skip_ratio": md.get("design_skip_ratio"),
