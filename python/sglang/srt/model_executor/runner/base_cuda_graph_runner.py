@@ -100,6 +100,7 @@ def get_batch_sizes_to_capture(
     if requested_tokens_per_bs == 1:
         from sglang.srt.vpipe.common import (
             coverage_capture_bs,
+            vp_decode_coverage_device_bound,
             vp_decode_coverage_max_bs,
             vp_decode_coverage_target,
         )
@@ -114,6 +115,12 @@ def get_batch_sizes_to_capture(
             # and never above the pool. Aligned to mul_base (num_max_requests
             # already is).
             bound = vp_decode_coverage_max_bs()
+            if bound is None:
+                # [D-849 add. 42] per-device ladder table first (RTX A6000: 256),
+                # else the 4x rule.
+                bound = vp_decode_coverage_device_bound(
+                    torch.cuda.get_device_name(model_runner.gpu_id)
+                )
             if bound is None:
                 bound = 4 * int(configured_max)
             target = min(admission_cap, int(num_max_requests), int(bound))

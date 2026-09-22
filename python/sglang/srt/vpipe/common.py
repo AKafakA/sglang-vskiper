@@ -699,6 +699,27 @@ def vp_decode_coverage_max_bs(
     if value <= 0:
         raise ValueError(f"{VP_DECODE_COVERAGE_MAX_BS_ENV} must be positive")
     return value
+# [D-849 add. 42, 2026-09-22] Per-device decode coverage ladder. The built-in bound is 4x the
+# CLI-configured decode max_bs (the A100's proven 1,024 = 4 x 256). On the RTX A6000 (48 GB)
+# SGLang's memory-derived default is 32, so 4x = 128, and the served decode batch on that card
+# runs above 128 rows in ~22 % of steps at the gsm8k knee (running mean 129, max 190): every
+# such step was cut into two padded replays (ladder_chunked_passes) and the routed decode gain
+# was lost. The card's ladder is therefore sized to its observed occupancy, 256, from THIS table
+# (design in the tree: never an env var, never a host-file knob). The same-ladder baseline on
+# that card is upstream with --cuda-graph-max-bs 256 (arm upstream_g256, declared in
+# deploy/execution_differences.rtxa6000.json), exactly as upstream_g1024 mirrors the A100.
+DECODE_COVERAGE_LADDER_BY_DEVICE: dict[str, int] = {
+    "NVIDIA RTX A6000": 256,
+}
+
+
+def vp_decode_coverage_device_bound(device_name: str) -> Optional[int]:
+    """The per-device coverage ladder for ``device_name`` (torch's device name,
+    e.g. ``torch.cuda.get_device_name(gpu_id)``), or None for the 4x rule."""
+
+    return DECODE_COVERAGE_LADDER_BY_DEVICE.get(str(device_name).strip())
+
+
 def coverage_capture_bs(
     capture_bs: list[int], target: int, generate
 ) -> tuple[list[int], int]:
