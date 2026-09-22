@@ -130,6 +130,7 @@ def prefill_evidence(path: Path) -> Optional[dict]:
     prefill = counters.get("prefill") or {}
     engagement = counters.get("prefill_engagement") or {}
     comp = vp.get("batch_composition") or {}
+    pins = vp.get("admission_pins") or {}
     return {
         "fd": int(prefill.get("fd", 0)),
         "dense": int(prefill.get("dense", 0)),
@@ -137,6 +138,10 @@ def prefill_evidence(path: Path) -> Optional[dict]:
         "engagement_min": (regime.get("prefill") or {}).get("engagement_min"),
         "engagement_samples": int(engagement.get("samples", 0) or 0),
         "engagement_ema": engagement.get("ema"),
+        # [D-849 add. 45] the escape's own admission-round counters (monotonic): rounds the
+        # engagement demotion sent to the dense body, and its probe rounds.
+        "demoted_rounds": int(pins.get("prefill_demoted_rounds", 0) or 0),
+        "probe_rounds": int(pins.get("prefill_probe_rounds", 0) or 0),
     }
 
 
@@ -177,7 +182,25 @@ def main() -> int:
             print(f"\nREFUSING: the prefill body counters account for {d_fd + d_dense} passes but the "
                   f"scheduler ran {d_passes}. Counters that do not add up are not evidence.")
             return 1
-        if d_passes > 0 and d_fd == 0 and not pinned_nothing_fd:
+        d_demoted = pa["demoted_rounds"] - pb["demoted_rounds"]
+        d_probes = pa["probe_rounds"] - pb["probe_rounds"]
+        ema = pa["engagement_ema"]
+        escape_demoted_window = (
+            pa["engagement_min"] is not None and ema is not None
+            and float(ema) < float(pa["engagement_min"]) and d_demoted > 0
+        )
+        if d_passes > 0 and d_fd == 0 and not pinned_nothing_fd and escape_demoted_window:
+            # [D-849 add. 45, 2026-09-22] Qwen3-8B on gsm8k: router engagement sits at the escape
+            # threshold (ema 0.30-0.35 vs engagement_min 0.35), so the escape keeps every routed-
+            # eligible round dense and probes once per window; a cell window with no probe round
+            # then has zero routed prefill passes BY THE DESIGN'S OWN RULE (decode still routed --
+            # checked below). Recorded, not refused, exactly like the band-never-engaged case;
+            # a re-measure only changed whether a probe landed in the window (coin flip).
+            print(f"  NOTE: zero routed prefill passes -- the engagement escape demoted every "
+                  f"routed-eligible round in the window (ema={ema} < engagement_min="
+                  f"{pa['engagement_min']}, demoted rounds +{d_demoted}, probe rounds +{d_probes}); "
+                  "the design's low-engagement prefill behaviour, RECORDED not refused.")
+        elif d_passes > 0 and d_fd == 0 and not pinned_nothing_fd:
             print("\nREFUSING: this arm routes prefill but the routed body ran ZERO prefill passes in "
                   "the window.")
             return 1
