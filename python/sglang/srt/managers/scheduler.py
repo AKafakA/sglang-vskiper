@@ -1053,6 +1053,7 @@ class Scheduler(
         )
         self.vp_pin_retract_reentries = 0
         self.vp_pin_admission_deferrals = 0
+        self.vp_pin_chunk_body_adoptions = 0  # [D-849 add. 19] unpinned requests that took the in-flight chunk's body
         self.vp_pin_mixed_steps = 0
         self.vp_pin_decode_upgraded_rows = 0  # [D-849 add. 12]
         self.vp_pin_round_prompt_tokens = 0  # [D-849 add. 17] prompt tokens counted at admission rounds
@@ -3127,7 +3128,21 @@ class Scheduler(
             # a retract, or this round's) differs from the round's batch pin is
             # deferred: admission rounds are pin-uniform by construction.
             if vp_round_pin is not None:
-                vp_pin = req.vp_prefill_body if req.vp_prefill_body is not None else vp_round_pin
+                # [D-849 add. 19] An UNPINNED request joins the pass with the pass's
+                # body: the in-flight chunk's pin when a chunked prompt fixes it (as
+                # every request in a version-1 pass ran the pass body), else this
+                # round's pin. Only an already-pinned re-entry whose body differs from
+                # the pass body waits for a later round. Deferring unpinned requests
+                # (the 09-21 rule) throttled admission at bbh overload (134 deferrals,
+                # 7 % fewer running rows, TTFT p50 +18 % on one rep).
+                if req.vp_prefill_body is not None:
+                    vp_pin = req.vp_prefill_body
+                elif vp_batch_pin is not None:
+                    vp_pin = vp_batch_pin
+                    if vp_pin != vp_round_pin:
+                        self.vp_pin_chunk_body_adoptions += 1
+                else:
+                    vp_pin = vp_round_pin
                 if vp_batch_pin is None:
                     vp_batch_pin = vp_pin
                 if vp_pin != vp_batch_pin:

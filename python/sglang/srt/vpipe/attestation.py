@@ -336,6 +336,7 @@ def scheduler_runtime_attestation(scheduler: Any) -> dict[str, Any]:
             {
                 "retract_reentries": int(scheduler.vp_pin_retract_reentries),
                 "admission_deferrals": int(scheduler.vp_pin_admission_deferrals),
+                "chunk_body_adoptions": int(scheduler.vp_pin_chunk_body_adoptions),
                 "mixed_steps": int(scheduler.vp_pin_mixed_steps),
                 "mixed_step_rows_stock": int(scheduler.vp_pin_mixed_step_rows_stock),
                 "mixed_step_rows_fd": int(scheduler.vp_pin_mixed_step_rows_fd),
