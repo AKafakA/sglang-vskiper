@@ -744,6 +744,7 @@ def test_one_switch_either_direction() -> None:
             self.vp_decode_pinned = True
             self.vp_decode_upgraded = False
             self.vp_decode_switched = False
+            self.vp_decode_demoted = False
             self.vp_skip_finish_insert = False
 
     cfg = _cfg(**{"admission.decode_after_stock_prefill": "band", "admission.decode_upgrade": "band_high", "admission.decode_downgrade": "band_low"})
