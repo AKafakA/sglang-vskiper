@@ -344,6 +344,14 @@ def scheduler_runtime_attestation(scheduler: Any) -> dict[str, Any]:
                 "round_prompt_tokens": int(scheduler.vp_pin_round_prompt_tokens),
                 "round_uncached_tokens": int(scheduler.vp_pin_round_uncached_tokens),
                 "speculative_matches": int(scheduler.vp_pin_speculative_matches),
+                "adm_attempts": int(scheduler.vp_adm_attempts),
+                "adm_rounds": int(scheduler.vp_adm_rounds),
+                "adm_admitted": int(scheduler.vp_adm_admitted),
+                "adm_zero_admit": int(scheduler.vp_adm_zero_admit),
+                "adm_no_token": int(scheduler.vp_adm_no_token),
+                "adm_full_skips": int(scheduler.vp_adm_full_skips),
+                "adm_waiting_seen": int(scheduler.vp_adm_waiting_seen),
+                "adm_queue_wait_ms": int(scheduler.vp_adm_queue_wait_ms),
                 "mix_withheld": int(scheduler.vp_pin_mix_withheld),
                 "cross_body_prefix_reuse": int(scheduler.vp_pin_cross_body_prefix_reuse),
                 "prefix_hit_tokens_stock": int(scheduler.vp_pin_prefix_hit_tokens_stock),
@@ -409,6 +417,8 @@ class ReqVPMixin:
         self.vp_uncached_memo: Optional[tuple] = None
         # [D-849 add. 23] monotone lane: promoted by its first routed decode step
         self.vp_promoted: bool = False
+        # [D-849 add. 25 diagnostic] perf_counter at (re)entry into the waiting queue
+        self.vp_queued_at: Optional[float] = None
         # finish-time radix insertion suppressed: generated K/V of another body
         self.vp_skip_finish_insert: bool = False
 

@@ -1063,6 +1063,15 @@ class Scheduler(
         self.vp_pin_round_prompt_tokens = 0  # [D-849 add. 17] prompt tokens counted at admission rounds
         self.vp_pin_round_uncached_tokens = 0  # [D-849 add. 17] ... of which not cached in the routed namespace
         self.vp_pin_speculative_matches = 0  # [D-849 add. 22] radix walks actually performed for the estimate
+        # [D-849 add. 25 diagnostic] admission cadence: why rounds are rare / how long requests wait
+        self.vp_adm_attempts = 0
+        self.vp_adm_rounds = 0
+        self.vp_adm_admitted = 0
+        self.vp_adm_zero_admit = 0
+        self.vp_adm_no_token = 0
+        self.vp_adm_full_skips = 0
+        self.vp_adm_waiting_seen = 0
+        self.vp_adm_queue_wait_ms = 0.0
         self.vp_pin_mixed_step_rows_stock = 0
         self.vp_pin_mixed_step_rows_fd = 0
         self.vp_pin_mix_withheld = 0
@@ -2535,6 +2544,7 @@ class Scheduler(
                 )
 
     def _add_request_to_queue(self, req: Req, is_retracted: bool = False):
+        req.vp_queued_at = time.perf_counter()  # [D-849 add. 25 diagnostic] queue wait at admission
         if self.vp_fixed_cross_body:
             req.vp_skip_finish_insert = True  # [D-849 add. 11] prompt and generation come from different bodies
         if not self._set_or_validate_priority(req):
@@ -3014,9 +3024,16 @@ class Scheduler(
         if (
             self.running_batch.batch_is_full or len(self.waiting_queue) == 0
         ) and self.chunked_req is None:
+            # [D-849 add. 25 diagnostic] a waiting request skipped because the batch is full
+            if self.waiting_queue and self.vp_pinner.active:
+                self.vp_adm_full_skips += 1
             return None
 
         running_bs = len(self.running_batch.reqs)
+        if self.vp_pinner.active:
+            # [D-849 add. 25 diagnostic] admission attempts and the queue depth they saw
+            self.vp_adm_attempts += 1
+            self.vp_adm_waiting_seen += len(self.waiting_queue)
         # [D-849] The pin every request admitted in THIS round receives (the
         # scheduler's mirror of the decode band, unchanged within a round), and
         # the round's batch pin: a chunked request in flight fixes it, otherwise
@@ -3189,6 +3206,8 @@ class Scheduler(
 
             if res != AddReqResult.CONTINUE:
                 if res == AddReqResult.NO_TOKEN:
+                    if self.vp_pinner.active:
+                        self.vp_adm_no_token += 1  # [D-849 add. 25 diagnostic]
                     if self.enable_hierarchical_cache:
                         # Set batch_is_full after making sure there are requests that can be served
                         self.running_batch.batch_is_full = len(
@@ -3221,7 +3240,17 @@ class Scheduler(
         # Update waiting queue
         can_run_list: List[Req] = adder.can_run_list
         if len(can_run_list) == 0:
+            if self.vp_pinner.active:
+                self.vp_adm_zero_admit += 1  # [D-849 add. 25 diagnostic]
             return None
+        if self.vp_pinner.active:
+            # [D-849 add. 25 diagnostic] rounds, admitted requests and their queue wait
+            self.vp_adm_rounds += 1
+            self.vp_adm_admitted += len(can_run_list)
+            _now = time.perf_counter()
+            for _r in can_run_list:
+                if _r.vp_queued_at is not None:
+                    self.vp_adm_queue_wait_ms += (_now - _r.vp_queued_at) * 1000.0
 
         can_run_set = set(can_run_list)
         self.waiting_queue = [x for x in self.waiting_queue if x not in can_run_set]
