@@ -202,7 +202,9 @@ def test_pinner_follows_the_kv_band_with_hysteresis() -> None:
 
 
 def test_pinner_phase_sticky_prefill_round_and_decode_boundary() -> None:
-    pinner = AdmissionPinner(_cfg())
+    # the fixture SERVED_V2 omits the add. 28/32 admission fields (struct defaults = the
+    # loop-safe rule); the served design's boundary behaviour is the dd41 line
+    pinner = AdmissionPinner(_cfg(**{"admission.decode_after_stock_prefill": "band", "admission.decode_upgrade": "band_high"}))
     assert pinner.phase_sticky
     # prefill body per round from the round's prompt tokens (the v1 pass threshold, 1536)
     assert pinner.prefill_pin(1535) == REQUEST_BODY_STOCK
@@ -538,7 +540,7 @@ def test_pinner_one_way_upgrade_stock_to_fd_at_band_high() -> None:
             self.vp_skip_finish_insert = False
 
     pinner = AdmissionPinner(_cfg(**{"admission.decode_after_stock_prefill": "band", "admission.decode_upgrade": "band_high"}))
-    assert pinner.upgrades_enabled and AdmissionPinner(_cfg()).upgrades_enabled  # [add. 32] served = dd41 line
+    assert pinner.upgrades_enabled and not AdmissionPinner(_cfg()).upgrades_enabled  # fixture = struct defaults (loop-safe)
     rows = [R(REQUEST_BODY_STOCK), R(REQUEST_BODY_FD), R(REQUEST_BODY_STOCK, pinned=False)]
     # band LOW: nothing moves
     pinner.observe_decode_step(512, 131_072)
