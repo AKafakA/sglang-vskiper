@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Optional
 from sglang.srt.vpipe.common import (
+    ADMISSION_CRITERION_MONOTONE_DECODE,
     ADMISSION_CRITERION_PHASE_STICKY,
     ADMISSION_DECODE_AFTER_FD_PREFILL_FD,
     RegimeSwitchConfig,
@@ -503,6 +504,27 @@ def upgrade_pinned_rows(pinner: "AdmissionPinner", reqs) -> int:
     return upgraded
 
 
+def monotone_assign_rows(pinner: "AdmissionPinner", reqs) -> int:
+    """[D-849 add. 23] Monotone lane, once per decode step BEFORE the forward batch
+    is built: band HIGH -> every row runs routed and becomes promoted; band LOW ->
+    promoted rows keep the routed body (never demoted) and the others are forced
+    to RUN inside the same routed replay (a stock-only batch runs the stock graph,
+    exactly version 1). Returns the number of rows promoted this step."""
+
+    if not pinner.monotone:
+        return 0
+    high = pinner.state == DECODE_BODY_HIGH
+    promoted = 0
+    for req in reqs:
+        if high and not req.vp_promoted:
+            req.vp_promoted = True
+            promoted += 1
+        req.vp_body = REQUEST_BODY_FD if (high or req.vp_promoted) else REQUEST_BODY_STOCK
+    if promoted:
+        pinner._promoted += promoted
+    return promoted
+
+
 class AdmissionPinner:
     """Scheduler-owned mirror of the decode band; decides each request's pin.
 
@@ -529,6 +551,7 @@ class AdmissionPinner:
         # [phase-sticky] per-request plans decided at the prefill->decode boundary
         self._plans = {"stock_stock": 0, "stock_fd": 0, "fd_fd": 0, "fd_stock": 0}
         self._upgrades = 0  # [D-849 add. 12] stock->fd decode upgrades at band HIGH
+        self._promoted = 0  # [D-849 add. 23] monotone lane: rows promoted by their first routed step
         # [D-849 add. 13] version-1 engagement demotion at admission: the verdict comes
         # from the runner's PrefillEngagementTracker (set_engagement_demote); the dense
         # streak / probe window is the version-1 one, kept here per admission round.
@@ -536,6 +559,12 @@ class AdmissionPinner:
         self._dense_streak = 0
         self._prefill_demoted_rounds = 0
         self._prefill_probe_rounds = 0
+
+    @property
+    def monotone(self) -> bool:
+        """[D-849 add. 23] the monotone lane: no admission pins, one namespace,
+        version-1 prefill and band; decode rows promoted once, never demoted."""
+        return self._active and self._cfg.admission.criterion == ADMISSION_CRITERION_MONOTONE_DECODE
 
     @property
     def phase_sticky(self) -> bool:
@@ -557,8 +586,8 @@ class AdmissionPinner:
         one-probe-per-window streak. With the prefill leg off, or under the
         band-state criterion, the band state decides (the version-2 pin)."""
 
-        if not self._active:
-            return None
+        if not self._active or self.monotone:
+            return None  # monotone: the version-1 pass criterion decides at dispatch
         if not self.phase_sticky or not self._cfg.prefill.enabled:
             return self.current_pin()
         variant = prefill_regime_decision(
@@ -718,6 +747,7 @@ class AdmissionPinner:
             "plan_fd_fd": self._plans["fd_fd"],
             "plan_fd_stock": self._plans["fd_stock"],
             "decode_upgrades_stock_fd": self._upgrades,
+            "monotone_promoted": self._promoted,
             "prefill_demoted_rounds": self._prefill_demoted_rounds,
             "prefill_probe_rounds": self._prefill_probe_rounds,
         }

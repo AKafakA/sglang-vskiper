@@ -593,3 +593,39 @@ def test_prefill_tokens_criterion_is_declared_and_validated() -> None:
     assert not AdmissionPinner(_cfg(**{"admission.prefill_tokens": "prompt"})).prefill_tokens_uncached
     with pytest.raises(ValueError):
         _cfg(**{"admission.prefill_tokens": "extend"})
+
+
+def test_monotone_lane_resolves_and_assigns_rows(monkeypatch) -> None:
+    """[D-849 add. 23] vskipper_monotone = v1.7 + one rule: promoted at the first HIGH step, never demoted."""
+    from sglang.srt.vpipe import design
+    from sglang.srt.vpipe.common import _REGIME_SWITCH_CONFIG_CACHE, regime_switch_config
+    from sglang.srt.vpipe.regime import monotone_assign_rows
+
+    monkeypatch.delenv("SGLANG_VP_REGIME_SWITCH", raising=False)
+    design._ARM_CACHE.clear(); design._ARM_CACHE["name"] = "vskipper_monotone"; _REGIME_SWITCH_CONFIG_CACHE.clear()
+    try:
+        cfg = regime_switch_config()
+        assert cfg is not None and cfg.pinning and cfg.admission.criterion == "monotone_decode"
+        pinner = AdmissionPinner(cfg)
+        assert pinner.monotone and not pinner.phase_sticky
+        assert pinner.prefill_pin(10_000, 8) is None          # no admission pin: v1 pass criterion at dispatch
+
+        class R:
+            def __init__(self):
+                self.vp_body = None; self.vp_promoted = False; self.vp_decode_pinned = False; self.vp_prefill_body = None
+        rows = [R(), R(), R()]
+        pinner.observe_decode_step(512, 131_072)               # LOW, nothing promoted -> stock-only batch (v1 stock graph)
+        assert monotone_assign_rows(pinner, rows) == 0 and {r.vp_body for r in rows} == {REQUEST_BODY_STOCK}
+        pinner.observe_decode_step(256, 262_144)               # HIGH -> every row routed and promoted
+        assert monotone_assign_rows(pinner, rows) == 3 and {r.vp_body for r in rows} == {REQUEST_BODY_FD}
+        newcomer = R(); rows.append(newcomer)
+        for _ in range(8):
+            pinner.observe_decode_step(512, 131_072)           # LOW again
+        assert monotone_assign_rows(pinner, rows) == 0
+        assert [r.vp_body for r in rows] == [REQUEST_BODY_FD, REQUEST_BODY_FD, REQUEST_BODY_FD, REQUEST_BODY_STOCK]  # mixed: forced-RUN newcomer
+        assert pinner.counters()["monotone_promoted"] == 3
+        # the served arm is untouched
+        design._ARM_CACHE.clear(); design._ARM_CACHE["name"] = "vskipper"; _REGIME_SWITCH_CONFIG_CACHE.clear()
+        assert regime_switch_config().admission.criterion == "phase_sticky"
+    finally:
+        design._ARM_CACHE.clear(); _REGIME_SWITCH_CONFIG_CACHE.clear()

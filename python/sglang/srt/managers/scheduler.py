@@ -1187,6 +1187,8 @@ class Scheduler(
 
         if not self.vp_pinner.active or req.vp_prefill_body is None:
             return
+        if self.vp_pinner.monotone:
+            return  # [D-849 add. 23] no boundary decision: the band + promotion decide per step
         if req.vp_decode_pinned:
             # a retracted request re-entering decode keeps its plan
             req.vp_body = req.vp_decode_body
@@ -3027,8 +3029,8 @@ class Scheduler(
         # chunked request in flight fixes the batch pin instead.
         vp_round_pin = (
             self.vp_pinner.prefill_pin(*self._vp_round_prompt_tokens(running_bs))
-            if self.vp_pinner.active
-            else None
+            if self.vp_pinner.active and not self.vp_pinner.monotone
+            else None  # [D-849 add. 23] monotone lane: no admission pin, no speculative walk
         )
         vp_batch_pin = (
             self.chunked_req.vp_prefill_body if self.chunked_req is not None else None
@@ -3534,11 +3536,18 @@ class Scheduler(
                     self.vp_pinner.observe_decode_step(batch.batch_size(), _vp_kv)
                     # [D-849 add. 12] one-way stock->fd upgrade of stock-pinned decode
                     # rows once the band is HIGH (before this step's forward batch is built)
-                    from sglang.srt.vpipe.regime import upgrade_pinned_rows
-
-                    self.vp_pin_decode_upgraded_rows += upgrade_pinned_rows(
-                        self.vp_pinner, batch.reqs
+                    from sglang.srt.vpipe.regime import (
+                        monotone_assign_rows,
+                        upgrade_pinned_rows,
                     )
+
+                    if self.vp_pinner.monotone:
+                        # [D-849 add. 23] promote at HIGH, keep promoted rows routed at LOW
+                        monotone_assign_rows(self.vp_pinner, batch.reqs)
+                    else:
+                        self.vp_pin_decode_upgraded_rows += upgrade_pinned_rows(
+                            self.vp_pinner, batch.reqs
+                        )
                     _vp_stock = sum(1 for r in batch.reqs if r.vp_body == "stock")
                     _vp_fd = sum(1 for r in batch.reqs if r.vp_body == "fd")
                     if _vp_stock and _vp_fd:

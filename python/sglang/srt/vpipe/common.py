@@ -125,6 +125,10 @@ ADMISSION_CRITERION_BAND_STATE = "decode_band_state"
 # (the version-1 pass threshold); decode body ONCE at the prefill->decode boundary: FD after an FD
 # prefill, else the band state at that moment. Never switched afterwards; FD->stock never occurs.
 ADMISSION_CRITERION_PHASE_STICKY = "phase_sticky"
+# [D-849 add. 23] the MONOTONE lane = version 1.7 (per-pass prefill criterion, per-step decode band, one cache namespace,
+# no admission pins) plus ONE rule: a request's first routed decode step promotes it for the rest of its generation; a LOW
+# step whose batch holds promoted rows runs the routed replay with the other rows forced to RUN. No demotion, ever.
+ADMISSION_CRITERION_MONOTONE_DECODE = "monotone_decode"
 # [D-849 add. 9, 2026-09-21 18:xxZ] what an FD-prefilled request decodes with: "fd" (FD prefill implies FD decode;
 # H100 0.75x: +13.8 % E2E, every step mixed below the crossover) or "band" (the band state at the boundary decides for
 # every request; FD->stock is then the second declared composition, its finished K/V never inserted).
@@ -143,7 +147,7 @@ _ADMISSION_PREFILL_TOKENS = frozenset({ADMISSION_PREFILL_TOKENS_UNCACHED, ADMISS
 ADMISSION_DECODE_UPGRADE_NONE = "none"
 ADMISSION_DECODE_UPGRADE_BAND_HIGH = "band_high"
 _ADMISSION_DECODE_UPGRADES = frozenset({ADMISSION_DECODE_UPGRADE_NONE, ADMISSION_DECODE_UPGRADE_BAND_HIGH})
-_ADMISSION_CRITERIA = frozenset({ADMISSION_CRITERION_BAND_STATE, ADMISSION_CRITERION_PHASE_STICKY})
+_ADMISSION_CRITERIA = frozenset({ADMISSION_CRITERION_BAND_STATE, ADMISSION_CRITERION_PHASE_STICKY, ADMISSION_CRITERION_MONOTONE_DECODE})
 ADMISSION_PREFILL_DEMOTION_OBSERVE_ONLY = "observe_only"
 # [D-849 add. 13] the version-1 engagement demotion (EMA < engagement_min -> dense, one routed
 # probe round per engagement_probe_every dense rounds) applied to the ADMISSION round's prefill
@@ -1330,6 +1334,11 @@ def regime_switch_config(
     # and the version-1 per-pass prefill decision governs that arm unchanged.
     if not design["decode"]["enabled"]:
         design["admission"] = {**design["admission"], "enabled": False}
+    # [D-849 add. 23] an arm may override admission fields (the monotone lane sets the
+    # criterion); declared in the tree, attested like the rest of the block.
+    _adm_over = dict(active_arm().get("admission_overrides", {}))
+    if _adm_over:
+        design["admission"] = {**design["admission"], **_adm_over}
     # The K/V band is declared per device (design.SERVED_DECODE_KV_BAND_BY_DEVICE) and
     # asserted against the roofline rule at boot (model_runner). On the A100 the entry equals
     # the base declaration, so the served config is byte-identical to before this line.

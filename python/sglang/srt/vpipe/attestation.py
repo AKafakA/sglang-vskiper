@@ -407,6 +407,8 @@ class ReqVPMixin:
         self.vp_decode_upgraded: bool = False
         # [D-849 add. 22] memo of the speculative uncached-token estimate: (monotonic s, value)
         self.vp_uncached_memo: Optional[tuple] = None
+        # [D-849 add. 23] monotone lane: promoted by its first routed decode step
+        self.vp_promoted: bool = False
         # finish-time radix insertion suppressed: generated K/V of another body
         self.vp_skip_finish_insert: bool = False
 

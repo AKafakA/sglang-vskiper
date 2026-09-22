@@ -358,6 +358,16 @@ ARMS["vskipper_qwen3_4b_sharedband"] = {
 # the mirror engages -> later admissions fd; a second burst while the first still decodes ->
 # mixed steps). Its own declared deviation, `decode_kv_band_policy: "gate"` (the boot assertion
 # accepts it like "shared" and logs it; the execution-difference gate never sees it); NEVER a paper arm.
+# [D-849 add. 23] The MONOTONE lane: v1.7 unchanged (per-pass prefill criterion with the engagement
+# escape, per-step roofline band, one prefix-cache namespace, no admission pins) plus one rule --
+# a request's first routed decode step promotes it for the rest of its generation; never demoted.
+# Hypothesis: the Table 10 runaways came from stock<->routed OSCILLATION, so this alone should put
+# the natural runaway count at the always-route level while every headline cell stays v1.7.
+ARMS["vskipper_monotone"] = {
+    **ARMS["vskipper"],
+    "admission_overrides": {"criterion": "monotone_decode"},
+}
+
 ARMS["vskipper_pingate_lowband"] = {
     **ARMS["vskipper"],
     "decode_kv_band": {
