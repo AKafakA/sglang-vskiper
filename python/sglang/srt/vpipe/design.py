@@ -368,6 +368,15 @@ ARMS["vskipper_monotone"] = {
     "admission_overrides": {"criterion": "monotone_decode"},
 }
 
+# [D-849 add. 24] NO-UPGRADE lane: the four fixed plans with the version-1 prefill criterion at admission (demotion, uncached
+# count) but NO mid-generation promotion (decode_upgrade none). Evidence 02:3xZ: every dense->routed switch mid-generation is a
+# loop source (monotone lane 120 vs 77; 639ec with 207 promotions 92 vs 82; dd41 with few 69/72 vs 77/84), so the decode body
+# is decided once at the prefill->decode boundary and never changed.
+ARMS["vskipper_noupgrade"] = {
+    **ARMS["vskipper"],
+    "admission_overrides": {"decode_upgrade": "none"},
+}
+
 ARMS["vskipper_pingate_lowband"] = {
     **ARMS["vskipper"],
     "decode_kv_band": {
