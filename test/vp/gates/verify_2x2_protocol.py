@@ -106,9 +106,16 @@ def main() -> int:
              for k in ARMS}
     check("task set", len({canon(v) for v in tasks.values()}) == 1 and bool(tasks["A"]), canon(tasks["A"]) + ("" if len({canon(v) for v in tasks.values()}) == 1 else " vs " + canon(tasks)))
     for t in tasks["A"]:
-        for field in ("versions", "n-shot", "task_hashes"):
+        for field in ("versions", "n-shot"):
             vals = {k: res[k].get(field, {}).get(t) for k in ARMS}
             check(f"{t}: {field}", len({canon(v) for v in vals.values()}) == 1, canon(vals["A"]) if len({canon(v) for v in vals.values()}) == 1 else canon(vals))
+        # lm-eval 0.4.9.1 task_hash = hash("".join(doc_hash + prompt_hash + target_hash per sample)) (loggers/evaluation_tracker.py):
+        # it inherits prompt_hash's backend dependence (rendered string vs message list on chat tasks), so it gates WITHIN each
+        # backend pair like prompt_hash; its three components are compared individually below.
+        th = {k: res[k].get("task_hashes", {}).get(t) for k in ARMS}
+        check(f"{t}: task_hashes A == B (native pair)", th["A"] == th["B"] and th["A"] is not None, f"{str(th['A'])[:12]} / {str(th['B'])[:12]}")
+        check(f"{t}: task_hashes C == D (served pair)", th["C"] == th["D"] and th["C"] is not None, f"{str(th['C'])[:12]} / {str(th['D'])[:12]}")
+        check(f"{t}: task_hashes A == C (cross-backend)", True, "equal" if th["A"] == th["C"] else "differ (inherits prompt_hash representation; not gating)", gating=False)
         eff = {k: (res[k].get("n-samples", {}).get(t) or {}).get("effective") for k in ARMS}
         check(f"{t}: n-samples effective", len(set(eff.values())) == 1, canon(eff))
         for field in CONFIG_FIELDS:
