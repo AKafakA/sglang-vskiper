@@ -398,6 +398,24 @@ ARMS["vskipper_denseprefix_routed"] = {
     },
 }
 
+# [D-849 add. 29] Two v3 variants for the bbh/coqa knee (debug A100 05:5xZ: v3 bbh 1.25x = E2E +17.5 %, TTFT +111 %, because the
+# engagement demotion prefilled 534/690 rounds dense -> stock->stock for 3,759 requests -> 91 % dense decode steps, and the 252
+# routed requests made nearly every step a forced-RUN mixed step). (a) routed prefill for every >= 1,536-token round (the demotion
+# only observes): the request that will decode routed is prefilled routed -- the legal way to a decode gain on bbh/coqa;
+# (b) mixed steps partitioned into a dense replay + a routed replay instead of one routed replay with forced rows.
+ARMS["vskipper_routedprefill"] = {
+    **ARMS["vskipper"],
+    "admission_overrides": {"prefill_demotion": "observe_only"},
+}
+ARMS["vskipper_partition"] = {
+    **ARMS["vskipper"],
+    "admission_overrides": {"mixed_step": "partition"},
+}
+ARMS["vskipper_routedprefill_partition"] = {
+    **ARMS["vskipper"],
+    "admission_overrides": {"prefill_demotion": "observe_only", "mixed_step": "partition"},
+}
+
 ARMS["vskipper_pingate_lowband"] = {
     **ARMS["vskipper"],
     "decode_kv_band": {
