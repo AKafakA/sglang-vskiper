@@ -620,13 +620,17 @@ def test_monotone_lane_resolves_and_assigns_rows(monkeypatch) -> None:
             def __init__(self):
                 self.vp_body = None; self.vp_promoted = False; self.vp_decode_pinned = False; self.vp_prefill_body = None
         rows = [R(), R(), R()]
-        pinner.observe_decode_step(512, 131_072)               # LOW, nothing promoted -> stock-only batch (v1 stock graph)
+        # band inputs derived from THIS host's resolved band (the A100 literals 131_072 / 262_144 are
+        # HIGH on the RTX A6000's band map: node gate 2026-09-22 10:48Z)
+        d = cfg.decode
+        low = (max(1, d.exit_rows // 4), max(1, d.exit_kv_tokens // 4)); high = (d.enter_rows * 2, d.enter_kv_tokens * 2)
+        pinner.observe_decode_step(*low)                       # LOW, nothing promoted -> stock-only batch (v1 stock graph)
         assert monotone_assign_rows(pinner, rows) == 0 and {r.vp_body for r in rows} == {REQUEST_BODY_STOCK}
-        pinner.observe_decode_step(256, 262_144)               # HIGH -> every row routed and promoted
+        pinner.observe_decode_step(*high)                      # HIGH -> every row routed and promoted
         assert monotone_assign_rows(pinner, rows) == 3 and {r.vp_body for r in rows} == {REQUEST_BODY_FD}
         newcomer = R(); rows.append(newcomer)
         for _ in range(8):
-            pinner.observe_decode_step(512, 131_072)           # LOW again
+            pinner.observe_decode_step(*low)                   # LOW again
         assert monotone_assign_rows(pinner, rows) == 0
         assert [r.vp_body for r in rows] == [REQUEST_BODY_FD, REQUEST_BODY_FD, REQUEST_BODY_FD, REQUEST_BODY_STOCK]  # mixed: forced-RUN newcomer
         assert pinner.counters()["monotone_promoted"] == 3
