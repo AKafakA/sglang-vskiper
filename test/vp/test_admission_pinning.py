@@ -537,6 +537,7 @@ def test_pinner_one_way_upgrade_stock_to_fd_at_band_high() -> None:
             self.vp_decode_body = body
             self.vp_decode_pinned = pinned
             self.vp_decode_upgraded = False
+            self.vp_decode_switched = False
             self.vp_skip_finish_insert = False
 
     pinner = AdmissionPinner(_cfg(**{"admission.decode_after_stock_prefill": "band", "admission.decode_upgrade": "band_high"}))
