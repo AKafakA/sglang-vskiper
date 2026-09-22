@@ -118,8 +118,10 @@ def get_batch_sizes_to_capture(
             if bound is None:
                 # [D-849 add. 42] per-device ladder table first (RTX A6000: 256),
                 # else the 4x rule.
+                import torch as _torch  # the module itself does not import torch
+
                 bound = vp_decode_coverage_device_bound(
-                    torch.cuda.get_device_name(model_runner.gpu_id)
+                    _torch.cuda.get_device_name(model_runner.gpu_id)
                 )
             if bound is None:
                 bound = 4 * int(configured_max)
