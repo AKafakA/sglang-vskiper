@@ -64,8 +64,15 @@ SERVED_REGIME_SWITCH: Final[dict[str, Any]] = {
         # version-1 bracket on the request's prompt tokens (with the engagement
         # demotion); the uncached-token count made warm prompts dense and thereby
         # decode-dense, which is the wrong trade once dense->routed is illegal.
-        "decode_after_stock_prefill": "stock",
-        "decode_upgrade": "none",
+        # [D-849 add. 31/32, owner 07:4xZ] The served design is the dd41daaf06 line: a
+        # dense-prefilled request follows the band at the boundary and may be promoted
+        # once at band HIGH; prefill body from the round's PROMPT tokens (before cache
+        # hits, so long-prompt workloads prefill routed and never serve dense->routed in
+        # volume; gsm8k natural gate 72/69/68 vs 76/83/78 on dd41); one config for every
+        # workload. The v3 restriction (add. 28) is kept as the loop-safe struct default
+        # and the reference arms, not as the served design.
+        "decode_after_stock_prefill": "band",
+        "decode_upgrade": "band_high",
         "prefill_tokens": "prompt",
     },
     "prefill": {

@@ -3189,19 +3189,16 @@ class Scheduler(
             # a retract, or this round's) differs from the round's batch pin is
             # deferred: admission rounds are pin-uniform by construction.
             if vp_round_pin is not None:
-                # [D-849 add. 19] An UNPINNED request joins the pass with the pass's
-                # body: the in-flight chunk's pin when a chunked prompt fixes it (as
-                # every request in a version-1 pass ran the pass body), else this
-                # round's pin. Only an already-pinned re-entry whose body differs from
-                # the pass body waits for a later round. Deferring unpinned requests
-                # (the 09-21 rule) throttled admission at bbh overload (134 deferrals,
-                # 7 % fewer running rows, TTFT p50 +18 % on one rep).
+                # [D-849 add. 32] An UNPINNED request takes THIS ROUND's pin (the
+                # 09-21 rule, dd41daaf06); a request whose pin differs from the
+                # in-flight chunk's body is deferred to a later round. The add. 19
+                # "adoption" of the chunk's body locked the v3 natural gsm8k cell
+                # dense for its whole life (3,482 adoptions, 0 demotions, every
+                # round >= 1,536 tokens: the cold-start stock chunk was adopted by
+                # every later round). Its bbh-overload rationale (134 deferrals,
+                # TTFT p50 +18 % on one rep) was refuted by the later TTFT diagnosis.
                 if req.vp_prefill_body is not None:
                     vp_pin = req.vp_prefill_body
-                elif vp_batch_pin is not None:
-                    vp_pin = vp_batch_pin
-                    if vp_pin != vp_round_pin:
-                        self.vp_pin_chunk_body_adoptions += 1
                 else:
                     vp_pin = vp_round_pin
                 if vp_batch_pin is None:

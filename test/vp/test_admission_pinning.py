@@ -213,7 +213,8 @@ def test_pinner_phase_sticky_prefill_round_and_decode_boundary() -> None:
     assert pinner.decode_pin_at_boundary(REQUEST_BODY_FD) == REQUEST_BODY_STOCK
     assert pinner.decode_pin_at_boundary(REQUEST_BODY_STOCK) == REQUEST_BODY_STOCK
     pinner.observe_decode_step(256, 262_144)  # band HIGH
-    assert pinner.decode_pin_at_boundary(REQUEST_BODY_STOCK) == REQUEST_BODY_STOCK
+    # [add. 32] the served design (dd41 line) lets a stock prefill follow the band
+    assert pinner.decode_pin_at_boundary(REQUEST_BODY_STOCK) == REQUEST_BODY_FD
     assert pinner.decode_pin_at_boundary(REQUEST_BODY_FD) == REQUEST_BODY_FD
     for pre, dec in ((REQUEST_BODY_STOCK, REQUEST_BODY_STOCK), (REQUEST_BODY_STOCK, REQUEST_BODY_FD), (REQUEST_BODY_FD, REQUEST_BODY_FD), (REQUEST_BODY_FD, REQUEST_BODY_STOCK)):
         pinner.record_plan(pre, dec)
@@ -536,9 +537,8 @@ def test_pinner_one_way_upgrade_stock_to_fd_at_band_high() -> None:
             self.vp_decode_upgraded = False
             self.vp_skip_finish_insert = False
 
-    # [add. 28] the served design has no upgrade; the legacy reference arm's settings exercise it
     pinner = AdmissionPinner(_cfg(**{"admission.decode_after_stock_prefill": "band", "admission.decode_upgrade": "band_high"}))
-    assert pinner.upgrades_enabled and not AdmissionPinner(_cfg()).upgrades_enabled
+    assert pinner.upgrades_enabled and AdmissionPinner(_cfg()).upgrades_enabled  # [add. 32] served = dd41 line
     rows = [R(REQUEST_BODY_STOCK), R(REQUEST_BODY_FD), R(REQUEST_BODY_STOCK, pinned=False)]
     # band LOW: nothing moves
     pinner.observe_decode_step(512, 131_072)
@@ -702,7 +702,8 @@ def test_dense_prefill_decodes_dense_and_the_legacy_arm_follows_the_band() -> No
     refuses an upgrade with it). The legacy reference arm keeps the band at the boundary."""
     from sglang.srt.vpipe import design
 
-    pinner = AdmissionPinner(_cfg())
+    # the loop-safe rule as the struct default / v3 reference: served overrides it (add. 32)
+    pinner = AdmissionPinner(_cfg(**{"admission.decode_after_stock_prefill": "stock", "admission.decode_upgrade": "none"}))
     assert pinner.decode_pin_at_boundary(REQUEST_BODY_STOCK) == REQUEST_BODY_STOCK
     pinner.observe_decode_step(256, 262_144)  # band HIGH
     assert pinner.current_pin() == REQUEST_BODY_FD
@@ -710,7 +711,7 @@ def test_dense_prefill_decodes_dense_and_the_legacy_arm_follows_the_band() -> No
     assert pinner.decode_pin_at_boundary(REQUEST_BODY_FD) == REQUEST_BODY_FD
     assert not pinner.upgrades_enabled and pinner.upgrade_pin(REQUEST_BODY_STOCK) == REQUEST_BODY_STOCK
     with pytest.raises(ValueError):
-        _cfg(**{"admission.decode_upgrade": "band_high"})  # would promote a dense-prefilled request
+        _cfg(**{"admission.decode_after_stock_prefill": "stock", "admission.decode_upgrade": "band_high"})
     with pytest.raises(ValueError):
         _cfg(**{"admission.decode_after_stock_prefill": "never"})
     legacy = AdmissionPinner(_cfg(**{"admission.decode_after_stock_prefill": "band", "admission.decode_upgrade": "band_high"}))
@@ -719,5 +720,5 @@ def test_dense_prefill_decodes_dense_and_the_legacy_arm_follows_the_band() -> No
     ref = design.ARMS["vskipper_denseprefix_routed"]["admission_overrides"]
     assert ref == {"decode_after_stock_prefill": "band", "decode_upgrade": "band_high", "prefill_tokens": "uncached"}
     served = design.SERVED_REGIME_SWITCH["admission"]
-    assert (served["decode_after_stock_prefill"], served["decode_upgrade"], served["prefill_tokens"]) == ("stock", "none", "prompt")
+    assert (served["decode_after_stock_prefill"], served["decode_upgrade"], served["prefill_tokens"]) == ("band", "band_high", "prompt")
 
