@@ -1122,9 +1122,11 @@ class RegimeSwitchAdmissionConfig(
     prefill_demotion: str = ADMISSION_PREFILL_DEMOTION_OBSERVE_ONLY
     mixed_step: str = ADMISSION_MIXED_STEP_FORCED_RUN
     decode_after_fd_prefill: str = ADMISSION_DECODE_AFTER_FD_PREFILL_BAND
-    decode_after_stock_prefill: str = ADMISSION_DECODE_AFTER_STOCK_PREFILL_BAND
-    decode_upgrade: str = ADMISSION_DECODE_UPGRADE_BAND_HIGH
-    prefill_tokens: str = ADMISSION_PREFILL_TOKENS_UNCACHED
+    # [D-849 add. 28] the defaults are the served (loop-safe) values: a config that
+    # omits them gets dense-stays-dense, no promotion, prompt-token criterion.
+    decode_after_stock_prefill: str = ADMISSION_DECODE_AFTER_STOCK_PREFILL_STOCK
+    decode_upgrade: str = ADMISSION_DECODE_UPGRADE_NONE
+    prefill_tokens: str = ADMISSION_PREFILL_TOKENS_PROMPT
 
     def validate(self) -> None:
         if self.prefill_tokens not in _ADMISSION_PREFILL_TOKENS:
