@@ -18,6 +18,7 @@ from sglang.srt.vpipe.common import (
     ADMISSION_DECODE_AFTER_STOCK_PREFILL_STOCK,
     RegimeSwitchConfig,
     ADMISSION_DECODE_DOWNGRADE_BAND_LOW,
+    ADMISSION_DECODE_DOWNGRADE_BAND_LOW_ANY,
     ADMISSION_DECODE_UPGRADE_BAND_HIGH,
     ADMISSION_PREFILL_DEMOTION_ADMISSION,
     ADMISSION_PREFILL_TOKENS_UNCACHED,
@@ -518,12 +519,17 @@ def downgrade_pinned_rows(pinner: "AdmissionPinner", reqs) -> int:
     if not pinner.downgrades_enabled or pinner.state != DECODE_BODY_LOW:
         return 0
     downgraded = 0
+    after_promotion = pinner.downgrades_after_promotion
     for req in reqs:
-        if req.vp_decode_pinned and req.vp_body == REQUEST_BODY_FD and not req.vp_decode_switched:
-            req.vp_body = req.vp_decode_body = pinner.downgrade_pin(REQUEST_BODY_FD)
-            req.vp_decode_switched = True
-            req.vp_skip_finish_insert = True
-            downgraded += 1
+        if not (req.vp_decode_pinned and req.vp_body == REQUEST_BODY_FD) or req.vp_decode_demoted:
+            continue
+        if req.vp_decode_switched and not after_promotion:
+            continue  # one-switch rule: a promoted row stays routed
+        req.vp_body = req.vp_decode_body = pinner.downgrade_pin(REQUEST_BODY_FD)
+        req.vp_decode_switched = True
+        req.vp_decode_demoted = True
+        req.vp_skip_finish_insert = True
+        downgraded += 1
     return downgraded
 
 
@@ -684,12 +690,17 @@ class AdmissionPinner:
 
     @property
     def downgrades_enabled(self) -> bool:
-        """[D-849 add. 35] one-time fd->stock decode downgrade at band LOW."""
+        """[D-849 add. 35/40] one-time fd->stock decode downgrade at band LOW."""
         return (
             self._active
             and self.phase_sticky
-            and self._cfg.admission.decode_downgrade == ADMISSION_DECODE_DOWNGRADE_BAND_LOW
+            and self._cfg.admission.decode_downgrade in (ADMISSION_DECODE_DOWNGRADE_BAND_LOW, ADMISSION_DECODE_DOWNGRADE_BAND_LOW_ANY)
         )
+
+    @property
+    def downgrades_after_promotion(self) -> bool:
+        """[D-849 add. 40] a promoted row may be demoted once at band LOW (never re-promoted)."""
+        return self.downgrades_enabled and self._cfg.admission.decode_downgrade == ADMISSION_DECODE_DOWNGRADE_BAND_LOW_ANY
 
     def downgrade_pin(self, decode_pin: str) -> str:
         """[D-849 add. 35] The decode body an fd-pinned request runs from the

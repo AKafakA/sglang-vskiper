@@ -162,7 +162,12 @@ _ADMISSION_DECODE_UPGRADES = frozenset({ADMISSION_DECODE_UPGRADE_NONE, ADMISSION
 # Each request changes its decode body at most ONCE in either direction.
 ADMISSION_DECODE_DOWNGRADE_NONE = "none"
 ADMISSION_DECODE_DOWNGRADE_BAND_LOW = "band_low"
-_ADMISSION_DECODE_DOWNGRADES = frozenset({ADMISSION_DECODE_DOWNGRADE_NONE, ADMISSION_DECODE_DOWNGRADE_BAND_LOW})
+# [D-849 add. 40] "band_low_any": the demotion may also follow a promotion (promote once at HIGH,
+# demote once at LOW, never re-promote): the only loop-prone transition (dense->routed over
+# generated tokens) still happens at most once; routed->dense is the safe leg. Targets the
+# CoQA low-load TPOT cost of promoted rows that stay routed through the following LOW stretch.
+ADMISSION_DECODE_DOWNGRADE_BAND_LOW_ANY = "band_low_any"
+_ADMISSION_DECODE_DOWNGRADES = frozenset({ADMISSION_DECODE_DOWNGRADE_NONE, ADMISSION_DECODE_DOWNGRADE_BAND_LOW, ADMISSION_DECODE_DOWNGRADE_BAND_LOW_ANY})
 _ADMISSION_CRITERIA = frozenset({ADMISSION_CRITERION_BAND_STATE, ADMISSION_CRITERION_PHASE_STICKY, ADMISSION_CRITERION_MONOTONE_DECODE})
 ADMISSION_PREFILL_DEMOTION_OBSERVE_ONLY = "observe_only"
 # [D-849 add. 13] the version-1 engagement demotion (EMA < engagement_min -> dense, one routed

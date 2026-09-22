@@ -773,3 +773,40 @@ def test_one_switch_either_direction() -> None:
     with pytest.raises(ValueError):
         _cfg(**{"admission.decode_downgrade": "always"})
 
+
+def test_promote_then_demote_once() -> None:
+    """[D-849 add. 40] band_low_any: a promoted row may be demoted once at LOW and is never re-promoted;
+    a row demoted first is never promoted; the served design keeps the downgrade off."""
+    from sglang.srt.vpipe import design
+    from sglang.srt.vpipe.regime import downgrade_pinned_rows, upgrade_pinned_rows
+
+    class R:
+        def __init__(self, body):
+            self.vp_body = body; self.vp_decode_body = body; self.vp_decode_pinned = True
+            self.vp_decode_upgraded = False; self.vp_decode_switched = False; self.vp_decode_demoted = False
+            self.vp_skip_finish_insert = False
+
+    pinner = AdmissionPinner(_cfg(**{"admission.decode_after_stock_prefill": "band", "admission.decode_upgrade": "band_high", "admission.decode_downgrade": "band_low_any"}))
+    assert pinner.upgrades_enabled and pinner.downgrades_enabled and pinner.downgrades_after_promotion
+    st, fd = R(REQUEST_BODY_STOCK), R(REQUEST_BODY_FD)
+    pinner.observe_decode_step(256, 262_144)  # HIGH: the stock row is promoted
+    assert upgrade_pinned_rows(pinner, [st, fd]) == 1 and st.vp_body == REQUEST_BODY_FD
+    for _ in range(8):
+        pinner.observe_decode_step(8, 1024)   # LOW: both routed rows are demoted (the promoted one too)
+    assert downgrade_pinned_rows(pinner, [st, fd]) == 2 and st.vp_body == fd.vp_body == REQUEST_BODY_STOCK
+    assert st.vp_decode_demoted and fd.vp_decode_demoted
+    pinner.observe_decode_step(256, 262_144)  # HIGH again: nothing is re-promoted
+    assert upgrade_pinned_rows(pinner, [st, fd]) == 0
+    for _ in range(8):
+        pinner.observe_decode_step(8, 1024)
+    assert downgrade_pinned_rows(pinner, [st, fd]) == 0
+    c = pinner.counters(); assert (c["decode_upgrades_stock_fd"], c["decode_downgrades_fd_stock"]) == (1, 2)
+    # one-switch (band_low): a promoted row is NOT demoted
+    one = AdmissionPinner(_cfg(**{"admission.decode_after_stock_prefill": "band", "admission.decode_upgrade": "band_high", "admission.decode_downgrade": "band_low"}))
+    r = R(REQUEST_BODY_STOCK); one.observe_decode_step(256, 262_144); assert upgrade_pinned_rows(one, [r]) == 1
+    for _ in range(8):
+        one.observe_decode_step(8, 1024)
+    assert downgrade_pinned_rows(one, [r]) == 0 and r.vp_body == REQUEST_BODY_FD
+    assert design.ARMS["vskipper_promote_demote"]["admission_overrides"] == {"decode_downgrade": "band_low_any"}
+    assert design.SERVED_REGIME_SWITCH["admission"]["decode_downgrade"] == "none"
+

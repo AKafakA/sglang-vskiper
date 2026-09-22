@@ -442,6 +442,13 @@ ARMS["vskipper_downonly"] = {
     "admission_overrides": {"decode_upgrade": "none", "decode_downgrade": "band_low"},
 }
 
+# [D-849 add. 40] PROMOTE-THEN-DEMOTE: the served design (promotion at HIGH) plus one demotion at LOW that may follow the
+# promotion; a demoted row is never re-promoted. Candidate for the CoQA low-load TPOT cost; measured on coqa 0.75x/knee first.
+ARMS["vskipper_promote_demote"] = {
+    **ARMS["vskipper"],
+    "admission_overrides": {"decode_downgrade": "band_low_any"},
+}
+
 ARMS["vskipper_pingate_lowband"] = {
     **ARMS["vskipper"],
     "decode_kv_band": {

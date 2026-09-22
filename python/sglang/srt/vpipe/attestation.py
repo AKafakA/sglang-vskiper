@@ -417,6 +417,7 @@ class ReqVPMixin:
         # [D-849 add. 12] the decode body was upgraded stock->fd once (band HIGH)
         self.vp_decode_upgraded: bool = False
         self.vp_decode_switched: bool = False  # [D-849 add. 35] one body change per request, either direction
+        self.vp_decode_demoted: bool = False  # [D-849 add. 40] routed->dense demotion happened (never re-promoted)
         # [D-849 add. 22] memo of the speculative uncached-token estimate: (monotonic s, value)
         self.vp_uncached_memo: Optional[tuple] = None
         # [D-849 add. 23] monotone lane: promoted by its first routed decode step
