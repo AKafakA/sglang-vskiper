@@ -629,3 +629,65 @@ def test_monotone_lane_resolves_and_assigns_rows(monkeypatch) -> None:
         assert regime_switch_config().admission.criterion == "phase_sticky"
     finally:
         design._ARM_CACHE.clear(); _REGIME_SWITCH_CONFIG_CACHE.clear()
+
+
+def test_uncached_prompt_tokens_counts_the_longer_prefix_of_either_namespace() -> None:
+    """[D-849 add. 27] The admission estimator matches the prompt under BOTH body
+    namespaces and counts the tail beyond the longer cached prefix; a pinned
+    re-entry matches only its own key."""
+
+    import types
+
+    from sglang.srt.managers.scheduler import Scheduler
+
+    class _Result:
+        def __init__(self, n):
+            self.device_indices = list(range(n)) if n else None
+
+    class _Cache:
+        def __init__(self, hits):
+            self.hits = hits
+            self.keys = []
+
+        def match_prefix(self, params):
+            key = params.key.extra_key
+            self.keys.append(key)
+            return _Result(self.hits.get(key, 0))
+
+    def _req(prompt_len, prefill_body=None):
+        r = types.SimpleNamespace()
+        r.origin_input_ids = list(range(prompt_len))
+        r.extra_key = ""
+        r.vp_prefill_body = prefill_body
+        r.vp_uncached_memo = None
+        return r
+
+    def _sched(hits):
+        s = types.SimpleNamespace()
+        s.tree_cache = _Cache(hits)
+        s.vp_pin_speculative_matches = 0
+        return s
+
+    # prefix under the dense namespace only (routed copy evicted): the tail counts
+    s = _sched({"|vpbody=stock": 1500})
+    assert Scheduler._vp_uncached_prompt_tokens(s, _req(1800)) == 300
+    assert sorted(s.tree_cache.keys) == ["|vpbody=fd", "|vpbody=stock"]
+    assert s.vp_pin_speculative_matches == 2
+    # routed copy longer than the dense one: the longer prefix wins
+    s = _sched({"|vpbody=fd": 1700, "|vpbody=stock": 200})
+    assert Scheduler._vp_uncached_prompt_tokens(s, _req(1800)) == 100
+    # cold prompt: everything counts (the last token always computes)
+    s = _sched({})
+    assert Scheduler._vp_uncached_prompt_tokens(s, _req(1800)) == 1800
+    # a fully cached prompt still computes its last token
+    s = _sched({"|vpbody=stock": 1800})
+    assert Scheduler._vp_uncached_prompt_tokens(s, _req(1800)) == 1
+    # a pinned re-entry matches only its own namespace key
+    s = _sched({"|vpbody=fd": 900})
+    r = _req(1800, prefill_body="fd")
+    r.extra_key = "|vpbody=fd"
+    assert Scheduler._vp_uncached_prompt_tokens(s, r) == 900
+    assert s.tree_cache.keys == ["|vpbody=fd"]
+    # memoised within the window: no second walk
+    assert Scheduler._vp_uncached_prompt_tokens(s, r) == 900
+    assert s.vp_pin_speculative_matches == 1

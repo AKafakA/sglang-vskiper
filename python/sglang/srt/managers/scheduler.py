@@ -1117,15 +1117,28 @@ class Scheduler(
         self.vp_pinner.record_admission(pin)
 
     def _vp_uncached_prompt_tokens(self, req: Req) -> int:
-        """[D-849 add. 17] The prompt tokens a ROUTED pass would compute for
-        ``req``: its prompt minus the prefix already cached in the routed
-        namespace (a read-only radix match with the routed key; an already
-        pinned re-entry matches in its own namespace). Version 1 decided the
-        prefill body on the pass's extend tokens, i.e. after cache hits."""
+        """[D-849 add. 17] The prompt tokens a prefill pass would compute for
+        ``req``: its prompt minus the longest prefix already cached under EITHER
+        body's namespace (read-only radix matches with the routed and the dense
+        key; an already pinned re-entry matches in its own namespace). Version 1
+        decided the prefill body on the pass's extend tokens, i.e. after cache
+        hits.
+
+        [D-849 add. 27] Both namespaces, not the routed one alone: a warm prompt
+        whose shared prefix lives under the dense namespace (the common state
+        once one dense-pinned request of a task has run) counted its WHOLE
+        prompt as uncached whenever the routed copy had been evicted, was pinned
+        routed, recomputed the prefix routed and locked a second copy -- on bbh
+        1.25x: 480 routed admissions, +12-17 % prefill tokens, cache share 0.893
+        vs 0.908, ~8 % fewer concurrent requests at the KV-bound admission and
+        the overload TTFT loss against v1.7 (same box: mean +9/+28 % vs -17.6 %).
+        With the longer of the two cached prefixes, such a prompt counts only
+        its tail, pins dense and hits; the routed copy is made once per cold
+        prefix and is evictable when its request finishes."""
 
         from sglang.srt.mem_cache.base_prefix_cache import MatchPrefixParams
         from sglang.srt.mem_cache.radix_cache import RadixKey
-        from sglang.srt.vpipe.common import REQUEST_BODY_FD
+        from sglang.srt.vpipe.common import REQUEST_BODY_FD, REQUEST_BODY_STOCK
 
         tokens = len(req.origin_input_ids)
         if self.tree_cache is None or tokens == 0:
@@ -1139,12 +1152,20 @@ class Scheduler(
         memo = req.vp_uncached_memo
         if memo is not None and now - memo[0] < VP_UNCACHED_MEMO_S:
             return memo[1]
-        extra = req.extra_key if req.vp_prefill_body is not None else (req.extra_key or "") + f"|vpbody={REQUEST_BODY_FD}"
-        result = self.tree_cache.match_prefix(
-            MatchPrefixParams(key=RadixKey(token_ids=req.origin_input_ids, extra_key=extra))
-        )
-        self.vp_pin_speculative_matches += 1
-        cached = len(result.device_indices) if result.device_indices is not None else 0
+        if req.vp_prefill_body is not None:
+            keys = [req.extra_key]
+        else:
+            base = req.extra_key or ""
+            keys = [f"{base}|vpbody={REQUEST_BODY_FD}", f"{base}|vpbody={REQUEST_BODY_STOCK}"]
+        cached = 0
+        for extra in keys:
+            result = self.tree_cache.match_prefix(
+                MatchPrefixParams(key=RadixKey(token_ids=req.origin_input_ids, extra_key=extra))
+            )
+            self.vp_pin_speculative_matches += 1
+            hit = len(result.device_indices) if result.device_indices is not None else 0
+            if hit > cached:
+                cached = hit
         # the last prompt token is always computed (it produces the first output)
         value = max(1, tokens - min(cached, tokens - 1))
         req.vp_uncached_memo = (now, value)
