@@ -11,8 +11,8 @@ setting or filter set would have passed every one of them (the class of D-255 / 
 normalizes). This gate compares the RAW fields lm-eval records for each run; nothing is normalized away.
 
 REFUSES (exit 1) unless, across A, B, C, D:
-  * the same lm-eval version, the same task set, and per task the same `versions`, `n-shot`, `task_hashes`,
-    effective `n-samples`;
+  * the same lm-eval version, the same task set, and per task the same `versions`, `n-shot`, effective `n-samples`,
+    and `task_hashes` within each backend pair (it hashes prompt_hash; see below);
   * the same task config fields that shape a prompt, a generation or a score (doc_to_text/target, delimiters,
     num_fewshot, fewshot_config/split, generation_kwargs, filter_list, metric_list, output_type, dataset/splits,
     description, repeats) and the same command-line `gen_kwargs`;
