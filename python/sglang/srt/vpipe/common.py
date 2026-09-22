@@ -156,6 +156,13 @@ _ADMISSION_PREFILL_TOKENS = frozenset({ADMISSION_PREFILL_TOKENS_UNCACHED, ADMISS
 ADMISSION_DECODE_UPGRADE_NONE = "none"
 ADMISSION_DECODE_UPGRADE_BAND_HIGH = "band_high"
 _ADMISSION_DECODE_UPGRADES = frozenset({ADMISSION_DECODE_UPGRADE_NONE, ADMISSION_DECODE_UPGRADE_BAND_HIGH})
+# [D-849 add. 35] The ONE-SWITCH rule's other direction: a routed-pinned decode drops to the
+# dense body once when the band is LOW (the safe FD->stock direction: the dense body reads
+# routed K/V without harm, natural leg 5 vs 78). "none" = today's one-way promotion only.
+# Each request changes its decode body at most ONCE in either direction.
+ADMISSION_DECODE_DOWNGRADE_NONE = "none"
+ADMISSION_DECODE_DOWNGRADE_BAND_LOW = "band_low"
+_ADMISSION_DECODE_DOWNGRADES = frozenset({ADMISSION_DECODE_DOWNGRADE_NONE, ADMISSION_DECODE_DOWNGRADE_BAND_LOW})
 _ADMISSION_CRITERIA = frozenset({ADMISSION_CRITERION_BAND_STATE, ADMISSION_CRITERION_PHASE_STICKY, ADMISSION_CRITERION_MONOTONE_DECODE})
 ADMISSION_PREFILL_DEMOTION_OBSERVE_ONLY = "observe_only"
 # [D-849 add. 13] the version-1 engagement demotion (EMA < engagement_min -> dense, one routed
@@ -1126,6 +1133,7 @@ class RegimeSwitchAdmissionConfig(
     # omits them gets dense-stays-dense, no promotion, prompt-token criterion.
     decode_after_stock_prefill: str = ADMISSION_DECODE_AFTER_STOCK_PREFILL_STOCK
     decode_upgrade: str = ADMISSION_DECODE_UPGRADE_NONE
+    decode_downgrade: str = ADMISSION_DECODE_DOWNGRADE_NONE
     prefill_tokens: str = ADMISSION_PREFILL_TOKENS_PROMPT
 
     def validate(self) -> None:
@@ -1133,6 +1141,11 @@ class RegimeSwitchAdmissionConfig(
             raise ValueError(
                 "regime switch admission.prefill_tokens must be one of "
                 f"{sorted(_ADMISSION_PREFILL_TOKENS)}; got {self.prefill_tokens!r}"
+            )
+        if self.decode_downgrade not in _ADMISSION_DECODE_DOWNGRADES:
+            raise ValueError(
+                "regime switch admission.decode_downgrade must be one of "
+                f"{sorted(_ADMISSION_DECODE_DOWNGRADES)}; got {self.decode_downgrade!r}"
             )
         if self.decode_upgrade not in _ADMISSION_DECODE_UPGRADES:
             raise ValueError(
@@ -1458,6 +1471,7 @@ def resolved_design_attestation() -> dict[str, Any]:
                     "decode_after_fd_prefill": switch.admission.decode_after_fd_prefill,
                     "decode_after_stock_prefill": switch.admission.decode_after_stock_prefill,
                     "decode_upgrade": switch.admission.decode_upgrade,
+                    "decode_downgrade": switch.admission.decode_downgrade,
                     "prefill_tokens": switch.admission.prefill_tokens,
                 },
             }

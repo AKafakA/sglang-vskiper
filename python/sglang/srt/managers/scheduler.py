@@ -1060,6 +1060,7 @@ class Scheduler(
         self.vp_pin_chunk_body_adoptions = 0  # [D-849 add. 19] unpinned requests that took the in-flight chunk's body
         self.vp_pin_mixed_steps = 0
         self.vp_pin_decode_upgraded_rows = 0  # [D-849 add. 12]
+        self.vp_pin_decode_downgraded_rows = 0  # [D-849 add. 35]
         self.vp_pin_round_prompt_tokens = 0  # [D-849 add. 17] prompt tokens counted at admission rounds
         self.vp_pin_round_uncached_tokens = 0  # [D-849 add. 17] ... of which not cached in the routed namespace
         self.vp_pin_speculative_matches = 0  # [D-849 add. 22] radix walks actually performed for the estimate
@@ -3584,6 +3585,7 @@ class Scheduler(
                     # [D-849 add. 12] one-way stock->fd upgrade of stock-pinned decode
                     # rows once the band is HIGH (before this step's forward batch is built)
                     from sglang.srt.vpipe.regime import (
+                        downgrade_pinned_rows,
                         monotone_assign_rows,
                         upgrade_pinned_rows,
                     )
@@ -3593,6 +3595,11 @@ class Scheduler(
                         monotone_assign_rows(self.vp_pinner, batch.reqs)
                     else:
                         self.vp_pin_decode_upgraded_rows += upgrade_pinned_rows(
+                            self.vp_pinner, batch.reqs
+                        )
+                        # [D-849 add. 35] the one-switch rule's other direction (off unless
+                        # admission.decode_downgrade == "band_low")
+                        self.vp_pin_decode_downgraded_rows += downgrade_pinned_rows(
                             self.vp_pinner, batch.reqs
                         )
                     _vp_stock = sum(1 for r in batch.reqs if r.vp_body == "stock")

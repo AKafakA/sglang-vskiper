@@ -73,6 +73,7 @@ SERVED_REGIME_SWITCH: Final[dict[str, Any]] = {
         # and the reference arms, not as the served design.
         "decode_after_stock_prefill": "band",
         "decode_upgrade": "band_high",
+        "decode_downgrade": "none",
         "prefill_tokens": "prompt",
     },
     "prefill": {
@@ -421,6 +422,15 @@ ARMS["vskipper_partition"] = {
 ARMS["vskipper_routedprefill_partition"] = {
     **ARMS["vskipper"],
     "admission_overrides": {"prefill_demotion": "observe_only", "mixed_step": "partition"},
+}
+
+# [D-849 add. 35, owner 2026-09-22 12:1xZ "we can try this if it helps"] ONE SWITCH, EITHER DIRECTION: the served
+# design plus a one-time fd->stock decode downgrade at band LOW for rows that never switched (a request changes its
+# decode body at most once: promoted at HIGH or demoted at LOW, whichever the band asks first). Targets the CoQA
+# low-load TPOT tail (rows born routed that outlive the HIGH band keep paying routed overhead below the crossover).
+ARMS["vskipper_oneswitch"] = {
+    **ARMS["vskipper"],
+    "admission_overrides": {"decode_downgrade": "band_low"},
 }
 
 ARMS["vskipper_pingate_lowband"] = {

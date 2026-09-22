@@ -17,6 +17,7 @@ from sglang.srt.vpipe.common import (
     ADMISSION_DECODE_AFTER_FD_PREFILL_FD,
     ADMISSION_DECODE_AFTER_STOCK_PREFILL_STOCK,
     RegimeSwitchConfig,
+    ADMISSION_DECODE_DOWNGRADE_BAND_LOW,
     ADMISSION_DECODE_UPGRADE_BAND_HIGH,
     ADMISSION_PREFILL_DEMOTION_ADMISSION,
     ADMISSION_PREFILL_TOKENS_UNCACHED,
@@ -488,21 +489,42 @@ def pin_from_band_state(state: str) -> str:
 
 def upgrade_pinned_rows(pinner: "AdmissionPinner", reqs) -> int:
     """[D-849 add. 12] Apply the one-way stock->fd decode upgrade to every
-    decode-pinned stock row of the running batch, BEFORE the step's forward
-    batch is built (ForwardBatch.init_new reads ``req.vp_body``). A request
-    whose generated K/V now spans two bodies is never inserted into the radix
-    cache at finish. Returns the number of rows upgraded this step."""
+    decode-pinned stock row of the running batch that has not switched yet,
+    BEFORE the step's forward batch is built (ForwardBatch.init_new reads
+    ``req.vp_body``). A request whose generated K/V now spans two bodies is
+    never inserted into the radix cache at finish. Returns the number of rows
+    upgraded this step."""
 
     if not pinner.upgrades_enabled or pinner.state != DECODE_BODY_HIGH:
         return 0
     upgraded = 0
     for req in reqs:
-        if req.vp_decode_pinned and req.vp_body == REQUEST_BODY_STOCK:
+        if req.vp_decode_pinned and req.vp_body == REQUEST_BODY_STOCK and not req.vp_decode_switched:
             req.vp_body = req.vp_decode_body = pinner.upgrade_pin(REQUEST_BODY_STOCK)
             req.vp_decode_upgraded = True
+            req.vp_decode_switched = True
             req.vp_skip_finish_insert = True
             upgraded += 1
     return upgraded
+
+
+def downgrade_pinned_rows(pinner: "AdmissionPinner", reqs) -> int:
+    """[D-849 add. 35] The one-switch rule's other direction: every decode-pinned
+    fd row that has not switched yet drops to the dense body once the band is
+    LOW (the dense body is the faster one below the crossover, and it reads
+    routed K/V without harm -- the FD->stock leg). Never back. Returns the
+    number of rows downgraded this step."""
+
+    if not pinner.downgrades_enabled or pinner.state != DECODE_BODY_LOW:
+        return 0
+    downgraded = 0
+    for req in reqs:
+        if req.vp_decode_pinned and req.vp_body == REQUEST_BODY_FD and not req.vp_decode_switched:
+            req.vp_body = req.vp_decode_body = pinner.downgrade_pin(REQUEST_BODY_FD)
+            req.vp_decode_switched = True
+            req.vp_skip_finish_insert = True
+            downgraded += 1
+    return downgraded
 
 
 def monotone_assign_rows(pinner: "AdmissionPinner", reqs) -> int:
@@ -552,6 +574,7 @@ class AdmissionPinner:
         # [phase-sticky] per-request plans decided at the prefill->decode boundary
         self._plans = {"stock_stock": 0, "stock_fd": 0, "fd_fd": 0, "fd_stock": 0}
         self._upgrades = 0  # [D-849 add. 12] stock->fd decode upgrades at band HIGH
+        self._downgrades = 0  # [D-849 add. 35] fd->stock decode downgrades at band LOW (one switch per request)
         self._promoted = 0  # [D-849 add. 23] monotone lane: rows promoted by their first routed step
         # [D-849 add. 13] version-1 engagement demotion at admission: the verdict comes
         # from the runner's PrefillEngagementTracker (set_engagement_demote); the dense
@@ -659,6 +682,31 @@ class AdmissionPinner:
             and self._cfg.admission.decode_upgrade == ADMISSION_DECODE_UPGRADE_BAND_HIGH
         )
 
+    @property
+    def downgrades_enabled(self) -> bool:
+        """[D-849 add. 35] one-time fd->stock decode downgrade at band LOW."""
+        return (
+            self._active
+            and self.phase_sticky
+            and self._cfg.admission.decode_downgrade == ADMISSION_DECODE_DOWNGRADE_BAND_LOW
+        )
+
+    def downgrade_pin(self, decode_pin: str) -> str:
+        """[D-849 add. 35] The decode body an fd-pinned request runs from the
+        next step on: ``stock`` once the band is LOW (below the crossover the
+        dense body is the faster one), else unchanged. Counts each downgrade."""
+
+        if decode_pin not in _REQUEST_BODIES:
+            raise ValueError(f"unknown request body pin {decode_pin!r}")
+        if (
+            decode_pin == REQUEST_BODY_FD
+            and self.downgrades_enabled
+            and self._hysteresis.state == DECODE_BODY_LOW
+        ):
+            self._downgrades += 1
+            return REQUEST_BODY_STOCK
+        return decode_pin
+
     def upgrade_pin(self, decode_pin: str) -> str:
         """[D-849 add. 12] The decode body a stock-pinned request runs from the
         next step on: ``fd`` once the band is HIGH (routed decode pays for the
@@ -756,6 +804,7 @@ class AdmissionPinner:
             "plan_fd_fd": self._plans["fd_fd"],
             "plan_fd_stock": self._plans["fd_stock"],
             "decode_upgrades_stock_fd": self._upgrades,
+            "decode_downgrades_fd_stock": self._downgrades,
             "monotone_promoted": self._promoted,
             "prefill_demoted_rounds": self._prefill_demoted_rounds,
             "prefill_probe_rounds": self._prefill_probe_rounds,

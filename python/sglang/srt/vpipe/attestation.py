@@ -165,6 +165,7 @@ def regime_switch_attestation(
             "decode_after_fd_prefill": config.admission.decode_after_fd_prefill,
             "decode_after_stock_prefill": config.admission.decode_after_stock_prefill,
             "decode_upgrade": config.admission.decode_upgrade,
+            "decode_downgrade": config.admission.decode_downgrade,
             "prefill_tokens": config.admission.prefill_tokens,
         }
     block["counters"] = (
@@ -342,6 +343,7 @@ def scheduler_runtime_attestation(scheduler: Any) -> dict[str, Any]:
                 "mixed_step_rows_stock": int(scheduler.vp_pin_mixed_step_rows_stock),
                 "mixed_step_rows_fd": int(scheduler.vp_pin_mixed_step_rows_fd),
                 "decode_upgraded_rows": int(scheduler.vp_pin_decode_upgraded_rows),
+                "decode_downgraded_rows": int(scheduler.vp_pin_decode_downgraded_rows),
                 "round_prompt_tokens": int(scheduler.vp_pin_round_prompt_tokens),
                 "round_uncached_tokens": int(scheduler.vp_pin_round_uncached_tokens),
                 "speculative_matches": int(scheduler.vp_pin_speculative_matches),
@@ -414,6 +416,7 @@ class ReqVPMixin:
         self.vp_decode_pinned: bool = False
         # [D-849 add. 12] the decode body was upgraded stock->fd once (band HIGH)
         self.vp_decode_upgraded: bool = False
+        self.vp_decode_switched: bool = False  # [D-849 add. 35] one body change per request, either direction
         # [D-849 add. 22] memo of the speculative uncached-token estimate: (monotonic s, value)
         self.vp_uncached_memo: Optional[tuple] = None
         # [D-849 add. 23] monotone lane: promoted by its first routed decode step
