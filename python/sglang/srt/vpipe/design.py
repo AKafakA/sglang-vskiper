@@ -433,6 +433,15 @@ ARMS["vskipper_oneswitch"] = {
     "admission_overrides": {"decode_downgrade": "band_low"},
 }
 
+# [D-849 add. 36] DOWN-ONLY: no promotion at all (the one-promotion CoQA natural cell doubled the context-limit hits, 76 vs
+# always-route 38, while the pure dense-prompt/routed-decode leg gave 11 vs 40: on CoQA the loop source is the mid-generation
+# dense->routed promotion), plus the safe one-time fd->stock downgrade at band LOW. A request's decode body can only move
+# toward the dense body, once. Candidate for the served design if the A100 cells hold.
+ARMS["vskipper_downonly"] = {
+    **ARMS["vskipper"],
+    "admission_overrides": {"decode_upgrade": "none", "decode_downgrade": "band_low"},
+}
+
 ARMS["vskipper_pingate_lowband"] = {
     **ARMS["vskipper"],
     "decode_kv_band": {
