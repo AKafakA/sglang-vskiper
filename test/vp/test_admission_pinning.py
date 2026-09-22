@@ -207,11 +207,13 @@ def test_pinner_phase_sticky_prefill_round_and_decode_boundary() -> None:
     # prefill body per round from the round's prompt tokens (the v1 pass threshold, 1536)
     assert pinner.prefill_pin(1535) == REQUEST_BODY_STOCK
     assert pinner.prefill_pin(1536) == REQUEST_BODY_FD
-    # decode body at the boundary ("band", the served default): the band state for EVERY request
+    # decode body at the boundary: an FD prefill follows the band ("band"); a stock prefill
+    # decodes stock whatever the band (add. 28, the served default); the legacy "band" value
+    # for stock prefills is exercised in test_dense_prefill_decodes_dense_...
     assert pinner.decode_pin_at_boundary(REQUEST_BODY_FD) == REQUEST_BODY_STOCK
     assert pinner.decode_pin_at_boundary(REQUEST_BODY_STOCK) == REQUEST_BODY_STOCK
     pinner.observe_decode_step(256, 262_144)  # band HIGH
-    assert pinner.decode_pin_at_boundary(REQUEST_BODY_STOCK) == REQUEST_BODY_FD
+    assert pinner.decode_pin_at_boundary(REQUEST_BODY_STOCK) == REQUEST_BODY_STOCK
     assert pinner.decode_pin_at_boundary(REQUEST_BODY_FD) == REQUEST_BODY_FD
     for pre, dec in ((REQUEST_BODY_STOCK, REQUEST_BODY_STOCK), (REQUEST_BODY_STOCK, REQUEST_BODY_FD), (REQUEST_BODY_FD, REQUEST_BODY_FD), (REQUEST_BODY_FD, REQUEST_BODY_STOCK)):
         pinner.record_plan(pre, dec)
