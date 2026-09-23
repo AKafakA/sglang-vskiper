@@ -6,8 +6,13 @@ filters; `__per_row__` vectors keyed by request id). Documents are paired by the
 coqa:validation:<doc>:<turn> <-> doc_id doc; bbh_cot:<task>:test:<i> <-> bbh_cot_fewshot_<task> doc_id i). Same statistic,
 same macros and row format as paired_dod_2x2.py.
 
+v1.8 (D-849 add. 51/52): arms C/D may instead be SERVED lm-eval client runs (`--arm C=<dir> --arm D=<dir>`, lm-eval drives the
+requests exactly as for A/B), loaded by the same `load_arm` (GSM8K composite filter) -- the matched protocol; then --scores and the
+cell keys are not used.
+
 usage: paired_dod_2x2_v16.py --dataset gsm8k --arm A=<native base samples dir> --arm B=<native FD samples dir>
-                             --scores loaded_all_v16.json --cell-c <cell key substring> --cell-d <cell key substring>
+                             (--scores loaded_all_v16.json --cell-c <cell key substring> --cell-d <cell key substring>
+                              | --arm C=<served upstream lm-eval dir> --arm D=<served always-route lm-eval dir>)
                              [--margin 1.0] [--latex rows.tex] [--macros macros.tex] [--json out.json] [--macro-prefix vpQ]
 """
 import argparse, json, math, sys
@@ -41,22 +46,33 @@ def stats(xs):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", choices=sorted(MACRO), required=True); ap.add_argument("--arm", action="append", default=[])
-    ap.add_argument("--scores", required=True); ap.add_argument("--cell-c", required=True); ap.add_argument("--cell-d", required=True)
+    ap.add_argument("--scores"); ap.add_argument("--cell-c"); ap.add_argument("--cell-d")
     ap.add_argument("--margin", type=float, default=None); ap.add_argument("--latex"); ap.add_argument("--macros"); ap.add_argument("--json"); ap.add_argument("--macro-prefix", default="vpQ")
     ap.add_argument("--no-filter-col", action="store_true", help="omit the filter column (the paper names the filters in a table note)")
     ap.add_argument("--no-gate-col", action="store_true", help="omit the pass/unresolved verdict column (v1.7 rc6: the 1-pp margin is an internal planning gate, not a paper column)")
     a = ap.parse_args()
     arms = dict(x.split("=", 1) for x in a.arm)
     A, B = load_arm(arms["A"], a.dataset), load_arm(arms["B"], a.dataset)
-    sc = json.load(open(a.scores)); C, cpath, cmetric = served_arm(sc, a.dataset, a.cell_c); D, dpath, dmetric = served_arm(sc, a.dataset, a.cell_d)
+    if "C" in arms or "D" in arms:   # v1.8: served C/D as lm-eval client runs, the same loader as A/B
+        if not {"C", "D"} <= set(arms) or a.scores or a.cell_c or a.cell_d:
+            sys.exit("FATAL: give --arm C= and --arm D= together, without --scores/--cell-c/--cell-d")
+        C, D = load_arm(arms["C"], a.dataset), load_arm(arms["D"], a.dataset); cpath, dpath = arms["C"], arms["D"]; cmetric = f"lm-eval samples ({a.dataset})"
+        note = "C/D = served lm-eval client runs (upstream / always-route), per-document, the same filters as A/B; A/B = native lm-eval runs"
+    else:
+        if not (a.scores and a.cell_c and a.cell_d):
+            sys.exit("FATAL: arms C/D need --arm C=/D= or --scores with --cell-c/--cell-d")
+        sc = json.load(open(a.scores)); C, cpath, cmetric = served_arm(sc, a.dataset, a.cell_c); D, dpath, dmetric = served_arm(sc, a.dataset, a.cell_d)
+        note = "C/D = block-B knee cells (frozen suite served at 0.95xQ* vs upstream_g1024), per-document lm-eval filter scores; A/B = native lm-eval runs"
     common = sorted(set(A) & set(B) & set(C) & set(D))
     if not common: sys.exit("FATAL: no common documents across the four arms")
     dropped = {q: len(v) - len(common) for q, v in (("A", A), ("B", B), ("C", C), ("D", D))}
+    if "C" in arms and any(dropped.values()):   # four lm-eval runs of one task score one document set; anything else is a defect
+        sys.exit(f"FATAL: the four lm-eval arms do not score the same documents (dropped per arm: {dropped})")
     ba = [B[k] - A[k] for k in common]; dc = [D[k] - C[k] for k in common]; dod = [d - b for d, b in zip(dc, ba)]
     m = {q: 100 * sum(v[k] for k in common) / len(common) for q, v in (("A", A), ("B", B), ("C", C), ("D", D))}
     z = stats(dod); rep = {"dataset": a.dataset, "n_docs": len(common), "dropped": dropped, "means": m, "B_minus_A": stats(ba), "D_minus_C": stats(dc), "dod": z,
                            "dod_lower_pp": z["mean_pp"] - z["ci95_half_pp"], "arm_C_cell": cpath, "arm_D_cell": dpath, "served_metric": cmetric,
-                           "arms_AB": {"A": arms["A"], "B": arms["B"]}, "note": "C/D = block-B knee cells (frozen suite served at 0.95xQ* vs upstream_g1024), per-document lm-eval filter scores; A/B = native lm-eval runs"}
+                           "arms_AB": {"A": arms["A"], "B": arms["B"]}, "note": note}
     print(f"{a.dataset}: n={len(common)} A {m['A']:.2f} B {m['B']:.2f} C {m['C']:.2f} D {m['D']:.2f} | B-A {rep['B_minus_A']['mean_pp']:+.2f} D-C {rep['D_minus_C']['mean_pp']:+.2f} | DoD {z['mean_pp']:+.2f} ± {z['ci95_half_pp']:.2f} pp (dropped {dropped})")
     if a.json: json.dump(rep, open(a.json, "w"), indent=1)
     mac = MACRO[a.dataset]; P = a.macro_prefix

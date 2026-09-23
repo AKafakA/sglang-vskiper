@@ -10,6 +10,7 @@ Root naming decides the arm, which is how the harvest drivers named them:
     harvest-<ds>-<label>                         -> vskipper     (the served arm's own lane)
     harvest-upstream-<ds>-<label>                -> upstream     (Base + upstream)
     harvest-<arm>-<ds>-<label>                   -> alwaysroute  (step 13, arm integrated_alwaysskip)
+    natural-integrated_{denseprefix_fd,fdprefix_stock}-<ds>-<label> -> the v1.8 knee legs (Table 10)
 
 usage: natural_lane_summarize.py <harvest-root> [...] --out summary.json
        natural_lane_summarize.py <campaign-dir>/harvest-* --out summary.json
@@ -29,10 +30,13 @@ def classify(name: str) -> tuple[str, str, str]:
         return arm, ds, label
     # [v1.6, D-824] ladder-control naming: harvest-upstream_g1024-<ds>-<lbl> (Base + upstream at the same ladder),
     # natural-vskipper-<ds>-<lbl>, natural-integrated_alwaysskip-<ds>-<lbl>
-    m = re.fullmatch(r"(harvest-upstream_g1024|natural-vskipper|natural-" + ALWAYS + r")-(" + "|".join(DATASETS) + r")-(r[0-9p]+)", name)
+    # [v1.8, D-849 add. 28/65] the two knee legs of Table 10: dense prefill + routed decode, routed prefill + dense decode
+    m = re.fullmatch(r"(harvest-upstream_g1024|natural-vskipper|natural-" + ALWAYS + r"|natural-integrated_denseprefix_fd|natural-integrated_fdprefix_stock)-("
+                     + "|".join(DATASETS) + r")-(r[0-9p]+)", name)
     if not m:
         raise SystemExit(f"cannot classify harvest root {name!r}")
-    arm = {"harvest-upstream_g1024": "upstream", "natural-vskipper": "vskipper", "natural-" + ALWAYS: "alwaysroute"}[m.group(1)]
+    arm = {"harvest-upstream_g1024": "upstream", "natural-vskipper": "vskipper", "natural-" + ALWAYS: "alwaysroute",
+           "natural-integrated_denseprefix_fd": "denseprefix_fd", "natural-integrated_fdprefix_stock": "fdprefix_stock"}[m.group(1)]
     return arm, m.group(2), m.group(3)
 
 
