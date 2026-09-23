@@ -43,12 +43,13 @@ COLUMNS = [
     "E2E p50", "E2E mean", "E2E p95", "E2E p99",
     "makespan", "output TPS",
 ]
-# [/, owner 2026-09-13] The paper's headline table is latency-led: E2E first, means + p95;
-# p50/p99 go to the appendix table. Macros are always emitted for every column.
+# [/, owner 2026-09-13] The paper's headline table is latency-led: E2E first, means + tail.
+# [v1.8, owner 2026-09-23] the tail column is p99 ("replace the p95 to p99 in all the tables"); p50/p95 go to the
+# appendix table. Macros are always emitted for every column.
 COLUMN_SETS = {
     "all": COLUMNS,
-    "main": ["E2E mean", "E2E p95", "TPOT mean", "TPOT p95", "TTFT mean", "TTFT p95", "makespan"],
-    "tails": ["E2E p50", "E2E p99", "TPOT p50", "TPOT p99", "TTFT p50", "TTFT p99"],
+    "main": ["E2E mean", "E2E p99", "TPOT mean", "TPOT p99", "TTFT mean", "TTFT p99", "makespan"],
+    "tails": ["E2E p50", "E2E p95", "TPOT p50", "TPOT p95", "TTFT p50", "TTFT p95"],
     # The served-arm-bank campaign ( backup): E2E and makespan only (owner, 2026-09-13).
     "backup": ["E2E mean", "E2E p95", "makespan"],
     # v1.7 body tables: the four means only (the appendix carries the p95 companions)
