@@ -243,11 +243,10 @@ src = "v1.5 lm-eval client cells, identity-preserved" if sys.argv[2].endswith("q
 open(sys.argv[1], "a").write(f"%% filter diagnostic (App. E.2), {src}\n" + "\n".join(carried) + "\n"); print(f"  took {len(carried)} filter-diagnostic macros from {src}")
 PY
 
-say "6b natural lane (own-stop) table: upstream_g1024 harvests vs the served arm's natural cells (+ always-route; v1.8: every rate + the two knee legs)"
+say "6b natural lane (own-stop) table: upstream_g1024 harvests vs the served arm's natural cells (+ always-route; v1.8: every rate)"
 NL=$AN/natural-lane; rm -f generated/natural_lane_rows.tex generated/natural_lane_macros.tex
-# v1.8: always-route at every rate (the summary carries all nine) and the two knee legs (natural-lane/legs/, D-849 add. 65)
-LEGS=""; if [ -d $NL/legs ]; then python3 $VP/natural_lane_summarize.py $NL/legs/* --out ./scratch/natural_legs_summary.json | tail -1; LEGS="--legs ./scratch/natural_legs_summary.json"; fi
-python3 $VP/natural_lane_table.py --compact $NL/summary.json --layout v16 --lmeval $NL/lmeval_scores.json --alwaysroute $NL/alwaysroute_summary.json --alwaysroute-lmeval $NL/lmeval_scores.json $LEGS --rows generated/natural_lane_rows.tex --macros generated/natural_lane_macros.tex 2>&1 | tail -2
+# v1.8: always-route at every rate (the summary carries all nine rates)
+python3 $VP/natural_lane_table.py --compact $NL/summary.json --layout v16 --lmeval $NL/lmeval_scores.json --alwaysroute $NL/alwaysroute_summary.json --alwaysroute-lmeval $NL/lmeval_scores.json --rows generated/natural_lane_rows.tex --macros generated/natural_lane_macros.tex 2>&1 | tail -2
 
 say "6f magnitude twins (\\<name>Abs) for the H100 / A6000 / Qwen row macros"
 # v1.7: magnitude twins (\<name>Abs) for the H100 / A6000 / Qwen row macros, for "falls by X %" prose
