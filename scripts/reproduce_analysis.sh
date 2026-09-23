@@ -148,7 +148,7 @@ q8rows $Q8ROOT $Q8ARM "$Q8LABEL" vpQwenEight qwen8b_serving_rows
 q8rows $Q8AROOT $Q8AARM "$Q8ALABEL" vpQwenEightAlt qwen8b_alt_serving_rows
 q8rows $Q8OROOT $Q8OARM "$Q8OLABEL" vpQwenEightOld qwen8b_old_serving_rows
 
-say "6e Qwen quality: block-B knee rows (qwen_quality_v16) + the 2x2 per checkpoint (A/B native: 4B from v1.5, 8B from the node's lm-eval runs; C/D = block B)"
+say "6e Qwen quality: block-B knee rows (qwen_quality_v16) + the 2x2 per checkpoint (A/B native: 4B from v1.5, 8B from the node's lm-eval runs; C/D: v1.8 lm-eval client runs, v1.7 block B)"
 rm -f generated/qwen_blockb_rows.tex generated/qwen_blockb_macros.tex generated/qwen_quality_rows.tex generated/qwen_quality_macros.tex
 QL=$AN/qwen_loaded_v16.json
 if [ -f $QL ]; then
@@ -194,7 +194,7 @@ python3 $VP/attested_skip.py --cell LlamaKnee=$AN/loaded_cells/loaded-integrated
   --cell QwenFourKnee=$AN/qwen_loaded_cells/loaded-vskipper_qwen3_4b_alwaysroute-gsm8k_q4b-r16p15/server_info.after.json \
   --cell QwenEightKnee=$AN/qwen_loaded_cells_q8b/loaded-${Q8ARM}_alwaysroute-gsm8k_q8b-r13p3/server_info.after.json \
   --cell QwenEightAltKnee=$AN/qwen_loaded_cells_q8b/loaded-${Q8AARM}_alwaysroute-gsm8k_q8b-r13p3/server_info.after.json \
-  --cell QwenEightOldKnee=$AN/qwen_loaded_cells_q8b_step10000/loaded-${Q8OARM}_alwaysroute-gsm8k_q8b-r13p3/server_info.after.json \
+  --cell QwenEightOldKnee=${RAWO:-$AN/qwen_loaded_cells_q8b_step10000}/loaded-${Q8OARM}_alwaysroute-gsm8k_q8b-r13p3/server_info.after.json \
   --macros generated/served_skip_macros.tex && echo "  $(grep -c newcommand generated/served_skip_macros.tex) served-skip macros"
 python3 - $PACK/probes generated/probe_skip_macros.tex <<'PY'
 import json, sys, pathlib   # the 32-prompt routing probe's chat-template skip share (overall_skip_rate), the training-time selection signal (App. M)
