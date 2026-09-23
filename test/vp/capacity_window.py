@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Serving capacity at 1.25xQ*: completed requests and output tokens per second inside the arrival window.
+"""Throughput under saturation at 1.25xQ*: output tokens (TPS) and completed requests (RPS) per second inside the arrival window.
 
 Owner 2026-09-23. The matched-work cells fix each request's work, so over a whole cell tokens per second follows the
 arrival schedule and the drain (D-756). Inside the shared arrival window (first arrival -> last arrival) at 1.25xQ*,
@@ -104,8 +104,8 @@ def emit(compact, gen):
     macros += [f"\\newcommand{{\\vpCapDoneArrivedMin}}{{{min(ratios):.2f}}}",
                f"\\newcommand{{\\vpCapDoneArrivedMax}}{{{max(ratios):.2f}}}"]
     order = [k for k, *_ in ROWS]
-    rows = ["completed req/s & " + " & ".join(cols[k][0] for k in order) + " \\\\",
-            "output tok/s & " + " & ".join(cols[k][1] for k in order) + " \\\\"]
+    rows = ["TPS & " + " & ".join(cols[k][1] for k in order) + " \\\\",
+            "RPS & " + " & ".join(cols[k][0] for k in order) + " \\\\"]
     open(os.path.join(gen, "capacity_rows.tex"), "w").write("\n".join(rows) + "\n")
     open(os.path.join(gen, "capacity_macros.tex"), "w").write("\n".join(macros) + "\n")
     json.dump(summary, open(os.path.join(gen, "capacity.json"), "w"), indent=1)
