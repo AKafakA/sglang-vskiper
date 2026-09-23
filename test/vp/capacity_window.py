@@ -80,7 +80,7 @@ def _ci(xs):
 
 def emit(compact, gen):
     data = json.load(open(compact))
-    binw, summary, macros, cols = data["bin_s"], {}, [], {}
+    binw, summary, macros, cols, ratios = data["bin_s"], {}, [], {}, []
     for key, stem, *_ in ROWS:
         rps, tps = [], []
         for r in data["rows"][key]:
@@ -92,6 +92,7 @@ def emit(compact, gen):
             tv, rv, fv = _rates(vs, a, b, binw)
             if not (fu < 1 and fv < 1):
                 raise SystemExit(f"REFUSED {key} {r['rep']}: an arm keeps up with arrivals ({fu:.2f}, {fv:.2f})")
+            ratios += [fu, fv]
             rps.append(100 * (rv / ru - 1))
             tps.append(100 * (tv / tu - 1))
         (mr, hr), (mt, ht) = _ci(rps), _ci(tps)
@@ -100,6 +101,8 @@ def emit(compact, gen):
         macros += [f"\\newcommand{{\\vpCap{stem}Rps}}{{{mr:+.1f}}}", f"\\newcommand{{\\vpCap{stem}RpsCi}}{{{hr:.1f}}}",
                    f"\\newcommand{{\\vpCap{stem}RpsAbs}}{{{abs(mr):.1f}}}",
                    f"\\newcommand{{\\vpCap{stem}Tps}}{{{mt:+.1f}}}", f"\\newcommand{{\\vpCap{stem}TpsCi}}{{{ht:.1f}}}"]
+    macros += [f"\\newcommand{{\\vpCapDoneArrivedMin}}{{{min(ratios):.2f}}}",
+               f"\\newcommand{{\\vpCapDoneArrivedMax}}{{{max(ratios):.2f}}}"]
     order = [k for k, *_ in ROWS]
     rows = ["completed req/s & " + " & ".join(cols[k][0] for k in order) + " \\\\",
             "output tok/s & " + " & ".join(cols[k][1] for k in order) + " \\\\"]
