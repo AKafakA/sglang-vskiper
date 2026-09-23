@@ -205,7 +205,7 @@ pathlib.Path(sys.argv[2]).write_text("\n".join(out) + "\n"); print(f"  {len(out)
 PY
 
 say "6d Pareto panels: block-B knee score (0.95 x Q*) vs mean E2E latency per served arm (D-829)"
-python3 $VP/pareto_figure.py --headline generated/paired_report.json --ablation-dir $AN/ablation --scores $AN/loaded_all_v16.json --knee gsm8k=r12p35 --knee bbh_cot=r32p3 --knee coqa=r23p75 --pdf figures/pareto_knee.pdf --macros generated/pareto_macros.tex | head -1
+python3 $VP/pareto_figure.py --headline generated/paired_report.json --ablation-dir $AN/ablation --scores $AN/loaded_all_v16.json --knee gsm8k=r12p35 --knee bbh_cot=r32p3 --knee coqa=r23p75 --pdf figures/pareto_knee.pdf --macros generated/pareto_macros.tex | sed -n "1,1p"
 
 say "6d2 cross-model figure (v1.7): GSM8K at each model's own knee, upstream vs vSkipper, three models, explicit keys"
 QPK=$Q8ROOT/paired_report.upstream_g1024__$Q8ARM.json
@@ -215,7 +215,7 @@ if [ -f $QPK ] && [ -f $QS ]; then
     --point "Qwen3-4B=$QW/qwen4b_gsm8k_q4b/paired_report.upstream_g1024__vskipper_qwen3_4b.json:gsm8k_q4b:r16p15:$AN/qwen_loaded_v16.json:loaded-upstream_g1024-gsm8k_q4b-r16p15/:loaded-vskipper_qwen3_4b-gsm8k_q4b-r16p15/" \
     --point "Qwen3-8B=$QPK:gsm8k_q8b:r13p3:$QS:loaded-upstream_g1024-gsm8k_q8b-r13p3/:loaded-${Q8ARM}-gsm8k_q8b-r13p3/" \
     --macro-key "Llama-3-8B=LlamaGsm" --macro-key "Qwen3-4B=QwenFour" --macro-key "Qwen3-8B=QwenEight" \
-    --pdf figures/pareto_models.pdf --macros generated/pareto_models_macros.tex | head -1
+    --pdf figures/pareto_models.pdf --macros generated/pareto_models_macros.tex | sed -n "1,1p"
 else echo "  cross-model figure: Qwen3-8B inputs pending"; fi
 
 say "6c the 2x2 gate: A/B native (v1.5 lm-eval samples, identity-preserved) + C/D served (v1.8: lm-eval client runs; v1.7: block-B knee cells), paired per document"
