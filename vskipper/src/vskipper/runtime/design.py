@@ -38,7 +38,44 @@ from typing import Any, Final, Mapping
 # upper gate is deleted (D-596), because a hand-set token threshold pre-empted the
 # engagement gate that makes the same decision from measurement.
 SERVED_REGIME_SWITCH: Final[dict[str, Any]] = {
-    "version": 1,
+    # [D-849, 2026-09-21] version 2 = per-request body pinning (the `admission`
+    # block). The bands, thresholds and bodies below are unchanged from version 1;
+    # what changed is WHEN the decision is taken: once per request at admission,
+    # from the scheduler's mirror of the decode band state, and kept for the
+    # request's prefill and every decode step. Version 1 selected the body per
+    # pass, so a request could receive both bodies; in the natural-lane GSM8K
+    # knee cell 3,163 of 3,600 served requests matched neither model's token
+    # sequence and ran away at 4.7 % against the checkpoint's own 2.2 %
+    # (always-route 77/3,600, upstream 4/3,600). Requests that reproduced either
+    # model's sequence ran away at that model's own rate (3/292, 0/145).
+    "version": 2,
+    "admission": {
+        "enabled": True,
+        "criterion": "phase_sticky",
+        "cold_start": "stock",
+        "prefill_demotion": "admission",
+        "mixed_step": "forced_run",
+        "decode_after_fd_prefill": "band",
+        # [D-849 add. 28] A dense-prefilled request decodes dense for its whole life and
+        # nothing promotes it: routed generation over a dense-computed prompt is the
+        # checkpoint's loop mode (served Full->FD leg on the natural gsm8k knee suite:
+        # 382 runaways of 3,600 vs always-route 83, mean output 884 vs 301 tokens). The
+        # legal plans are fd->fd, fd->stock and stock->stock. The prefill body is the
+        # version-1 bracket on the request's prompt tokens (with the engagement
+        # demotion); the uncached-token count made warm prompts dense and thereby
+        # decode-dense, which is the wrong trade once dense->routed is illegal.
+        # [D-849 add. 31/32, owner 07:4xZ] The served design is the dd41daaf06 line: a
+        # dense-prefilled request follows the band at the boundary and may be promoted
+        # once at band HIGH; prefill body from the round's PROMPT tokens (before cache
+        # hits, so long-prompt workloads prefill routed and never serve dense->routed in
+        # volume; gsm8k natural gate 72/69/68 vs 76/83/78 on dd41); one config for every
+        # workload. The v3 restriction (add. 28) is kept as the loop-safe struct default
+        # and the reference arms, not as the served design.
+        "decode_after_stock_prefill": "band",
+        "decode_upgrade": "band_high",
+        "decode_downgrade": "none",
+        "prefill_tokens": "prompt",
+    },
     "prefill": {
         "enabled": True,
         "min_tokens": 1536,
@@ -240,6 +277,23 @@ ARMS: Final[dict[str, dict[str, Any]]] = {
         "phases": "both",
         "regime_switch": False,
     },
+    # [D-849 add. 8, 2026-09-21] The legal-plan ablation's Full->FD arm: the prompt is
+    # encoded by the dense body (skipper gated off for prompt tokens), every generated
+    # token by FlexiDepth's native router -- the "stock prefill -> FD decode" plan the
+    # phase-sticky controller can choose, served for EVERY request. No band.
+    "integrated_denseprefix_fd": {
+        "skipper": "flexidepth",
+        "phases": "decode",
+        "regime_switch": False,
+    },
+    # [D-849 add. 9] The FD->stock legal plan served for EVERY request: the prompt is
+    # encoded by FlexiDepth's native routing, every generated token by the dense body
+    # (skipper gated off for generated tokens) -- the mirror of the dense-prefix plan.
+    "integrated_fdprefix_stock": {
+        "skipper": "flexidepth",
+        "phases": "prefill",
+        "regime_switch": False,
+    },
     # Arbitrary per-token routes with no semantics: the substrate-generality arm. Proves
     # the runtime assumes nothing about the policy that produced a route, and carries the
     # skip-rate x depth trade-off study.
@@ -313,6 +367,96 @@ ARMS["vskipper_qwen3_4b_sharedband"] = {
     **ARMS["vskipper_qwen3_4b"],
     "decode_kv_band": dict(SERVED_DECODE_KV_BAND_BY_DEVICE),
     "decode_kv_band_policy": "shared",
+}
+
+# [D-849, 2026-09-21] GATE-ONLY arm for the per-request body-pinning correctness checks: the
+# served arm with a tiny decode K/V band (exit 3k / enter 6k resident tokens), so a 32-request
+# smoke can be driven through both pins deliberately (one request alone -> stock; a burst ->
+# the mirror engages -> later admissions fd; a second burst while the first still decodes ->
+# mixed steps). Its own declared deviation, `decode_kv_band_policy: "gate"` (the boot assertion
+# accepts it like "shared" and logs it; the execution-difference gate never sees it); NEVER a paper arm.
+# [D-849 add. 23] The MONOTONE lane: v1.7 unchanged (per-pass prefill criterion with the engagement
+# escape, per-step roofline band, one prefix-cache namespace, no admission pins) plus one rule --
+# a request's first routed decode step promotes it for the rest of its generation; never demoted.
+# Hypothesis: the Table 10 runaways came from stock<->routed OSCILLATION, so this alone should put
+# the natural runaway count at the always-route level while every headline cell stays v1.7.
+ARMS["vskipper_monotone"] = {
+    **ARMS["vskipper"],
+    "admission_overrides": {"criterion": "monotone_decode"},
+}
+
+# [D-849 add. 24] NO-UPGRADE lane: the four fixed plans with the version-1 prefill criterion at admission (demotion, uncached
+# count) but NO mid-generation promotion (decode_upgrade none). Evidence 02:3xZ: every dense->routed switch mid-generation is a
+# loop source (monotone lane 120 vs 77; 639ec with 207 promotions 92 vs 82; dd41 with few 69/72 vs 77/84), so the decode body
+# is decided once at the prefill->decode boundary and never changed.
+ARMS["vskipper_noupgrade"] = {
+    **ARMS["vskipper"],
+    "admission_overrides": {"decode_upgrade": "none"},
+}
+
+# [D-849 add. 28] The A/B REFERENCE for the loop finding: the served design as it stood before add. 28
+# (dense-prefilled requests follow the band at the boundary and are promoted at band HIGH; uncached-token
+# prefill criterion) -- the plan mix that served dense->routed for 56-86 % of coqa/bbh requests. Never a paper arm.
+ARMS["vskipper_denseprefix_routed"] = {
+    **ARMS["vskipper"],
+    "admission_overrides": {
+        "decode_after_stock_prefill": "band",
+        "decode_upgrade": "band_high",
+        "prefill_tokens": "uncached",
+    },
+}
+
+# [D-849 add. 29] Two v3 variants for the bbh/coqa knee (debug A100 05:5xZ: v3 bbh 1.25x = E2E +17.5 %, TTFT +111 %, because the
+# engagement demotion prefilled 534/690 rounds dense -> stock->stock for 3,759 requests -> 91 % dense decode steps, and the 252
+# routed requests made nearly every step a forced-RUN mixed step). (a) routed prefill for every >= 1,536-token round (the demotion
+# only observes): the request that will decode routed is prefilled routed -- the legal way to a decode gain on bbh/coqa;
+# (b) mixed steps partitioned into a dense replay + a routed replay instead of one routed replay with forced rows.
+ARMS["vskipper_routedprefill"] = {
+    **ARMS["vskipper"],
+    "admission_overrides": {"prefill_demotion": "observe_only"},
+}
+ARMS["vskipper_partition"] = {
+    **ARMS["vskipper"],
+    "admission_overrides": {"mixed_step": "partition"},
+}
+ARMS["vskipper_routedprefill_partition"] = {
+    **ARMS["vskipper"],
+    "admission_overrides": {"prefill_demotion": "observe_only", "mixed_step": "partition"},
+}
+
+# [D-849 add. 35, owner 2026-09-22 12:1xZ "we can try this if it helps"] ONE SWITCH, EITHER DIRECTION: the served
+# design plus a one-time fd->stock decode downgrade at band LOW for rows that never switched (a request changes its
+# decode body at most once: promoted at HIGH or demoted at LOW, whichever the band asks first). Targets the CoQA
+# low-load TPOT tail (rows born routed that outlive the HIGH band keep paying routed overhead below the crossover).
+ARMS["vskipper_oneswitch"] = {
+    **ARMS["vskipper"],
+    "admission_overrides": {"decode_downgrade": "band_low"},
+}
+
+# [D-849 add. 36] DOWN-ONLY: no promotion at all (the one-promotion CoQA natural cell doubled the context-limit hits, 76 vs
+# always-route 38, while the pure dense-prompt/routed-decode leg gave 11 vs 40: on CoQA the loop source is the mid-generation
+# dense->routed promotion), plus the safe one-time fd->stock downgrade at band LOW. A request's decode body can only move
+# toward the dense body, once. Candidate for the served design if the A100 cells hold.
+ARMS["vskipper_downonly"] = {
+    **ARMS["vskipper"],
+    "admission_overrides": {"decode_upgrade": "none", "decode_downgrade": "band_low"},
+}
+
+# [D-849 add. 40] PROMOTE-THEN-DEMOTE: the served design (promotion at HIGH) plus one demotion at LOW that may follow the
+# promotion; a demoted row is never re-promoted. Candidate for the CoQA low-load TPOT cost; measured on coqa 0.75x/knee first.
+ARMS["vskipper_promote_demote"] = {
+    **ARMS["vskipper"],
+    "admission_overrides": {"decode_downgrade": "band_low_any"},
+}
+
+ARMS["vskipper_pingate_lowband"] = {
+    **ARMS["vskipper"],
+    "decode_kv_band": {
+        "NVIDIA_A100": (3000, 6000),
+        "NVIDIA_A100_40GB": (3000, 6000),
+        "NVIDIA_H100_HBM3": (3000, 6000),
+    },
+    "decode_kv_band_policy": "gate",
 }
 
 # [D-830, 2026-09-16] The third model: FlexiDepth-Qwen3-8B, our alignment-only `ste_hard` checkpoint

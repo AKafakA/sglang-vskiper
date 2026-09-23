@@ -54,3 +54,23 @@ def test_max_bs_env():
     assert vp_decode_coverage_max_bs({"SGLANG_VP_DECODE_COVERAGE_MAX_BS": "320"}) == 320
     with pytest.raises(ValueError):
         vp_decode_coverage_max_bs({"SGLANG_VP_DECODE_COVERAGE_MAX_BS": "0"})
+
+
+def test_device_ladder_table():
+    """[D-849 add. 42] the RTX A6000's ladder comes from the tree table; every other card keeps the 4x rule."""
+    from vskipper.runtime.common import (
+        DECODE_COVERAGE_LADDER_BY_DEVICE,
+        vp_decode_coverage_device_bound,
+    )
+
+    assert DECODE_COVERAGE_LADDER_BY_DEVICE == {"NVIDIA RTX A6000": 256}
+    assert vp_decode_coverage_device_bound("NVIDIA RTX A6000") == 256
+    assert vp_decode_coverage_device_bound(" NVIDIA RTX A6000 ") == 256
+    assert vp_decode_coverage_device_bound("NVIDIA A100-SXM4-80GB") is None
+    assert vp_decode_coverage_device_bound("NVIDIA H100 80GB HBM3") is None
+    # the declared A6000 same-ladder baseline must name the same number
+    import json, pathlib
+    decl = json.loads(pathlib.Path(__file__).resolve().parents[1].joinpath("configs/deploy/execution_differences.rtxa6000.json").read_text())
+    assert decl["declared"]["upstream_g256"]["decode_ladder_top"] == 256
+    assert decl["declared"]["vskipper"]["decode_ladder_top"] == 256
+    assert decl["fork_default"]["decode_ladder_top"] == 256

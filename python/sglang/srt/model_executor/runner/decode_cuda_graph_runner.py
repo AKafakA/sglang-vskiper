@@ -123,6 +123,7 @@ from vskipper.runtime.common import (
 from vskipper.runtime.regime import (
     DecodeRegimeDispatch,
     compose_regime_variant_label,
+    pinned_decode_body_of as _pinned_decode_body,
     regime_body_dispatches_stock_decode,
 )
 
@@ -415,6 +416,14 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
         self._vp_fill_num_token_non_padded = (
             flexidepth_execution_mode() == FD_EXECUTION_FULL_GRAPH
             or self._vp_regime_dispatch.active
+        )
+        # [D-849 forced-RUN] static per-row replay input: rows pinned to the
+        # stock body inside a MIXED decode step (forced to RUN in the routed
+        # body). Zeroed for uniform passes; read by the fused route decision.
+        self._vp_force_run_rows = (
+            torch.zeros(self.max_bs, dtype=torch.bool, device=self.model_runner.device)
+            if self._vp_fill_num_token_non_padded
+            else None
         )
 
         # --- capture --------------------------------------------------
@@ -737,6 +746,9 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
             bootstrap_room_ids_int=bootstrap_room_ids_int,
         )
 
+        if self._vp_force_run_rows is not None:
+            forward_batch.fd_full_graph_force_run_rows = self._vp_force_run_rows[:bs]
+
         # Trip the coordinator so the hisparse code path is captured into the
         # graph; backends read it from self.model_runner.hisparse_coordinator.
         forward_batch.hisparse_coordinator = self.model_runner.hisparse_coordinator
@@ -1037,6 +1049,21 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
                 self.backend.cleanup()
                 self.capture()
 
+    def _vp_fill_force_run_rows(self, forward_batch: ForwardBatch, raw_bs: int) -> None:
+        """[D-849 forced-RUN] Copy this pass's per-row force mask (rows pinned to
+        the stock body inside a MIXED step) into the static replay buffer; zero
+        it for a uniform pass. Called on BOTH load_batch paths (plan-stream and
+        pre-planned), because the model runner sets the mask just before
+        dispatch."""
+
+        if self._vp_force_run_rows is None:
+            return
+        force = forward_batch.fd_full_graph_force_run_rows
+        if force is None:
+            self._vp_force_run_rows[:raw_bs].zero_()
+        elif force.data_ptr() != self._vp_force_run_rows.data_ptr():
+            self._vp_force_run_rows[:raw_bs].copy_(force)
+
     def load_batch(
         self,
         forward_batch: ForwardBatch,
@@ -1052,8 +1079,14 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
         # Lane-2 cut1: seq_lens_sum is the batch's resident KV tokens (host int,
         # no sync) -- the kv criterion keys the band on it; the rows criterion
         # ignores it.
-        self._vp_regime_dispatch.observe(
-            int(forward_batch.batch_size), int(forward_batch.seq_lens_sum)
+        # [D-849] A pinned pass (vp_body set; never "mixed" here -- the model
+        # runner partitions mixed batches before dispatch) records its pinned
+        # body instead of advancing the band: the band state lives in the
+        # scheduler's AdmissionPinner under pinning.
+        self._vp_regime_dispatch.observe_or_pin(
+            int(forward_batch.batch_size),
+            int(forward_batch.seq_lens_sum),
+            _pinned_decode_body(forward_batch),
         )
 
         if not forward_batch.needs_forward_metadata_init():
@@ -1061,6 +1094,11 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
             # In speculative decoding, these two fields are still needed.
             self.buffers.input_ids[: self.raw_num_token].copy_(forward_batch.input_ids)
             self.buffers.positions[: self.raw_num_token].copy_(forward_batch.positions)
+            # [D-849 forced-RUN] the model runner sets the per-pass force mask
+            # right before dispatch, possibly AFTER the plan-stream load_batch
+            # filled the static buffer: refresh it here so a mixed step never
+            # replays with a stale (zeroed) mask.
+            self._vp_fill_force_run_rows(forward_batch, int(forward_batch.batch_size))
             if (
                 self.model_runner.spec_algorithm.is_dflash()
                 and self.model_runner.is_draft_worker
@@ -1094,6 +1132,7 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
         # restored verbatim exactly where nothing reads the scalar.
         if self._vp_fill_num_token_non_padded:
             buffers.num_token_non_padded.fill_(raw_num_token)
+            self._vp_fill_force_run_rows(forward_batch, raw_bs)
 
         if self.require_mlp_tp_gather:
             max_num_tokens = max(forward_batch.global_num_tokens_cpu)

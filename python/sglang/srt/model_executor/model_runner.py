@@ -236,6 +236,11 @@ from sglang.srt.utils.torch_memory_saver_adapter import TorchMemorySaverAdapter
 from sglang.srt.utils.weight_checker import WeightChecker
 from vskipper.runtime.coverage import reset_coverage_stamps
 from vskipper.integration.sglang.model_runner import prepare_decode_dispatch
+from vskipper.runtime.common import (
+    REQUEST_BODY_FD,
+    REQUEST_BODY_STOCK,
+)
+from vskipper.runtime.regime import admission_split_zero_counters
 from sglang.srt.weight_sync.tensor_bucket import (
     FlattenedTensorBucket,
     FlattenedTensorMetadata,
@@ -410,6 +415,7 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         self.dist_port = nccl_port
         self.server_args = server_args
         self.init_vp_activation(server_args)
+        self.init_vp_admission_split_counters()
         self.is_draft_worker = is_draft_worker
         self.is_generation = model_config.is_generation
         self.device_timer = None
@@ -3288,7 +3294,79 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         )
 
         self._vp_runtime_enabled = vp_runtime_enabled()
+        # [D-849 add. 11] a band-less arm whose DECODE phase is routed (always-route,
+        # integrated_denseprefix_fd) executes the routed body for every row: above the
+        # captured ladder its batch is chunked like a pinned fd batch instead of
+        # falling to the dense body (which would silently break the plan).
+        from vskipper.runtime.common import (
+            flexidepth_active_phases,
+            regime_switch_config,
+        )
 
+        self._vp_fixed_fd_decode = (
+            regime_switch_config() is None and "decode" in flexidepth_active_phases()
+        )
+
+    def init_vp_admission_split_counters(self) -> None:
+        # [D-849] pinned-dispatch evidence (regime_switch.counters.admission).
+        self._vp_split_counters = admission_split_zero_counters()
+
+    def vp_admission_split_counters(self) -> dict:
+        """[D-849] Model-runner-side pinned-dispatch counters (runtime evidence,
+        identity-stripped; read by scheduler_runtime_attestation)."""
+
+        return dict(self._vp_split_counters)
+
+    def vp_reset_admission_split_counters(self) -> None:
+        self._vp_split_counters = admission_split_zero_counters()
+
+    def _vp_ladder_top(self, forward_batch: ForwardBatch) -> Optional[int]:
+        """[D-849] The captured decode ladder's top for a pinned decode batch
+        (None when no decode graph runner serves this batch)."""
+
+        runner = self.decode_cuda_graph_runner
+        if runner is None or not forward_batch.forward_mode.is_decode():
+            return None
+        return int(runner.max_bs)
+
+    def _vp_forward_partitioned(
+        self,
+        forward_batch: ForwardBatch,
+        pp_proxy_tensors: Optional[PPProxyTensors],
+        max_rows: Optional[int] = None,
+    ) -> ModelRunnerOutput:
+        """[D-849] Run a mixed-pin or above-ladder decode step as pin-uniform
+        sub-passes of at most ``max_rows`` rows each."""
+
+        from vskipper.runtime.batch import (
+            vp_detach_logits_output,
+            vp_merge_logits_outputs,
+            vp_split_decode_forward_batch,
+        )
+
+        if pp_proxy_tensors is not None:
+            raise RuntimeError("[D-849] partitioned decode is single-stage only")
+        # [D-849 forced-RUN] size-only chunks in row order (a mixed chunk stays
+        # mixed and is served by one routed replay with forced-RUN rows).
+        parts = vp_split_decode_forward_batch(forward_batch, max_rows, by_pin=False)
+        outputs = []
+        can_run_graph = True
+        self._vp_split_counters["ladder_chunked_passes"] += 1
+        self._vp_split_counters["ladder_chunk_replays"] += len(parts)
+        for pin, index, sub in parts:
+            out = self._forward_raw(sub, None)
+            can_run_graph = can_run_graph and bool(out.can_run_graph)
+            # A replay returns views of the backend's static output tensors;
+            # the second sub-pass's replay overwrites them, so copy out now.
+            outputs.append((pin, index, vp_detach_logits_output(out.logits_output)))
+            rows = int(index.numel())
+            if pin == REQUEST_BODY_STOCK:
+                self._vp_split_counters["split_rows_stock"] += rows
+            else:
+                self._vp_split_counters["split_rows_fd"] += rows
+        self._vp_split_counters["split_passes"] += 1
+        merged = vp_merge_logits_outputs(outputs, int(forward_batch.batch_size))
+        return ModelRunnerOutput(logits_output=merged, can_run_graph=can_run_graph)
 
     def _forward_raw(
         self,
@@ -3302,6 +3380,40 @@ class ModelRunner(ModelRunnerKVCacheMixin):
         else:
             ctx_mgr = forward_context(ForwardContext(attn_backend=self.attn_backend))
         with ctx_mgr:
+            # [D-849] A decode step whose running batch carries both pins is
+            # partitioned into two uniform sub-passes (stock first), each
+            # dispatched through its own captured graph, and the logits merged
+            # back in row order. Uniform steps take the unchanged path below.
+            if (
+                forward_batch.vp_body is None
+                and self._vp_fixed_fd_decode
+                and forward_batch.forward_mode.is_decode()
+                and forward_batch.vp_body_rows is None
+            ):
+                ladder_top = self._vp_ladder_top(forward_batch)
+                if ladder_top is not None and int(forward_batch.batch_size) > ladder_top:
+                    forward_batch.vp_body_rows = [REQUEST_BODY_FD] * int(forward_batch.batch_size)
+                    forward_batch.vp_body = REQUEST_BODY_FD
+            if forward_batch.vp_body is not None and forward_batch.forward_mode.is_decode():
+                ladder_top = self._vp_ladder_top(forward_batch)
+                if ladder_top is not None and int(forward_batch.batch_size) > ladder_top:
+                    # A pinned batch above the captured ladder: chunks of
+                    # <= ladder-top rows, each a captured replay (never the
+                    # dense fall-through).
+                    return self._vp_forward_partitioned(
+                        forward_batch, pp_proxy_tensors, ladder_top
+                    )
+                if forward_batch.vp_body == VP_BODY_MIXED:
+                    # [D-849 forced-RUN] ONE routed replay serves both pins:
+                    # the stock-pinned rows are forced to RUN inside it.
+                    from vskipper.runtime.batch import vp_force_run_rows
+
+                    force = vp_force_run_rows(forward_batch)
+                    forward_batch.fd_full_graph_force_run_rows = force
+                    self._vp_split_counters["forced_run_passes"] += 1
+                    self._vp_split_counters["forced_run_rows"] += int(force.sum().item())
+                else:
+                    forward_batch.fd_full_graph_force_run_rows = None
             mode_check = (
                 forward_batch.forward_mode.is_cpu_graph
                 if self.device == "cpu"
@@ -3312,7 +3424,9 @@ class ModelRunner(ModelRunnerKVCacheMixin):
                 and self.decode_cuda_graph_runner
                 and self.decode_cuda_graph_runner.can_run_graph(forward_batch)
             )
-            coverage_stamped = prepare_decode_dispatch(self, forward_batch, can_run_graph)
+            coverage_stamped, stock_eager_stamped = prepare_decode_dispatch(
+                self, forward_batch, can_run_graph
+            )
             try:
                 if (
                     forward_batch.forward_mode.is_decode()
@@ -3398,6 +3512,12 @@ class ModelRunner(ModelRunnerKVCacheMixin):
                 # flexidepth_full_graph.fd_execute_prepared_layer_route_full_graph).
                 if coverage_stamped:
                     reset_coverage_stamps(forward_batch)
+                if stock_eager_stamped:
+                    # [D-849] the eager stock-pin stamp is per pass, like (c3)'s.
+                    forward_batch.vp_fd_decode_dense = False
+                    forward_batch.fd_full_graph_force_production_attention = False
+                    forward_batch.vp_seam_batch_routed = None
+                    forward_batch.vp_seam_batch_eager = None
 
 
     def _preprocess_logits(

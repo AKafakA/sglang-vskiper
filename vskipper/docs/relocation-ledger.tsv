@@ -288,3 +288,7 @@ training/qwen3-flexidepth/harness/score_ifeval.py	vskipper/training/qwen3-flexid
 training/qwen3-flexidepth/harness/validate_qwen3_flexidepth_checkpoint.py	vskipper/training/qwen3-flexidepth/harness/validate_qwen3_flexidepth_checkpoint.py	unresolved-retained	No explicit source/document caller found; standalone entrypoint retained pending semantic audit.	
 training/qwen3-flexidepth/train/sft.py	vskipper/training/qwen3-flexidepth/train/sft.py	unresolved-retained	No explicit source/document caller found; standalone entrypoint retained pending semantic audit.	
 training/qwen3-flexidepth/train/sft_qwen3.py	vskipper/training/qwen3-flexidepth/train/sft_qwen3.py	retained	Referenced by retained source or documentation; caller review required before retirement.	training/qwen3-flexidepth/README.md;training/qwen3-flexidepth/bin/run_arm.sh
+test/vp/f1_figure.py	vskipper/src/vskipper/analysis/f1_figure.py	required	Analysis producer (Figure 1 from its runs, v1.8).	
+test/vp/gates/verify_2x2_protocol.py	vskipper/src/vskipper/experiments/gates/verify_2x2_protocol.py	retained	Campaign gate (2x2 protocol, v1.8).	
+test/vp/gate_tests/test_paired_remeasure.py	vskipper/tests/gate_tests/test_paired_remeasure.py	validation	Maintained gate test.	
+test/vp/test_admission_pinning.py	vskipper/tests/test_admission_pinning.py	validation	Maintained runtime test (per-request pinning, v1.8).	

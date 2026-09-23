@@ -85,6 +85,7 @@ from vskipper.runtime.regime import (
     PREFILL_BODY_FD,
     prefill_regime_decision,
     regime_switch_zero_counters,
+    request_body_prefill_body,
 )
 
 
@@ -480,7 +481,16 @@ def stamp_prefill_regime(model, forward_batch):
     if _regime_cfg is not None and _regime_cfg.prefill.enabled:
         if flexidepth_forward_phase(forward_batch) == "prefill":
             _regime_is_mixed = forward_batch.forward_mode.is_mixed()
-            if _regime_is_mixed and not _regime_cfg.prefill.include_mixed:
+            if forward_batch.vp_body is not None:
+                # [D-849] A pinned pass (eager path) runs its pin's body; the
+                # per-pass bracket below applies only to unpinned passes.
+                forward_batch.vp_fd_prefill_dense = (
+                    request_body_prefill_body(forward_batch.vp_body)
+                    == PREFILL_BODY_DENSE
+                )
+                forward_batch.vp_seam_batch_routed = None
+                forward_batch.vp_seam_batch_eager = None
+            elif _regime_is_mixed and not _regime_cfg.prefill.include_mixed:
                 # MIXED pass with mixed switching disabled: leave FlexiDepth
                 # enabled (unchanged). The appended running-decode rows are
                 # governed by the decode leg (I6), not the prefill leg.

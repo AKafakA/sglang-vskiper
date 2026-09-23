@@ -131,6 +131,13 @@ def stable_server_identity(server_info: dict[str, Any]) -> dict[str, Any]:
         # batch_composition: live per-step host counters (Scheduler.run_batch)
         # — runtime evidence like the counter blocks above, never identity.
         runtime.pop("batch_composition", None)
+        # admission_pins (D-849): the scheduler's per-request body-pin
+        # counters (admitted_*, steps_observed, band_flips, mixed_steps,
+        # prefix hits) advance with traffic — runtime evidence, never identity
+        # (first tripped 2026-09-21 13:42Z: every fork natural cell failed the
+        # manifest re-read). The admission DESIGN stays in the identity through
+        # regime_switch.admission.
+        runtime.pop("admission_pins", None)
         # binary_cohort (D-302): the REALIZED dispatch counters advance on
         # every executor call (warmup and capture included), so they cannot
         # sit in the identity hash — the manifest snapshot and the runner's

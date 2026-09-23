@@ -108,11 +108,11 @@ def main() -> int:
             f.write(f"\\newcommand{{\\vpPredBelowUpN}}{{{len(bu)}}}\n\\newcommand{{\\vpPredBelowUpWon}}{{{sum(1 for p in bu if p[1] < 0)}}}\n")
         if tie:
             m = ARM_RE.match(tie[0][3]); f.write(f"\\newcommand{{\\vpPredTieArm}}{{{int(m.group(1))}\\%$\\times${int(m.group(2))}\\%}}\n\\newcommand{{\\vpPredTieVstar}}{{{tie[0][0]/1e3:.0f}}}\n\\newcommand{{\\vpPredTieOcc}}{{{tie[0][2]/1e3:.0f}}}\n\\newcommand{{\\vpPredTieDelta}}{{{tie[0][1]:+.1f}}}\n")
-    import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
+    import matplotlib; matplotlib.use("Agg"); matplotlib.rcParams["pdf.fonttype"] = 42; import matplotlib.pyplot as plt
     # v1.7: no per-point r/d text (the table carries the arm mapping), legend above the axes, larger figure; the horizontal bar
     # from a shared-band point runs from the arm's crossover V* to the occupancy its cell held (a relation, not an error bar).
     fig, ax = plt.subplots(figsize=(5.0, 3.0), dpi=200)
-    style = {"ungated": dict(marker="^", color="#7f7f7f", label="always route (a)"), "fixed": dict(marker="o", color="#c0392b", label="shared band (b)"), "rule": dict(marker="s", color="#1f77b4", label="per-policy band (c)")}
+    style = {"ungated": dict(marker="^", color="#7f7f7f", label="always route (a)"), "fixed": dict(marker="o", color="#c0392b", label="shared thresholds (b)"), "rule": dict(marker="s", color="#1f77b4", label="per-policy thresholds (c)")}
     for label, pts in points.items():
         ax.scatter([p[0] / 1e3 for p in pts], [p[1] for p in pts], s=46, zorder=3, edgecolor="black", linewidth=0.5, alpha=0.9, **style[label])
         if label == "fixed" and not a.no_occupancy_bars:
@@ -123,10 +123,10 @@ def main() -> int:
     ax.axhline(0, color="k", lw=0.6); ax.set_xscale("log"); ax.margins(y=0.12)
     from matplotlib.ticker import FixedLocator, FixedFormatter
     ax.xaxis.set_major_locator(FixedLocator([100, 200, 300, 500, 1000, 1500])); ax.xaxis.set_major_formatter(FixedFormatter(["100k", "200k", "300k", "500k", "1M", "1.5M"])); ax.xaxis.set_minor_locator(FixedLocator([]))
-    ax.set_xlabel("rule crossover $V^*$ (resident K/V tokens)" + ("" if a.no_occupancy_bars else "; bar to the cell's own occupancy")); ax.set_ylabel("E2E mean change (%)")
+    ax.set_xlabel("rule crossover $V^*$ (resident KV tokens)" + ("" if a.no_occupancy_bars else "; bar to the cell's own occupancy")); ax.set_ylabel("E2E mean change (%)")
     fs = 9 if a.no_occupancy_bars else 7
-    ax.legend(fontsize=fs, frameon=False, loc="lower center", bbox_to_anchor=(0.5, 1.01), ncol=3, borderaxespad=0.0); ax.tick_params(labelsize=fs); ax.xaxis.label.set_size(fs + 0.5); ax.yaxis.label.set_size(fs + 0.5); ax.grid(alpha=0.25)
-    fig.tight_layout(); fig.savefig(a.png); print(f"{len(lines)} arms; fixed: {len(above)} above their occupancy ({sum(1 for p in above if p[1] > 0)} lost), {len(below)} below ({sum(1 for p in below if p[1] < 0)} won) -> {a.png}")
+    ax.legend(fontsize=fs, frameon=False, loc="lower center", bbox_to_anchor=(0.5, 1.01), ncol=3, borderaxespad=0.0, columnspacing=1.0, handletextpad=0.3); ax.tick_params(labelsize=fs); ax.xaxis.label.set_size(fs + 0.5); ax.yaxis.label.set_size(fs + 0.5); ax.grid(alpha=0.25)
+    fig.tight_layout(); fig.savefig(a.png, bbox_inches="tight", pad_inches=0.04, **({"metadata": {"CreationDate": None}} if str(a.png).endswith(".pdf") else {})); print(f"{len(lines)} arms; fixed: {len(above)} above their occupancy ({sum(1 for p in above if p[1] > 0)} lost), {len(below)} below ({sum(1 for p in below if p[1] < 0)} won) -> {a.png}")
     return 0
 
 

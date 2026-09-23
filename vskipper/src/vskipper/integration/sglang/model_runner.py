@@ -12,7 +12,13 @@ from vskipper.runtime.coverage import (
     fd_skip_decode_deployed,
     stamp_coverage_dense,
 )
-from vskipper.runtime.common import regime_switch_config
+from vskipper.runtime.common import (
+    REQUEST_BODY_FD,
+    REQUEST_BODY_STOCK,
+    VP_BODY_MIXED,
+    regime_switch_config,
+)
+from vskipper.runtime.regime import pinned_decode_body_of
 
 def validate_attention_backends(self, logger):
     # Fail-closed FlexiDepth backend assertion (owner ruling, 2026-08-18;
@@ -86,6 +92,14 @@ def validate_attention_backends(self, logger):
                     "as a declared deviation from the roofline rule for this arm",
                     _rs.decode.exit_kv_tokens, _rs.decode.enter_kv_tokens,
                 )
+            elif _band_policy == "gate":
+                # [D-849] A GATE-ONLY declared deviation: a tiny band so the pinning
+                # correctness checks can drive both pins in a 40-request smoke.
+                logger.warning(
+                    "decode_kv_band_policy=gate: serving band (exit=%s, enter=%s) "
+                    "as a gate-only declared deviation from the roofline rule (never a paper arm)",
+                    _rs.decode.exit_kv_tokens, _rs.decode.enter_kv_tokens,
+                )
             elif _band_policy != "rule":
                 raise ValueError(f"unknown decode_kv_band_policy {_band_policy!r}")
             else:
@@ -132,19 +146,24 @@ def prepare_decode_dispatch(self, forward_batch, can_run_graph):
     # observe keeps the W1 band + its attestation live through eager
     # episodes; level-triggered and idempotent in rows (F22).
     coverage_stamped = False
+    stock_eager_stamped = False
     if (
         forward_batch.forward_mode.is_decode()
         and fd_skip_decode_deployed()
         and coverage_dense_enabled()
     ):
         runner = self.decode_cuda_graph_runner
+        # [D-849] A pinned (uniform) pass records its pinned body; an
+        # unpinned pass advances the band exactly as in version 1.
+        pinned_body = pinned_decode_body_of(forward_batch)
         band_body = (
-            runner._vp_regime_dispatch.observe(
+            runner._vp_regime_dispatch.observe_or_pin(
                 int(forward_batch.batch_size),
                 int(forward_batch.seq_lens_sum),
+                pinned_body,
             )
             if runner is not None
-            else None
+            else pinned_body
         )
         coverage_stamped = stamp_coverage_dense(
             forward_batch,
@@ -152,6 +171,30 @@ def prepare_decode_dispatch(self, forward_batch, can_run_graph):
             can_run_graph=can_run_graph,
             w1_active=regime_switch_config() is not None,
         )
+        if coverage_stamped and forward_batch.vp_body in (REQUEST_BODY_FD, VP_BODY_MIXED):
+            # A pin violation: fd-pinned rows served by the dense
+            # fall-through. Counted; verify_skipping_executed refuses > 0.
+            fd_rows = (
+                int(forward_batch.batch_size)
+                if forward_batch.vp_body == REQUEST_BODY_FD
+                else sum(1 for p in forward_batch.vp_body_rows if p == REQUEST_BODY_FD)
+            )
+            self._vp_split_counters["coverage_dense_violation_rows"] += fd_rows
         if not coverage_stamped:
             account_covered_dispatch(forward_batch, band_body)
-    return coverage_stamped
+    elif (
+        forward_batch.forward_mode.is_decode()
+        and forward_batch.vp_body == REQUEST_BODY_STOCK
+        and not can_run_graph
+        and fd_skip_decode_deployed()
+    ):
+        # [D-849] Stock-pinned rows outside graph coverage with the (c3)
+        # stamp off: honour the pin on the eager path with the same
+        # pairing the captured stock graph uses.
+        forward_batch.vp_fd_decode_dense = True
+        forward_batch.fd_full_graph_force_production_attention = True
+        forward_batch.vp_seam_batch_routed = None
+        forward_batch.vp_seam_batch_eager = None
+        stock_eager_stamped = True
+        self._vp_split_counters["stock_eager_passes"] += 1
+    return coverage_stamped, stock_eager_stamped

@@ -642,7 +642,12 @@ def release_kv_cache(req: Req, tree_cache: BasePrefixCache, is_insert: bool = Tr
 
     tree_cache.cache_finished_req(
         req,
-        is_insert=is_insert and not getattr(req, "skip_radix_cache_insert", False),
+        # [D-849] vp_skip_finish_insert: a request whose generated tokens belong to
+        # another body than its prompt (cross-body plan, or a fixed-composition arm)
+        # never inserts its finished K/V; chunk stashes (prompt K/V) are unaffected.
+        is_insert=is_insert
+        and not getattr(req, "skip_radix_cache_insert", False)
+        and not req.vp_skip_finish_insert,
     )
 
     # StreamingSession.cache_finished_req handles speculative tail trim

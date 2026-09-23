@@ -551,3 +551,244 @@ def finalize_full_graph_batch(
                 dim=1,
             )
         )
+
+
+# ---------------------------------------------------------------------------
+# [D-849, 2026-09-21] Per-request body pinning: partition a mixed-pin decode
+# batch into uniform sub-batches and merge their outputs back in row order.
+# CPU-testable (plain tensor indexing; no runner state).
+# ---------------------------------------------------------------------------
+
+_VP_SPLIT_ROW_TENSORS = (
+    "input_ids",
+    "req_pool_indices",
+    "seq_lens",
+    "out_cache_loc",
+    "positions",
+    "seq_lens_cpu",
+    "orig_seq_lens",
+    "rids_int",
+    "bootstrap_room_ids_int",
+)
+_VP_SPLIT_ROW_LISTS = (
+    "lora_ids",
+    "rids",
+    "top_logprobs_nums",
+    "token_ids_logprobs",
+    "vp_body_rows",
+    # one entry per request in this fork; None for text-only requests
+    "mm_inputs",
+)
+_VP_SPLIT_REFUSED_FIELDS = (
+    "spec_info",
+    "input_embeds",
+    "replace_embeds",
+    "global_num_tokens_cpu",
+    "mamba_track_indices",
+    "mamba_cow_src_indices",
+    "mamba_clear_indices",
+    "encoder_lens",
+    "attn_cp_metadata",
+    "attn_dcp_metadata",
+    "tbo_children",
+)
+
+
+def vp_force_run_rows(forward_batch: Any) -> Optional[torch.Tensor]:
+    """[D-849 forced-RUN] The bool-per-row mask of a MIXED decode batch's
+    stock-pinned rows (forced to RUN inside the routed body), or ``None`` for a
+    uniform / unpinned batch."""
+
+    from vskipper.runtime.common import REQUEST_BODY_STOCK, VP_BODY_MIXED
+
+    if forward_batch.vp_body != VP_BODY_MIXED:
+        return None
+    pins = forward_batch.vp_body_rows
+    if pins is None or len(pins) != int(forward_batch.batch_size):
+        raise RuntimeError("[D-849] vp_body_rows missing or not one per row")
+    return torch.tensor(
+        [p == REQUEST_BODY_STOCK for p in pins],
+        dtype=torch.bool,
+        device=forward_batch.input_ids.device,
+    )
+
+
+def vp_split_decode_forward_batch(
+    forward_batch: Any, max_rows: Optional[int] = None, by_pin: bool = True
+) -> list[tuple[str, torch.Tensor, Any]]:
+    """Split a pinned DECODE forward batch into pin-uniform sub-batches.
+
+    With ``max_rows`` (the captured decode ladder's top), every pin group is
+    further cut into consecutive chunks of at most ``max_rows`` rows, so an
+    fd-pinned batch larger than the ladder is served by its captured graph in
+    several replays instead of falling to the dense body (a pin violation;
+    2026-09-21 bbh overload: 22 % of steps above 1,024 rows).
+
+    Returns ``[(pin, row_index_tensor, sub_forward_batch), ...]`` with the
+    stock sub-batch first. Each sub-batch is a shallow copy whose per-row
+    tensors/lists are ``index_select``-ed/sliced by the pin's rows, with
+    ``batch_size``, ``seq_lens_sum`` and ``vp_body`` recomputed and every
+    per-pass plan/stamp reset so the runner plans and stamps the sub-batch
+    itself. Refuses anything that is not a plain decode batch (speculative,
+    embeddings, DP/MLP-sync padding, mamba, encoder, context-parallel, TBO):
+    those never run under the served design, and a silent partial split would
+    be worse than a loud refusal.
+    """
+
+    import copy
+
+    from vskipper.runtime.common import REQUEST_BODY_FD, REQUEST_BODY_STOCK
+
+    if not forward_batch.forward_mode.is_decode():
+        raise RuntimeError("[D-849] only DECODE batches are partitioned by pin")
+    pins = forward_batch.vp_body_rows
+    if pins is None or forward_batch.batch_size != len(pins):
+        raise RuntimeError("[D-849] vp_body_rows missing or not one per row")
+    for name in _VP_SPLIT_REFUSED_FIELDS:
+        if getattr(forward_batch, name) is not None:
+            raise RuntimeError(
+                f"[D-849] cannot partition a decode batch with {name} set"
+            )
+    mm = forward_batch.mm_inputs
+    if mm is not None and any(item is not None for item in mm):
+        raise RuntimeError("[D-849] cannot partition a decode batch with multimodal inputs")
+    device = forward_batch.input_ids.device
+    parts: list[tuple[str, torch.Tensor, Any]] = []
+    if max_rows is not None and int(max_rows) < 1:
+        raise RuntimeError(f"[D-849] max_rows must be >= 1, got {max_rows!r}")
+    from vskipper.runtime.regime import batch_pin_of
+
+    groups: list[tuple[str, list[int]]] = []
+    if by_pin:
+        for pin in (REQUEST_BODY_STOCK, REQUEST_BODY_FD):
+            rows = [i for i, p in enumerate(pins) if p == pin]
+            if not rows:
+                continue
+            if max_rows is None:
+                groups.append((pin, rows))
+            else:
+                step = int(max_rows)
+                groups.extend((pin, rows[i : i + step]) for i in range(0, len(rows), step))
+    else:
+        # size-only chunks in row order; a chunk keeps whatever pins it holds
+        # (a mixed chunk is served by ONE routed replay with forced-RUN rows)
+        if max_rows is None:
+            raise RuntimeError("[D-849] size-only chunking needs max_rows")
+        step = int(max_rows)
+        all_rows = list(range(len(pins)))
+        groups = [(batch_pin_of([pins[i] for i in all_rows[i0 : i0 + step]]), all_rows[i0 : i0 + step]) for i0 in range(0, len(pins), step)]
+    for pin, rows in groups:
+        index = torch.tensor(rows, dtype=torch.int64, device=device)
+        sub = copy.copy(forward_batch)
+        for name in _VP_SPLIT_ROW_TENSORS:
+            value = getattr(forward_batch, name)
+            if value is None:
+                continue
+            if value.shape[0] != len(pins):
+                raise RuntimeError(
+                    f"[D-849] {name} has {value.shape[0]} rows for {len(pins)} pins"
+                )
+            setattr(sub, name, value.index_select(0, index.to(value.device)))
+        for name in _VP_SPLIT_ROW_LISTS:
+            value = getattr(forward_batch, name)
+            if value is None:
+                continue
+            if len(value) != len(pins):
+                raise RuntimeError(
+                    f"[D-849] {name} has {len(value)} entries for {len(pins)} pins"
+                )
+            setattr(sub, name, [value[i] for i in rows])
+        sub.batch_size = len(rows)
+        sub.seq_lens_sum = int(sub.seq_lens_cpu.sum()) if sub.seq_lens_cpu is not None else int(sub.seq_lens.sum().item())
+        sub.vp_body = pin
+        # Per-pass plan/stamp state is NOT inherited: the runner plans and stamps
+        # each sub-batch itself (a pre-plan of the union would be stale).
+        sub.forward_metadata_ready = False
+        sub.forward_metadata_planned_bs = None
+        sub.forward_metadata_planned_num_tokens = None
+        sub.forward_metadata_replan_equivalent = False
+        sub.vp_seam_batch_routed = None
+        sub.vp_seam_batch_eager = None
+        sub.vp_fd_decode_dense = False
+        sub.vp_fd_decode_coverage_dense = False
+        sub.vp_fd_coverage_counted = False
+        sub.fd_full_graph_force_production_attention = False
+        sub.fd_full_graph_device_route_tape = None
+        sub.fd_full_graph_skipper_adapter = None
+        sub.fd_full_graph_skipper_state = None
+        sub.fd_full_graph_route_masks = None
+        sub.fd_full_graph_compact_stats = None
+        sub.fd_full_graph_valid_rows = None
+        sub.fd_full_graph_force_run_rows = None
+        sub.fd_full_graph_attention_run_mask = None
+        sub.fd_full_graph_kv_write_mask = None
+        parts.append((pin, index, sub))
+    if len(parts) < 2:
+        raise RuntimeError(
+            "[D-849] partition called on a batch that is neither mixed nor above the ladder"
+        )
+    return parts
+
+
+def vp_detach_logits_output(out: Any) -> Any:
+    """Copy a sub-pass's forward-produced rows out of the graph runner's static buffers.
+
+    A captured-graph replay hands back views of the backend's per-shape output
+    tensors (``FullCudaGraphBackend.replay`` returns ``self._outputs[shape_key]``),
+    which the NEXT replay overwrites. A partitioned step runs two replays before
+    it merges, so the first sub-pass's logits must be materialised before the
+    second sub-pass runs (2026-09-21 tiny-band gate: every stock-pinned row
+    sampled the fd rows' tokens, 16/16 for 12 consecutive steps).
+    """
+
+    from sglang.srt.layers.logits_processor import LogitsProcessorOutput
+
+    if not isinstance(out, LogitsProcessorOutput):
+        raise RuntimeError("[D-849] pinned sub-pass returned a non-logits output")
+    return LogitsProcessorOutput(
+        next_token_logits=(
+            out.next_token_logits.clone() if out.next_token_logits is not None else None
+        ),
+        full_logits=out.full_logits.clone() if out.full_logits is not None else None,
+        hidden_states=out.hidden_states.clone() if out.hidden_states is not None else None,
+        customized_info=out.customized_info,
+    )
+
+
+def vp_merge_logits_outputs(
+    parts: list[tuple[str, torch.Tensor, Any]], batch_size: int
+) -> Any:
+    """Merge the sub-passes' LogitsProcessorOutput rows back into batch order.
+
+    Only the forward-produced fields are merged (``next_token_logits``,
+    ``hidden_states``); the sampler fills the rest on the merged output.
+    """
+
+    from sglang.srt.layers.logits_processor import LogitsProcessorOutput
+
+    def merge(name: str):
+        first = getattr(parts[0][2], name)
+        if first is None:
+            for _, _, out in parts[1:]:
+                if getattr(out, name) is not None:
+                    raise RuntimeError(f"[D-849] sub-pass outputs disagree on {name}")
+            return None
+        merged = torch.empty(
+            (batch_size,) + tuple(first.shape[1:]), dtype=first.dtype, device=first.device
+        )
+        for _, index, out in parts:
+            value = getattr(out, name)
+            if value is None or value.shape[0] != index.numel():
+                raise RuntimeError(f"[D-849] sub-pass output {name} rows do not match its index")
+            merged.index_copy_(0, index.to(merged.device), value)
+        return merged
+
+    for _, _, out in parts:
+        if not isinstance(out, LogitsProcessorOutput):
+            raise RuntimeError("[D-849] pinned sub-pass returned a non-logits output")
+        if out.full_logits is not None:
+            raise RuntimeError("[D-849] full_logits (dLLM) is not partitionable")
+    return LogitsProcessorOutput(
+        next_token_logits=merge("next_token_logits"),
+        hidden_states=merge("hidden_states"),
+    )
