@@ -239,7 +239,8 @@ have = set(re.findall(r"\\newcommand\{\\(\w+)\}", open(sys.argv[1]).read())); ca
 for line in open(sys.argv[2]):
     m = re.match(r"\\newcommand\{\\(\w+)\}", line)
     if m and m.group(1) not in have and re.search(r"(Strict|Flex|FilterSpread)", m.group(1)): carried.append(line.rstrip())
-open(sys.argv[1], "a").write(f"%% filter diagnostic (App. E.2), from {sys.argv[2]}\n" + "\n".join(carried) + "\n"); print(f"  took {len(carried)} filter-diagnostic macros from {sys.argv[2]}")
+src = "v1.5 lm-eval client cells, identity-preserved" if sys.argv[2].endswith("quality_macros_v15.tex") else "the four v1.8 GSM8K lm-eval arms"
+open(sys.argv[1], "a").write(f"%% filter diagnostic (App. E.2), {src}\n" + "\n".join(carried) + "\n"); print(f"  took {len(carried)} filter-diagnostic macros from {src}")
 PY
 
 say "6b natural lane (own-stop) table: upstream_g1024 harvests vs the served arm's natural cells (+ always-route; v1.8: every rate + the two knee legs)"
