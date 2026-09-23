@@ -226,6 +226,24 @@ for spec in "gsm8k:$Q/q2x2-gsm8k/A:$Q/q2x2-gsm8k/B:r12p35" "coqa:$Q/q2x2-coqa/A:
   else CD="--scores $AN/loaded_all_v16.json --cell-c loaded-upstream_g1024-$ds-$r/ --cell-d loaded-integrated_alwaysskip-$ds-$r/"; fi
   python3 $VP/paired_dod_2x2_v16.py --no-filter-col --no-gate-col --dataset $ds --arm A=$qa --arm B=$qb $CD --margin 1.0 --latex generated/quality_rows.tex --macros generated/quality_macros.tex --json generated/paired_dod_$ds.json | tail -1; done
 
+# [v1.8, owner 2026-09-23] Table 3 as one table: the 2x2 row and the served-at-the-knee row of each task side by side
+python3 - generated/quality_rows.tex generated/loaded_quality_rows.tex generated/quality_merged_rows.tex <<'PY'
+import sys
+def rows(path):
+    out = {}
+    for line in open(path):
+        line = line.strip()
+        if not line or line.startswith("%"): continue
+        cells = [c.strip() for c in line.rstrip("\\").strip().split("&")]
+        out[cells[0]] = cells[1:]
+    return out
+q, l = rows(sys.argv[1]), rows(sys.argv[2])
+if list(q) != list(l): raise SystemExit(f"quality row keys differ: {list(q)} vs {list(l)}")
+with open(sys.argv[3], "w") as f:
+    for k in q: f.write(" & ".join([k] + q[k] + l[k]) + " \\\\\n")
+print("  merged Table 3 rows:", ", ".join(q))
+PY
+
 # App. E.2's answer-extraction diagnostic (per-arm strict/flexible filter counts) is a property of the checkpoint's epilogue. v1.8:
 # computed by paired_dod_2x2.py over the four GSM8K lm-eval arms (A/B native, C/D served); v1.7: carried from the v1.5 lm-eval client
 # cells (identity-preserved, paper snapshot 075d49b). Only the macros the v1.6 gate does not emit are taken.
