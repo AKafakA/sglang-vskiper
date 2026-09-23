@@ -44,8 +44,8 @@ def main() -> int:
     ap.add_argument("runs", nargs="+", type=Path)
     ap.add_argument("--pdf", type=Path, required=True)
     ap.add_argument("--macros", type=Path, required=True)
-    ap.add_argument("--flexidepth-label", default="FlexiDepth\n(${\\approx}25\\%$ FLOPs saved)",
-                    help="x tick label of the checkpoint bar (the v1.5 figure's wording by default)")
+    ap.add_argument("--flexidepth-label", default="FlexiDepth\n(skips ${\\approx}8$ of $32$ layers)",
+                    help="x tick label of the checkpoint bar (v1.8: the authors' reported skip, as the text cites it)")
     a = ap.parse_args()
     tp = {(m, bs): [load(r, m, bs) for r in a.runs] for m in ("vanilla", "flexidepth") for bs in (1, 8)}
     mean = {k: statistics.mean(v) for k, v in tp.items()}
