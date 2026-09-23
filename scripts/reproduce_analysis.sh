@@ -79,6 +79,10 @@ say "3c hardware-band appendix table (every device's band = the rule's output)"
 A6K=$( [ -f $AN/rtxa6000/qstar.txt ] && cat $AN/rtxa6000/qstar.txt || echo 6 )
 python3 $VP/hardware_bands_table.py --only-used --rows generated/hardware_bands_rows.tex --macros generated/hardware_bands_macros.tex --knee NVIDIA_A100=13 --knee NVIDIA_H100_HBM3=14 --knee NVIDIA_RTX_A6000=$A6K --used NVIDIA_A100,NVIDIA_H100_HBM3,NVIDIA_RTX_A6000 | tail -1
 
+say "3d throughput under saturation at 1.25 x Q* (Table 4): TPS and RPS inside the injection window, from the compact per-cell record"
+[ -f $AN/capacity/capacity_compact.json ] || { echo "  MISSING $AN/capacity/capacity_compact.json"; exit 1; }
+python3 $VP/capacity_window.py emit $AN/capacity/capacity_compact.json generated/ && echo "  $(grep -c '\\\\' generated/capacity_rows.tex) throughput rows"
+
 say "4  ablation (per dataset, from the node's paired reports; arms vdec_fd / vpre_binarycohort / integrated_alwaysskip [/ vskipper_noupgrade, v1.8] vs $BASE)"
 for DSK in "gsm8k:13:" "bbh_cot:34:_bbh_cot" "coqa:25:_coqa"; do IFS=: read -r ADS AK SFX <<< "$DSK"
   # v1.8 (owner 09-22 13:0xZ): the no-promotion arm (vskipper_noupgrade, the one v1.8 mechanism off) is a fourth column pair when its report exists
