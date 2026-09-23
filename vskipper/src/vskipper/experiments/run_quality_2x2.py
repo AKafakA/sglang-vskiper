@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -78,11 +79,17 @@ def gpu_is_free(max_mib: int) -> tuple[bool, str]:
     survived at `ppid=1` holding ~72 GB at 0 % utilisation, and the only check that caught
     it was nvidia-smi plus a process count. A boot onto an occupied card OOMs after paying
     for the model load.
+
+    nvidia-smi ignores CUDA_VISIBLE_DEVICES, so the query is restricted to the visible card(s):
+    on a multi-GPU box an unrestricted query reads every other job's memory (2026-09-23: the
+    A100 C/D chain refused all twelve cells on gpu0's 72 GB while its own gpu2 held 0 MiB).
     """
+    cmd = ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"]
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    if visible:
+        cmd += ["-i", visible]
     try:
-        used = subprocess.run(
-            ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=60)
+        used = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.SubprocessError) as exc:
         return False, f"nvidia-smi failed: {exc}"
     if used.returncode != 0:

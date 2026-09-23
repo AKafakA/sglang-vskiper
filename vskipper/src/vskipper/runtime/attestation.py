@@ -155,6 +155,19 @@ def regime_switch_attestation(
             # deployments keep their byte-identical block.
             block["decode"]["enter_kv_tokens"] = config.decode.enter_kv_tokens
             block["decode"]["exit_kv_tokens"] = config.decode.exit_kv_tokens
+        # [D-849] per-request body pinning, as resolved for this arm.
+        block["admission"] = {
+            "enabled": config.admission.enabled,
+            "criterion": config.admission.criterion,
+            "cold_start": config.admission.cold_start,
+            "prefill_demotion": config.admission.prefill_demotion,
+            "mixed_step": config.admission.mixed_step,
+            "decode_after_fd_prefill": config.admission.decode_after_fd_prefill,
+            "decode_after_stock_prefill": config.admission.decode_after_stock_prefill,
+            "decode_upgrade": config.admission.decode_upgrade,
+            "decode_downgrade": config.admission.decode_downgrade,
+            "prefill_tokens": config.admission.prefill_tokens,
+        }
     block["counters"] = (
         regime_switch_zero_counters() if counters is None else counters
     )
@@ -305,6 +318,49 @@ def scheduler_runtime_attestation(scheduler: Any) -> dict[str, Any]:
         engagement = prefill_engagement()
         if engagement is not None:
             regime_counters["prefill_engagement"] = engagement
+    # [D-849] Model-runner-side pinned-dispatch evidence (partitioned steps,
+    # rows per sub-pass, pin violations) overlays the zero placeholder.
+    split_counters = getattr(model_runner, "vp_admission_split_counters", None)
+    if regime_counters is not None and callable(split_counters):
+        split_counts = split_counters()
+        if split_counts is not None:
+            regime_counters["admission"] = split_counts
+
+    # [D-849] Scheduler-side admission evidence: pins handed out, band flips seen
+    # by the scheduler's mirror, deferrals, mixed steps, retract re-entries and
+    # the cross-body prefix-reuse witness (MUST be 0). Runtime evidence,
+    # identity-stripped like the regime counters; never assert in expectations.
+    pinner_counts = scheduler.vp_pinner.counters()
+    admission_pins = {"enabled": pinner_counts is not None}
+    if pinner_counts is not None:
+        admission_pins.update(pinner_counts)
+        admission_pins.update(
+            {
+                "retract_reentries": int(scheduler.vp_pin_retract_reentries),
+                "admission_deferrals": int(scheduler.vp_pin_admission_deferrals),
+                "chunk_body_adoptions": int(scheduler.vp_pin_chunk_body_adoptions),
+                "mixed_steps": int(scheduler.vp_pin_mixed_steps),
+                "mixed_step_rows_stock": int(scheduler.vp_pin_mixed_step_rows_stock),
+                "mixed_step_rows_fd": int(scheduler.vp_pin_mixed_step_rows_fd),
+                "decode_upgraded_rows": int(scheduler.vp_pin_decode_upgraded_rows),
+                "decode_downgraded_rows": int(scheduler.vp_pin_decode_downgraded_rows),
+                "round_prompt_tokens": int(scheduler.vp_pin_round_prompt_tokens),
+                "round_uncached_tokens": int(scheduler.vp_pin_round_uncached_tokens),
+                "speculative_matches": int(scheduler.vp_pin_speculative_matches),
+                "adm_attempts": int(scheduler.vp_adm_attempts),
+                "adm_rounds": int(scheduler.vp_adm_rounds),
+                "adm_admitted": int(scheduler.vp_adm_admitted),
+                "adm_zero_admit": int(scheduler.vp_adm_zero_admit),
+                "adm_no_token": int(scheduler.vp_adm_no_token),
+                "adm_full_skips": int(scheduler.vp_adm_full_skips),
+                "adm_waiting_seen": int(scheduler.vp_adm_waiting_seen),
+                "adm_queue_wait_ms": int(scheduler.vp_adm_queue_wait_ms),
+                "mix_withheld": int(scheduler.vp_pin_mix_withheld),
+                "cross_body_prefix_reuse": int(scheduler.vp_pin_cross_body_prefix_reuse),
+                "prefix_hit_tokens_stock": int(scheduler.vp_pin_prefix_hit_tokens_stock),
+                "prefix_hit_tokens_fd": int(scheduler.vp_pin_prefix_hit_tokens_fd),
+            }
+        )
 
     result = {
         "schema_version": 1,
@@ -323,6 +379,7 @@ def scheduler_runtime_attestation(scheduler: Any) -> dict[str, Any]:
             "mixed_prefill_tokens": int(scheduler.vp_bc_mixed_prefill_tokens),
             "decode_passes": int(scheduler.vp_bc_decode_passes),
         },
+        "admission_pins": admission_pins,
         "model": model_state,
         # [D-611, Codex F7/F8] TOP-LEVEL and RESOLVED. The first attempt put these inside
         # the seam's dict, which lands under "model" -- so the gate looked one level too
@@ -347,6 +404,28 @@ class ReqVPMixin:
         # block-position state (advanced by VPDecodeManager); valid only when vp_enabled.
         self.current_block: int = 0
         self.skip_blocks_remaining: int = 0
+        # [D-849] The body this request is pinned to for its whole lifetime
+        # ("stock" | "fd"), decided once at admission by the scheduler's
+        # AdmissionPinner; None until admitted (or forever when pinning is off).
+        # Survives a retract/re-admit round trip: the pin is never re-decided.
+        self.vp_body: Optional[str] = None
+        # [phase-sticky] the body the prompt was encoded by (fixed at admission) and
+        # whether the decode body has been decided at the prefill->decode boundary
+        self.vp_prefill_body: Optional[str] = None
+        self.vp_decode_body: Optional[str] = None
+        self.vp_decode_pinned: bool = False
+        # [D-849 add. 12] the decode body was upgraded stock->fd once (band HIGH)
+        self.vp_decode_upgraded: bool = False
+        self.vp_decode_switched: bool = False  # [D-849 add. 35] one body change per request, either direction
+        self.vp_decode_demoted: bool = False  # [D-849 add. 40] routed->dense demotion happened (never re-promoted)
+        # [D-849 add. 22] memo of the speculative uncached-token estimate: (monotonic s, value)
+        self.vp_uncached_memo: Optional[tuple] = None
+        # [D-849 add. 23] monotone lane: promoted by its first routed decode step
+        self.vp_promoted: bool = False
+        # [D-849 add. 25 diagnostic] perf_counter at (re)entry into the waiting queue
+        self.vp_queued_at: Optional[float] = None
+        # finish-time radix insertion suppressed: generated K/V of another body
+        self.vp_skip_finish_insert: bool = False
 
 
 def _env_scan() -> bool:
@@ -1133,3 +1212,45 @@ def model_runner_runtime_attestation(
             "routed_layer_rows_eager": eager_rows * loaded_layer_count,
         },
     }
+
+
+def radix_namespace_report(tree_cache: Any, limit: int = 12) -> str:
+    """[D-849 diagnostic] Per-namespace (extra_key) radix-tree accounting and the
+    K/V slots referenced by more than one node -- logged when the scheduler's
+    idle pool check finds evictable+protected != total (2026-09-21 gate: 7 tokens
+    over). Read-only; never raises (a diagnostic must not mask the leak)."""
+
+    try:
+        root = tree_cache.root_node
+        per_ns: dict[str, dict[str, int]] = {}
+        seen: dict[int, tuple[str, int]] = {}
+        dup: list[str] = []
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            for child in node.children.values():
+                stack.append(child)
+            if node is root or node.key is None:
+                continue
+            ns = str(node.key.extra_key)
+            acc = per_ns.setdefault(ns, {"nodes": 0, "tokens": 0, "locked_tokens": 0, "locked_nodes": 0})
+            acc["nodes"] += 1
+            acc["tokens"] += len(node.key)
+            if node.lock_ref > 0:
+                acc["locked_nodes"] += 1
+                acc["locked_tokens"] += len(node.key)
+            value = node.value
+            if value is None:
+                continue
+            for slot in value.tolist():
+                prev = seen.get(int(slot))
+                if prev is None:
+                    seen[int(slot)] = (ns, len(node.key))
+                elif len(dup) < limit:
+                    dup.append(f"slot {int(slot)}: {prev[0]} and {ns} (node {len(node.key)} tokens, lock_ref {node.lock_ref})")
+        lines = [f"radix namespaces: {per_ns}", f"slots referenced twice: {len(dup)}{' (first ' + str(limit) + ')' if len(dup) >= limit else ''}"]
+        lines.extend(dup)
+        return "\n".join(lines)
+    except Exception as exc:  # diagnostic only
+        return f"radix namespace report unavailable: {exc!r}"
+

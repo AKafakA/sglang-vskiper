@@ -27,88 +27,92 @@
       "reason": "literal SGLang default ladder on this 48 GB card"
     },
     "vskipper": {
-      "decode_ladder_top": 128,
+      "decode_ladder_top": 256,
       "kv_capacity_tokens": "smaller_ok",
-      "reason": "design: the fork captures 4x max_bs (vpipe/common.py); its router/projector weights shrink the K/V pool by <1.5 % (against the treatment)",
+      "reason": "design: the fork captures 4x max_bs (vpipe/common.py); its router/projector weights shrink the K/V pool by <1.5 % (against the treatment) [D-849, 2026-09-21: regime switch version 2 -- each request is pinned to ONE body (stock or routed) at admission from the decode band state and keeps it for prefill and every decode step; a decode step carrying both pins is partitioned into two uniform sub-passes; the radix prefix cache is namespaced by body (|vpbody=<pin> in the extra key). Bands unchanged.]",
       "decode_kv_band": "rule"
     },
     "integrated_it4": {
-      "decode_ladder_top": 128,
+      "decode_ladder_top": 256,
       "kv_capacity_tokens": "smaller_ok",
-      "reason": "alias of vskipper",
+      "reason": "alias of vskipper [D-849, 2026-09-21: regime switch version 2 -- each request is pinned to ONE body (stock or routed) at admission from the decode band state and keeps it for prefill and every decode step; a decode step carrying both pins is partitioned into two uniform sub-passes; the radix prefix cache is namespaced by body (|vpbody=<pin> in the extra key). Bands unchanged.]",
       "decode_kv_band": "rule"
     },
     "integrated_randomskip_r25_d25_sharedband": {
-      "decode_ladder_top": 128,
+      "decode_ladder_top": 256,
       "kv_capacity_tokens": "smaller_ok",
       "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
       "decode_kv_band": "shared"
     },
     "integrated_randomskip_r25_d50_sharedband": {
-      "decode_ladder_top": 128,
+      "decode_ladder_top": 256,
       "kv_capacity_tokens": "smaller_ok",
       "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
       "decode_kv_band": "shared"
     },
     "integrated_randomskip_r25_d75_sharedband": {
-      "decode_ladder_top": 128,
+      "decode_ladder_top": 256,
       "kv_capacity_tokens": "smaller_ok",
       "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
       "decode_kv_band": "shared"
     },
     "integrated_randomskip_r50_d25_sharedband": {
-      "decode_ladder_top": 128,
+      "decode_ladder_top": 256,
       "kv_capacity_tokens": "smaller_ok",
       "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
       "decode_kv_band": "shared"
     },
     "integrated_randomskip_r50_d50_sharedband": {
-      "decode_ladder_top": 128,
+      "decode_ladder_top": 256,
       "kv_capacity_tokens": "smaller_ok",
       "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
       "decode_kv_band": "shared"
     },
     "integrated_randomskip_r50_d75_sharedband": {
-      "decode_ladder_top": 128,
+      "decode_ladder_top": 256,
       "kv_capacity_tokens": "smaller_ok",
       "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
       "decode_kv_band": "shared"
     },
     "integrated_randomskip_r75_d25_sharedband": {
-      "decode_ladder_top": 128,
+      "decode_ladder_top": 256,
       "kv_capacity_tokens": "smaller_ok",
       "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
       "decode_kv_band": "shared"
     },
     "integrated_randomskip_r75_d50_sharedband": {
-      "decode_ladder_top": 128,
+      "decode_ladder_top": 256,
       "kv_capacity_tokens": "smaller_ok",
       "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
       "decode_kv_band": "shared"
     },
     "integrated_randomskip_r75_d75_sharedband": {
-      "decode_ladder_top": 128,
+      "decode_ladder_top": 256,
       "kv_capacity_tokens": "smaller_ok",
       "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
       "decode_kv_band": "shared"
     },
     "vskipper_qwen3_4b_sharedband": {
-      "decode_ladder_top": 128,
+      "decode_ladder_top": 256,
       "kv_capacity_tokens": "smaller_ok",
-      "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared",
+      "reason": "D-778 declared deviation: the SHARED Llama/A100 band (160k/200k) under this arm instead of the rule's own-band output (Fig. 3b fixed-band sweep / the Qwen3-4B shared-band leg); attested decode_kv_band_policy == shared [D-849, 2026-09-21: regime switch version 2 -- each request is pinned to ONE body (stock or routed) at admission from the decode band state and keeps it for prefill and every decode step; a decode step carrying both pins is partitioned into two uniform sub-passes; the radix prefix cache is namespaced by body (|vpbody=<pin> in the extra key). Bands unchanged.]",
       "decode_kv_band": "shared"
     },
     "upstream_g128": {
       "decode_ladder_top": 128,
       "reason": "same-ladder control on the RTX A6000: --cuda-graph-max-bs 128 = the fork's 4x memory-derived default (D-824 posture, this device)"
+    },
+    "upstream_g256": {
+      "decode_ladder_top": 256,
+      "reason": "same-ladder control on the RTX A6000 [D-849 add. 42, 2026-09-22]: --cuda-graph-max-bs 256 = the fork's per-device ladder (DECODE_COVERAGE_LADDER_BY_DEVICE, sized to the card's observed decode occupancy: the served batch ran above the old 128 ladder in 22 % of knee steps and every such step was two padded replays). upstream_g128 stays declared for the pre-add.-42 record only."
     }
   },
   "fork_default": {
-    "decode_ladder_top": 128,
+    "decode_ladder_top": 256,
     "kv_capacity_tokens": "smaller_ok",
     "reason": "any arm served from the fork tree (RandomSkip sweep mocks, ablation arms, Qwen arms): the same coverage ladder as vskipper and the same router/projector HBM cost",
     "decode_kv_band": "rule"
   },
   "_comment_decode_kv_band": "fork arms: 'rule' = the live regime-switch K/V band must equal roofline.derived_kv_band for the device the gate is told it runs on (per-device table SERVED_DECODE_KV_BAND_BY_DEVICE, every entry a rule output; A100 keyed by memory class); 'shared' = the arm attests decode_kv_band_policy shared (a declared deviation, D-778 Qwen posture). Absent for a fork arm = refused.",
-  "_comment_device": "RTX A6000 (48 GB, sm_86): SGLang's memory-derived default decode ladder on this card is 32 rows and the fork captures 4x = 128 (not 1,024 as on 80 GB parts), so the same-ladder control here is upstream with --cuda-graph-max-bs 128 (arm upstream_g128). The execution-difference gate refused the 1,024-row control against the fork's 128-row ladder on 2026-09-17 06:46Z, as designed."
+  "_comment_device": "RTX A6000 (48 GB, sm_86): SGLang's memory-derived default decode ladder on this card is 32 rows and the fork captures 4x = 128 (not 1,024 as on 80 GB parts), so the same-ladder control here is upstream with --cuda-graph-max-bs 128 (arm upstream_g128). The execution-difference gate refused the 1,024-row control against the fork's 128-row ladder on 2026-09-17 06:46Z, as designed. [D-849 add. 42, 2026-09-22: the fork's ladder on this card is now 256 from the per-device table (8x the card's default; the 4x rule left 22 % of knee steps above the ladder), and the same-ladder control is upstream_g256.]"
 }

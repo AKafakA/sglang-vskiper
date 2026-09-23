@@ -100,10 +100,85 @@ from vskipper.runtime.kv_commit import (
 )
 
 
-REGIME_SWITCH_CONFIG_VERSION = 1
+REGIME_SWITCH_CONFIG_VERSION = 2
 DECODE_BODY_LOW = "prod_allrun"
 DECODE_BODY_HIGH = "skip"
 _DECODE_BODIES = frozenset((DECODE_BODY_LOW, DECODE_BODY_HIGH))
+# [D-849, 2026-09-21] Per-request body pinning. A request's body is decided ONCE
+# at admission from the switch's band state and kept for its whole lifetime
+# (prefill and every decode step), so every served request is exactly one
+# model's computation: "stock" = the base model's dense body (decode
+# prod_allrun, prefill dense), "fd" = the routed FlexiDepth body (decode skip,
+# prefill fd). Per-PASS selection (version 1) let a request receive both bodies;
+# at the GSM8K knee 3,163 of 3,600 served requests matched neither model's
+# token sequence and ran away at 4.7 % against the checkpoint's own 2.2 %.
+# VP_BODY_MIXED marks a decode ForwardBatch that carries both pins; the model
+# runner partitions it into two uniform sub-passes (never a forced-RUN row
+# inside the routed graph, which is neither byte-identical nor same-speed vs
+# the stock graph -- see regime_body_dispatches_stock_decode).
+REQUEST_BODY_STOCK = "stock"
+REQUEST_BODY_FD = "fd"
+_REQUEST_BODIES = frozenset((REQUEST_BODY_STOCK, REQUEST_BODY_FD))
+VP_BODY_MIXED = "mixed"
+ADMISSION_CRITERION_BAND_STATE = "decode_band_state"
+# [D-849 phase-sticky, 2026-09-21] prefill body per admission round from the round's prompt tokens
+# (the version-1 pass threshold); decode body ONCE at the prefill->decode boundary: FD after an FD
+# prefill, else the band state at that moment. Never switched afterwards; FD->stock never occurs.
+ADMISSION_CRITERION_PHASE_STICKY = "phase_sticky"
+# [D-849 add. 23] the MONOTONE lane = version 1.7 (per-pass prefill criterion, per-step decode band, one cache namespace,
+# no admission pins) plus ONE rule: a request's first routed decode step promotes it for the rest of its generation; a LOW
+# step whose batch holds promoted rows runs the routed replay with the other rows forced to RUN. No demotion, ever.
+ADMISSION_CRITERION_MONOTONE_DECODE = "monotone_decode"
+# [D-849 add. 9, 2026-09-21 18:xxZ] what an FD-prefilled request decodes with: "fd" (FD prefill implies FD decode;
+# H100 0.75x: +13.8 % E2E, every step mixed below the crossover) or "band" (the band state at the boundary decides for
+# every request; FD->stock is then the second declared composition, its finished K/V never inserted).
+ADMISSION_DECODE_AFTER_FD_PREFILL_FD = "fd"
+ADMISSION_DECODE_AFTER_FD_PREFILL_BAND = "band"
+_ADMISSION_DECODE_AFTER_FD_PREFILL = frozenset({ADMISSION_DECODE_AFTER_FD_PREFILL_FD, ADMISSION_DECODE_AFTER_FD_PREFILL_BAND})
+# [D-849 add. 28] The decode body after a DENSE prefill. "stock": a dense-prefilled
+# request decodes dense for its whole life -- routed generation over a dense-
+# computed prompt is the checkpoint's loop mode (served leg on the natural gsm8k
+# knee suite: 382 runaways of 3,600 vs always-route 83; the 639ec4435d natural
+# collapse served that plan for 75 % of requests: 305). "band": the legacy
+# behaviour (the band state at the boundary), kept only for the A/B reference arm.
+ADMISSION_DECODE_AFTER_STOCK_PREFILL_STOCK = "stock"
+ADMISSION_DECODE_AFTER_STOCK_PREFILL_BAND = "band"
+_ADMISSION_DECODE_AFTER_STOCK_PREFILL = frozenset({ADMISSION_DECODE_AFTER_STOCK_PREFILL_STOCK, ADMISSION_DECODE_AFTER_STOCK_PREFILL_BAND})
+# [D-849 add. 12] a stock-pinned DECODE may upgrade to the routed body ONCE, when the
+# band enters HIGH (never back): the plan frozen at the boundary lagged the band on a
+# ramp (coqa knee: 29 % of requests pinned FD->stock below V*, never skipped -> E2E +4.6 %).
+# [D-849 add. 17] which prompt tokens the admission round's prefill criterion counts: "uncached" = the tokens a routed pass would
+# actually compute (prompt minus the prefix already cached in the routed namespace -- version 1 decided on the pass's extend
+# tokens, i.e. after cache hits; bbh at 91 % hits ran dense in v1.7 but routed under the "prompt" count); "prompt" = whole prompt.
+ADMISSION_PREFILL_TOKENS_UNCACHED = "uncached"
+ADMISSION_PREFILL_TOKENS_PROMPT = "prompt"
+_ADMISSION_PREFILL_TOKENS = frozenset({ADMISSION_PREFILL_TOKENS_UNCACHED, ADMISSION_PREFILL_TOKENS_PROMPT})
+ADMISSION_DECODE_UPGRADE_NONE = "none"
+ADMISSION_DECODE_UPGRADE_BAND_HIGH = "band_high"
+_ADMISSION_DECODE_UPGRADES = frozenset({ADMISSION_DECODE_UPGRADE_NONE, ADMISSION_DECODE_UPGRADE_BAND_HIGH})
+# [D-849 add. 35] The ONE-SWITCH rule's other direction: a routed-pinned decode drops to the
+# dense body once when the band is LOW (the safe FD->stock direction: the dense body reads
+# routed K/V without harm, natural leg 5 vs 78). "none" = today's one-way promotion only.
+# Each request changes its decode body at most ONCE in either direction.
+ADMISSION_DECODE_DOWNGRADE_NONE = "none"
+ADMISSION_DECODE_DOWNGRADE_BAND_LOW = "band_low"
+# [D-849 add. 40] "band_low_any": the demotion may also follow a promotion (promote once at HIGH,
+# demote once at LOW, never re-promote): the only loop-prone transition (dense->routed over
+# generated tokens) still happens at most once; routed->dense is the safe leg. Targets the
+# CoQA low-load TPOT cost of promoted rows that stay routed through the following LOW stretch.
+ADMISSION_DECODE_DOWNGRADE_BAND_LOW_ANY = "band_low_any"
+_ADMISSION_DECODE_DOWNGRADES = frozenset({ADMISSION_DECODE_DOWNGRADE_NONE, ADMISSION_DECODE_DOWNGRADE_BAND_LOW, ADMISSION_DECODE_DOWNGRADE_BAND_LOW_ANY})
+_ADMISSION_CRITERIA = frozenset({ADMISSION_CRITERION_BAND_STATE, ADMISSION_CRITERION_PHASE_STICKY, ADMISSION_CRITERION_MONOTONE_DECODE})
+ADMISSION_PREFILL_DEMOTION_OBSERVE_ONLY = "observe_only"
+# [D-849 add. 13] the version-1 engagement demotion (EMA < engagement_min -> dense, one routed
+# probe round per engagement_probe_every dense rounds) applied to the ADMISSION round's prefill
+# pin, so a pinned request gets exactly the prefill body version 1 would have run (coqa: dense).
+ADMISSION_PREFILL_DEMOTION_ADMISSION = "admission"
+_ADMISSION_PREFILL_DEMOTIONS = frozenset({ADMISSION_PREFILL_DEMOTION_OBSERVE_ONLY, ADMISSION_PREFILL_DEMOTION_ADMISSION})
+ADMISSION_MIXED_STEP_PARTITION = "partition"
+# [D-849, 2026-09-21 16:xxZ] one routed replay per mixed step: stock-pinned rows forced to RUN
+ADMISSION_MIXED_STEP_FORCED_RUN = "forced_run"
+_ADMISSION_MIXED_STEPS = frozenset({ADMISSION_MIXED_STEP_PARTITION, ADMISSION_MIXED_STEP_FORCED_RUN})
 _FD_PARITY_EPOCHS = {}
 def full_graph_contiguous_routed_qkv_config(
     environ: Optional[Mapping[str, str]] = None,
@@ -436,8 +511,10 @@ class FullGraphDeviceRouteTape:
         layer_id: int,
         action_batch: FullGraphActionBatch,
         valid_rows: Optional[torch.Tensor],
+        force_rows: Optional[torch.Tensor] = None,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
         """`action_mask` for a router-driven RUN/PROJECT batch, fused (F1).
+        ``force_rows`` (D-849): rows forced to RUN inside a mixed step.
 
         Same checks and the same tape writes as `action_mask` (branch-weight
         row copy + `branch_weights > threshold` into the bool action row), in
@@ -488,6 +565,7 @@ class FullGraphDeviceRouteTape:
             valid_rows,
             target.reshape(-1),
             weight_target,
+            force_rows,
         )
         self.recorded_layers += 1
         return target, maps
@@ -621,6 +699,27 @@ def vp_decode_coverage_max_bs(
     if value <= 0:
         raise ValueError(f"{VP_DECODE_COVERAGE_MAX_BS_ENV} must be positive")
     return value
+# [D-849 add. 42, 2026-09-22] Per-device decode coverage ladder. The built-in bound is 4x the
+# CLI-configured decode max_bs (the A100's proven 1,024 = 4 x 256). On the RTX A6000 (48 GB)
+# SGLang's memory-derived default is 32, so 4x = 128, and the served decode batch on that card
+# runs above 128 rows in ~22 % of steps at the gsm8k knee (running mean 129, max 190): every
+# such step was cut into two padded replays (ladder_chunked_passes) and the routed decode gain
+# was lost. The card's ladder is therefore sized to its observed occupancy, 256, from THIS table
+# (design in the tree: never an env var, never a host-file knob). The same-ladder baseline on
+# that card is upstream with --cuda-graph-max-bs 256 (arm upstream_g256, declared in
+# deploy/execution_differences.rtxa6000.json), exactly as upstream_g1024 mirrors the A100.
+DECODE_COVERAGE_LADDER_BY_DEVICE: dict[str, int] = {
+    "NVIDIA RTX A6000": 256,
+}
+
+
+def vp_decode_coverage_device_bound(device_name: str) -> Optional[int]:
+    """The per-device coverage ladder for ``device_name`` (torch's device name,
+    e.g. ``torch.cuda.get_device_name(gpu_id)``), or None for the 4x rule."""
+
+    return DECODE_COVERAGE_LADDER_BY_DEVICE.get(str(device_name).strip())
+
+
 def coverage_capture_bs(
     capture_bs: list[int], target: int, generate
 ) -> tuple[list[int], int]:
@@ -1035,6 +1134,91 @@ class FDLayerRoute:
     kept_rows: int
     branch: str
     mask_key: Optional[str]
+class RegimeSwitchAdmissionConfig(
+    msgspec.Struct, frozen=True, forbid_unknown_fields=True
+):
+    """[D-849] Per-request body pinning at admission (version 2 of the switch).
+
+    ``enabled``: pin one body per request for its lifetime. ``criterion``: what
+    decides the pin (the scheduler's mirror of the decode band state).
+    ``cold_start``: the pin before the band has ever engaged. ``prefill_demotion``:
+    under pinning the prefill engagement escape only OBSERVES (it may not hand
+    a routed-pinned request a dense prefill). ``mixed_step``: a decode step whose
+    running batch carries both pins is PARTITIONED into two uniform sub-passes.
+    Every string has exactly one legal value: the field exists so the served
+    design is attested and diffable, not so it can be tuned.
+    """
+
+    enabled: bool
+    criterion: str = ADMISSION_CRITERION_PHASE_STICKY
+    cold_start: str = REQUEST_BODY_STOCK
+    prefill_demotion: str = ADMISSION_PREFILL_DEMOTION_OBSERVE_ONLY
+    mixed_step: str = ADMISSION_MIXED_STEP_FORCED_RUN
+    decode_after_fd_prefill: str = ADMISSION_DECODE_AFTER_FD_PREFILL_BAND
+    # [D-849 add. 28] the defaults are the served (loop-safe) values: a config that
+    # omits them gets dense-stays-dense, no promotion, prompt-token criterion.
+    decode_after_stock_prefill: str = ADMISSION_DECODE_AFTER_STOCK_PREFILL_STOCK
+    decode_upgrade: str = ADMISSION_DECODE_UPGRADE_NONE
+    decode_downgrade: str = ADMISSION_DECODE_DOWNGRADE_NONE
+    prefill_tokens: str = ADMISSION_PREFILL_TOKENS_PROMPT
+
+    def validate(self) -> None:
+        if self.prefill_tokens not in _ADMISSION_PREFILL_TOKENS:
+            raise ValueError(
+                "regime switch admission.prefill_tokens must be one of "
+                f"{sorted(_ADMISSION_PREFILL_TOKENS)}; got {self.prefill_tokens!r}"
+            )
+        if self.decode_downgrade not in _ADMISSION_DECODE_DOWNGRADES:
+            raise ValueError(
+                "regime switch admission.decode_downgrade must be one of "
+                f"{sorted(_ADMISSION_DECODE_DOWNGRADES)}; got {self.decode_downgrade!r}"
+            )
+        if self.decode_upgrade not in _ADMISSION_DECODE_UPGRADES:
+            raise ValueError(
+                "regime switch admission.decode_upgrade must be one of "
+                f"{sorted(_ADMISSION_DECODE_UPGRADES)}; got {self.decode_upgrade!r}"
+            )
+        if self.criterion not in _ADMISSION_CRITERIA:
+            raise ValueError(
+                "regime switch admission.criterion must be one of "
+                f"{sorted(_ADMISSION_CRITERIA)}; got {self.criterion!r}"
+            )
+        if self.cold_start != REQUEST_BODY_STOCK:
+            raise ValueError(
+                "regime switch admission.cold_start must be "
+                f"{REQUEST_BODY_STOCK!r}; got {self.cold_start!r}"
+            )
+        if self.prefill_demotion not in _ADMISSION_PREFILL_DEMOTIONS:
+            raise ValueError(
+                "regime switch admission.prefill_demotion must be one of "
+                f"{sorted(_ADMISSION_PREFILL_DEMOTIONS)}; got {self.prefill_demotion!r}"
+            )
+        if self.decode_after_fd_prefill not in _ADMISSION_DECODE_AFTER_FD_PREFILL:
+            raise ValueError(
+                "regime switch admission.decode_after_fd_prefill must be one of "
+                f"{sorted(_ADMISSION_DECODE_AFTER_FD_PREFILL)}; got {self.decode_after_fd_prefill!r}"
+            )
+        if self.mixed_step not in _ADMISSION_MIXED_STEPS:
+            raise ValueError(
+                "regime switch admission.mixed_step must be one of "
+                f"{sorted(_ADMISSION_MIXED_STEPS)}; got {self.mixed_step!r}"
+            )
+        if self.decode_after_stock_prefill not in _ADMISSION_DECODE_AFTER_STOCK_PREFILL:
+            raise ValueError(
+                "regime switch admission.decode_after_stock_prefill must be one of "
+                f"{sorted(_ADMISSION_DECODE_AFTER_STOCK_PREFILL)}; got {self.decode_after_stock_prefill!r}"
+            )
+        if (
+            self.decode_after_stock_prefill == ADMISSION_DECODE_AFTER_STOCK_PREFILL_STOCK
+            and self.decode_upgrade != ADMISSION_DECODE_UPGRADE_NONE
+        ):
+            raise ValueError(
+                "regime switch admission: a dense-prefilled request must stay dense "
+                "(decode_after_stock_prefill 'stock' requires decode_upgrade 'none'); "
+                f"got decode_upgrade {self.decode_upgrade!r}"
+            )
+
+
 class RegimeSwitchConfig(
     msgspec.Struct, frozen=True, forbid_unknown_fields=True
 ):
@@ -1043,6 +1227,9 @@ class RegimeSwitchConfig(
     version: int
     prefill: RegimeSwitchPrefillConfig
     decode: RegimeSwitchDecodeConfig
+    # [D-849] version 2: REQUIRED, so a version-1 literal (no admission block)
+    # fails closed at decode instead of silently serving per-pass selection.
+    admission: RegimeSwitchAdmissionConfig
 
     def validate(self) -> None:
         if self.version != REGIME_SWITCH_CONFIG_VERSION:
@@ -1052,6 +1239,18 @@ class RegimeSwitchConfig(
             )
         self.prefill.validate()
         self.decode.validate()
+        self.admission.validate()
+        if self.admission.enabled and not self.decode.enabled:
+            raise ValueError(
+                "regime switch admission.enabled requires decode.enabled: the "
+                "pin is decided from the decode band state"
+            )
+
+    @property
+    def pinning(self) -> bool:
+        """Per-request body pinning is in force for this served config."""
+
+        return self.admission.enabled and self.decode.enabled
 def fdvp_fused_project_input_enabled():
     # [D-609] design constant, not an environment read
     return mechanism(SERVED_FUSED_PROJECT_INPUT)
@@ -1195,6 +1394,16 @@ def regime_switch_config(
     for leg in ("prefill", "decode"):
         if leg not in phases:
             design[leg] = {**design[leg], "enabled": False}
+    # [D-849] The pin is decided from the decode band state, so an arm without a
+    # decode leg (prefill-only) cannot pin: its admission block resolves disabled
+    # and the version-1 per-pass prefill decision governs that arm unchanged.
+    if not design["decode"]["enabled"]:
+        design["admission"] = {**design["admission"], "enabled": False}
+    # [D-849 add. 23] an arm may override admission fields (the monotone lane sets the
+    # criterion); declared in the tree, attested like the rest of the block.
+    _adm_over = dict(active_arm().get("admission_overrides", {}))
+    if _adm_over:
+        design["admission"] = {**design["admission"], **_adm_over}
     # [D-738] The K/V band is declared per device (design.SERVED_DECODE_KV_BAND_BY_DEVICE) and
     # asserted against the roofline rule at boot (model_runner). On the A100 the entry equals
     # the base declaration, so the served config is byte-identical to before this line.
@@ -1259,7 +1468,7 @@ def resolved_design_attestation() -> dict[str, Any]:
             None
             if switch is None
             else {
-                "version": 1,
+                "version": switch.version,
                 "prefill": {
                     "enabled": switch.prefill.enabled,
                     "min_tokens": switch.prefill.min_tokens,
@@ -1276,6 +1485,20 @@ def resolved_design_attestation() -> dict[str, Any]:
                     "high_body": switch.decode.high_body,
                     "enter_kv_tokens": switch.decode.enter_kv_tokens,
                     "exit_kv_tokens": switch.decode.exit_kv_tokens,
+                },
+                # [D-849] per-request body pinning, as RESOLVED (an arm without a
+                # decode leg resolves enabled=False; the gate diffs this block).
+                "admission": {
+                    "enabled": switch.admission.enabled,
+                    "criterion": switch.admission.criterion,
+                    "cold_start": switch.admission.cold_start,
+                    "prefill_demotion": switch.admission.prefill_demotion,
+                    "mixed_step": switch.admission.mixed_step,
+                    "decode_after_fd_prefill": switch.admission.decode_after_fd_prefill,
+                    "decode_after_stock_prefill": switch.admission.decode_after_stock_prefill,
+                    "decode_upgrade": switch.admission.decode_upgrade,
+                    "decode_downgrade": switch.admission.decode_downgrade,
+                    "prefill_tokens": switch.admission.prefill_tokens,
                 },
             }
         ),

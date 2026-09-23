@@ -63,6 +63,10 @@ def effective(info: dict) -> dict:
         "attention_backend": info.get("attention_backend"),
         "sampling_backend": info.get("sampling_backend"),
         "decode_kv_band": [rs.get("exit_kv_tokens"), rs.get("enter_kv_tokens")] if rs else None,
+        # a fork arm served with the mode switch OFF (always-route, the fixed-plan knee legs: design.ARMS regime_switch False)
+        # attests vp_runtime.regime_switch = {"enabled": false, "counters": ...} with no decode block: it executes no band, so
+        # there is nothing to hold to the rule (read the attested flag, not the block's presence)
+        "mode_switch_executed": bool(vp) and isinstance(vp.get("regime_switch"), dict) and vp["regime_switch"].get("enabled") is True,
         "decode_kv_band_policy": md.get("decode_kv_band_policy"),
         "routed_layers": md.get("routed_layers"),
         "design_skip_ratio": md.get("design_skip_ratio"),
@@ -156,6 +160,12 @@ def main() -> int:
                 if e["decode_kv_band_policy"] == "shared":
                     if expected != "shared":
                         undeclared.append(f"{arm}: {field} served as a declared deviation (policy shared, band {v}) but the declaration says {expected!r}")
+                    continue
+                if not e["mode_switch_executed"]:
+                    # [2026-09-22 takeover] the band check was written for switching arms; a fork arm whose attestation carries
+                    # no mode switch executes no band (always-route and the knee legs route every eligible pass by design). Every
+                    # other field of such an arm (ladder, list, K/V pool, profile) is still compared above/below as for any arm.
+                    print(f"  {arm:16s} decode K/V band: none -- the arm attests no mode switch (served with the switch off)")
                     continue
                 if expected != "rule":
                     undeclared.append(f"{arm}: {field} must be declared 'rule' for a fork arm (declared {expected!r})"); continue

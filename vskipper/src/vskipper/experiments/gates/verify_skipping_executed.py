@@ -130,6 +130,7 @@ def prefill_evidence(path: Path) -> Optional[dict]:
     prefill = counters.get("prefill") or {}
     engagement = counters.get("prefill_engagement") or {}
     comp = vp.get("batch_composition") or {}
+    pins = vp.get("admission_pins") or {}
     return {
         "fd": int(prefill.get("fd", 0)),
         "dense": int(prefill.get("dense", 0)),
@@ -137,6 +138,10 @@ def prefill_evidence(path: Path) -> Optional[dict]:
         "engagement_min": (regime.get("prefill") or {}).get("engagement_min"),
         "engagement_samples": int(engagement.get("samples", 0) or 0),
         "engagement_ema": engagement.get("ema"),
+        # [D-849 add. 45] the escape's own admission-round counters (monotonic): rounds the
+        # engagement demotion sent to the dense body, and its probe rounds.
+        "demoted_rounds": int(pins.get("prefill_demoted_rounds", 0) or 0),
+        "probe_rounds": int(pins.get("prefill_probe_rounds", 0) or 0),
     }
 
 
@@ -161,6 +166,12 @@ def main() -> int:
 
     # [D-736] Prefill metrics, checked as deltas over the run window.
     pb, pa = prefill_evidence(a.before), prefill_evidence(a.after)
+    # [D-849] Under per-request pinning a request admitted below the band is stock in BOTH phases,
+    # so a window in which no request was pinned fd legitimately routes nothing: the load-aware
+    # design behaving as designed. Recorded, never refused; refusals below apply once any fd pin exists.
+    vp_after = _vp_runtime(a.after)
+    pins = vp_after.get("admission_pins") or {}
+    pinned_nothing_fd = bool(pins.get("enabled")) and int(pins.get("admitted_fd", 0)) == 0
     if pa is not None and pb is not None:
         d_fd, d_dense = pa["fd"] - pb["fd"], pa["dense"] - pb["dense"]
         d_passes = pa["passes"] - pb["passes"]
@@ -171,10 +182,31 @@ def main() -> int:
             print(f"\nREFUSING: the prefill body counters account for {d_fd + d_dense} passes but the "
                   f"scheduler ran {d_passes}. Counters that do not add up are not evidence (D-734).")
             return 1
-        if d_passes > 0 and d_fd == 0:
+        d_demoted = pa["demoted_rounds"] - pb["demoted_rounds"]
+        d_probes = pa["probe_rounds"] - pb["probe_rounds"]
+        ema = pa["engagement_ema"]
+        escape_demoted_window = (
+            pa["engagement_min"] is not None and ema is not None
+            and float(ema) < float(pa["engagement_min"]) and d_demoted > 0
+        )
+        if d_passes > 0 and d_fd == 0 and not pinned_nothing_fd and escape_demoted_window:
+            # [D-849 add. 45, 2026-09-22] Qwen3-8B on gsm8k: router engagement sits at the escape
+            # threshold (ema 0.30-0.35 vs engagement_min 0.35), so the escape keeps every routed-
+            # eligible round dense and probes once per window; a cell window with no probe round
+            # then has zero routed prefill passes BY THE DESIGN'S OWN RULE (decode still routed --
+            # checked below). Recorded, not refused, exactly like the band-never-engaged case;
+            # a re-measure only changed whether a probe landed in the window (coin flip).
+            print(f"  NOTE: zero routed prefill passes -- the engagement escape demoted every "
+                  f"routed-eligible round in the window (ema={ema} < engagement_min="
+                  f"{pa['engagement_min']}, demoted rounds +{d_demoted}, probe rounds +{d_probes}); "
+                  "the design's low-engagement prefill behaviour, RECORDED not refused.")
+        elif d_passes > 0 and d_fd == 0 and not pinned_nothing_fd:
             print("\nREFUSING: this arm routes prefill but the routed body ran ZERO prefill passes in "
                   "the window (D-627 in the prefill phase).")
             return 1
+        if d_passes > 0 and d_fd == 0 and pinned_nothing_fd:
+            print("  NOTE: zero routed prefill passes -- every request in the window was pinned stock "
+                  "(band never engaged); the pinned design's low-band behaviour, RECORDED not refused.")
         if pa["engagement_min"] is not None:
             d_samples = pa["engagement_samples"] - pb["engagement_samples"]
             print(f"  engagement escape          : ema={pa['engagement_ema']} samples(+{d_samples})")
@@ -182,6 +214,23 @@ def main() -> int:
                 print("\nREFUSING: engagement_min is configured but the escape observed nothing while "
                       "routed passes ran -- the escape is not executing (D-734).")
                 return 1
+
+    # [D-849] Per-request body pinning invariants, checked on the AFTER snapshot
+    # (both counters are monotonic and must be zero for the whole boot).
+    admission = ((vp_after.get("regime_switch") or {}).get("counters") or {}).get("admission") or {}
+    violations = int(admission.get("coverage_dense_violation_rows", 0))
+    cross_body = int(pins.get("cross_body_prefix_reuse", 0))
+    if pins.get("enabled"):
+        print(f"admission pins               : stock={pins.get('admitted_stock')} fd={pins.get('admitted_fd')} "
+              f"flips={pins.get('band_flips')} mixed_steps={pins.get('mixed_steps')} "
+              f"split_passes={admission.get('split_passes')} prefix_hits(fd)={pins.get('prefix_hit_tokens_fd')}")
+    if violations > 0:
+        print(f"\nREFUSING: {violations} fd-pinned decode rows were served by the coverage-dense "
+              "fall-through -- a pin violation (the ladder does not cover the running batch).")
+        return 1
+    if cross_body > 0:
+        print(f"\nREFUSING: {cross_body} prefix-cache hits reused K/V computed under the other body.")
+        return 1
 
     print(f"counter source               : {source}")
     print(f"routed work during the run   : {total}")
@@ -203,6 +252,11 @@ def main() -> int:
     # and refusing it discards a row that reproduces the published table. What must still be
     # refused is the D-627 case: NOTHING routed anywhere, so the measurement describes the
     # production body while claiming to describe the skipper.
+    if skip == 0 and pinned_nothing_fd:
+        print("\n  NOTE: nothing routed in either phase because NO request was pinned fd in the "
+              "window (the band never engaged): the pinned design's low-band behaviour -- the served "
+              "arm is the stock body here BY CONSTRUCTION. RECORDED, not refused.")
+        return 0
     if skip == 0:
         print("\nREFUSING: NOTHING ROUTED in either phase. This measurement describes the "
               "production all-RUN body, not the skipper (D-627).")

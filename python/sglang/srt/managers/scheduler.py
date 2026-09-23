@@ -295,6 +295,10 @@ _is_npu = is_npu()
 _is_hip = is_hip()
 
 
+# [D-849 add. 22] how long a waiting request's speculative uncached-token estimate is reused (s)
+VP_UNCACHED_MEMO_S = 0.25
+
+
 class Scheduler(
     SchedulerDisaggregationDecodeMixin,
     SchedulerDisaggregationPrefillMixin,
@@ -493,6 +497,7 @@ class Scheduler(
         self.init_running_status()
 
         self.init_vp_batch_composition()
+        self.init_vp_admission_pinning()
 
         # Init chunked prefill
         self.init_chunked_prefill()
@@ -1008,6 +1013,255 @@ class Scheduler(
         self.vp_bc_mixed_decode_rows = 0
         self.vp_bc_mixed_prefill_tokens = 0
         self.vp_bc_decode_passes = 0
+
+    def init_vp_admission_pinning(self):
+        # [D-849] Per-request body pinning. The scheduler owns the mirror of the
+        # decode band (AdmissionPinner) and hands every request ONE body at
+        # admission; the counters are runtime evidence (vp_runtime.admission_pins).
+        from vskipper.runtime.common import regime_switch_config
+        from vskipper.runtime.regime import AdmissionPinner
+
+        self.vp_pinner = AdmissionPinner(regime_switch_config())
+        # [D-849 add. 13] the version-1 engagement escape verdict for the admission
+        # round's prefill pin: the runner's tracker (fed by routed passes' device
+        # counters, non-blocking; identical on every TP rank since the router is
+        # replicated), read from the scheduler thread when a round is pinned.
+        if self.vp_pinner.active:
+            _cfg = regime_switch_config()
+            from sglang.srt.model_executor.runner.prefill_cuda_graph_runner import (
+                PrefillCudaGraphRunner,
+            )
+
+            _runner = self.tp_worker.model_runner.prefill_cuda_graph_runner
+            if (
+                isinstance(_runner, PrefillCudaGraphRunner)
+                and _cfg.prefill.engagement_min is not None
+            ):
+                _tracker = _runner._vp_prefill_engagement
+                _floor = _cfg.prefill.engagement_min
+                self.vp_pinner.set_engagement_demote(lambda: _tracker.demote(_floor))
+            elif _cfg.prefill.engagement_min is not None:
+                raise RuntimeError(
+                    "[D-849 add. 13] admission prefill demotion needs the prefill graph "
+                    f"runner's engagement tracker; got {type(_runner).__name__}"
+                )
+        # [D-849 add. 11] a fixed-composition arm (exactly one phase routed, no band:
+        # integrated_denseprefix_fd / integrated_fdprefix_stock) makes EVERY request
+        # cross-body: its finished K/V is never inserted and running decode rows are
+        # never appended to a prefill pass.
+        from vskipper.runtime.common import flexidepth_active_phases
+
+        _phases = flexidepth_active_phases()
+        self.vp_fixed_cross_body = (
+            not self.vp_pinner.active and len(_phases) == 1
+        )
+        self.vp_pin_retract_reentries = 0
+        self.vp_pin_admission_deferrals = 0
+        self.vp_pin_chunk_body_adoptions = 0  # [D-849 add. 19] unpinned requests that took the in-flight chunk's body
+        self.vp_pin_mixed_steps = 0
+        self.vp_pin_decode_upgraded_rows = 0  # [D-849 add. 12]
+        self.vp_pin_decode_downgraded_rows = 0  # [D-849 add. 35]
+        self.vp_pin_round_prompt_tokens = 0  # [D-849 add. 17] prompt tokens counted at admission rounds
+        self.vp_pin_round_uncached_tokens = 0  # [D-849 add. 17] ... of which not cached in the routed namespace
+        self.vp_pin_speculative_matches = 0  # [D-849 add. 22] radix walks actually performed for the estimate
+        # [D-849 add. 25 diagnostic] admission cadence: why rounds are rare / how long requests wait
+        self.vp_adm_attempts = 0
+        self.vp_adm_rounds = 0
+        self.vp_adm_admitted = 0
+        self.vp_adm_zero_admit = 0
+        self.vp_adm_no_token = 0
+        self.vp_adm_full_skips = 0
+        self.vp_adm_waiting_seen = 0
+        self.vp_adm_queue_wait_ms = 0.0
+        self.vp_pin_mixed_step_rows_stock = 0
+        self.vp_pin_mixed_step_rows_fd = 0
+        self.vp_pin_mix_withheld = 0
+        self.vp_pin_cross_body_prefix_reuse = 0
+        self.vp_pin_prefix_hit_tokens_stock = 0
+        self.vp_pin_prefix_hit_tokens_fd = 0
+        if self.vp_pinner.active:
+            self._vp_pin_boot_guards()
+
+    def _vp_pin_boot_guards(self) -> None:
+        """[D-849] Pinning is defined for the served configuration only: one
+        pipeline stage, no speculative decoding, no DP attention, no P/D
+        disaggregation, no hierarchical-cache storage prefetch (it builds the
+        radix key before admission, i.e. before the pin exists)."""
+
+        args = self.server_args
+        problems = []
+        if args.pp_size != 1:
+            problems.append("pp_size != 1")
+        if args.speculative_algorithm:
+            problems.append("speculative decoding")
+        if args.enable_dp_attention:
+            problems.append("DP attention")
+        if args.disaggregation_mode not in (None, "null", "NULL"):
+            problems.append("P/D disaggregation")
+        if self.enable_hicache_storage:
+            problems.append("hierarchical-cache storage")
+        if problems:
+            raise RuntimeError(
+                "[D-849] per-request body pinning is not defined with: "
+                + ", ".join(problems)
+            )
+
+    def _vp_pin_request(self, req: Req, pin: str) -> None:
+        """Pin ``req``'s PREFILL body and namespace its prefix-cache key by it
+        (the lora_id precedent in Req.__init__): a prompt is only served from
+        prefixes the same body computed. The decode body is decided ONCE at the
+        prefill->decode boundary (_vp_pin_decode_boundary)."""
+
+        req.vp_prefill_body = pin
+        req.vp_body = pin
+        req.extra_key = (req.extra_key or "") + f"|vpbody={pin}"
+        self.vp_pinner.record_admission(pin)
+
+    def _vp_uncached_prompt_tokens(self, req: Req) -> int:
+        """[D-849 add. 17] The prompt tokens a prefill pass would compute for
+        ``req``: its prompt minus the longest prefix already cached under EITHER
+        body's namespace (read-only radix matches with the routed and the dense
+        key; an already pinned re-entry matches in its own namespace). Version 1
+        decided the prefill body on the pass's extend tokens, i.e. after cache
+        hits.
+
+        [D-849 add. 27] Both namespaces, not the routed one alone: a warm prompt
+        whose shared prefix lives under the dense namespace (the common state
+        once one dense-pinned request of a task has run) counted its WHOLE
+        prompt as uncached whenever the routed copy had been evicted, was pinned
+        routed, recomputed the prefix routed and locked a second copy -- on bbh
+        1.25x: 480 routed admissions, +12-17 % prefill tokens, cache share 0.893
+        vs 0.908, ~8 % fewer concurrent requests at the KV-bound admission and
+        the overload TTFT loss against v1.7 (same box: mean +9/+28 % vs -17.6 %).
+        With the longer of the two cached prefixes, such a prompt counts only
+        its tail, pins dense and hits; the routed copy is made once per cold
+        prefix and is evictable when its request finishes."""
+
+        from sglang.srt.mem_cache.base_prefix_cache import MatchPrefixParams
+        from sglang.srt.mem_cache.radix_cache import RadixKey
+        from vskipper.runtime.common import REQUEST_BODY_FD, REQUEST_BODY_STOCK
+
+        tokens = len(req.origin_input_ids)
+        if self.tree_cache is None or tokens == 0:
+            return tokens
+        # [D-849 add. 22] Memoised: the estimate is re-walked at most every
+        # VP_UNCACHED_MEMO_S per request. The walk ran on EVERY scheduler
+        # iteration for every waiting request (a 2.5k-token radix walk each
+        # on bbh at overload, ~12 deep queue) and is the suspected cause of the
+        # bbh-overload TTFT p50 +75 % (admission-side, service rate untouched).
+        now = time.monotonic()
+        memo = req.vp_uncached_memo
+        if memo is not None and now - memo[0] < VP_UNCACHED_MEMO_S:
+            return memo[1]
+        if req.vp_prefill_body is not None:
+            keys = [req.extra_key]
+        else:
+            base = req.extra_key or ""
+            keys = [f"{base}|vpbody={REQUEST_BODY_FD}", f"{base}|vpbody={REQUEST_BODY_STOCK}"]
+        cached = 0
+        for extra in keys:
+            result = self.tree_cache.match_prefix(
+                MatchPrefixParams(key=RadixKey(token_ids=req.origin_input_ids, extra_key=extra))
+            )
+            self.vp_pin_speculative_matches += 1
+            hit = len(result.device_indices) if result.device_indices is not None else 0
+            if hit > cached:
+                cached = hit
+        # the last prompt token is always computed (it produces the first output)
+        value = max(1, tokens - min(cached, tokens - 1))
+        req.vp_uncached_memo = (now, value)
+        return value
+
+    def _vp_round_prompt_tokens(self, running_bs: int) -> tuple[int, int]:
+        """[phase-sticky] Prompt tokens this admission round can take: the
+        waiting queue in order, up to the chunk budget and the allocatable
+        request count. Under ``prefill_tokens: "uncached"`` each request counts
+        only the tokens a routed pass would compute (version 1's pass-token
+        criterion); under "prompt" the whole prompt (the key that finds the
+        cached prefix depends on the pin, so the routed namespace is matched
+        speculatively)."""
+
+        budget = self.server_args.chunked_prefill_size
+        slots = self.get_num_allocatable_reqs(running_bs)
+        uncached_mode = self.vp_pinner.prefill_tokens_uncached
+        total = 0
+        count = 0
+        for index, req in enumerate(self.waiting_queue):
+            if index >= slots:
+                break
+            prompt = len(req.origin_input_ids)
+            tokens = self._vp_uncached_prompt_tokens(req) if uncached_mode else prompt
+            self.vp_pin_round_prompt_tokens += prompt
+            self.vp_pin_round_uncached_tokens += tokens
+            if budget is not None and budget > 0 and total + tokens > budget and total > 0:
+                break
+            total += tokens
+            count += 1
+            if budget is not None and budget > 0 and total >= budget:
+                break
+            # [D-849 add. 22] the decision is fixed once the round crosses the
+            # prefill threshold (row correction is 0): stop walking the queue.
+            if uncached_mode and total >= self.vp_pinner.prefill_min_tokens:
+                break
+        return total, count
+
+    def _vp_pin_decode_boundary(self, req: Req) -> None:
+        """[phase-sticky] Decide ``req``'s DECODE body once, as it leaves prefill
+        (the band state now; or FD after an FD prefill under
+        ``decode_after_fd_prefill: "fd"``); fixed for the rest of the request.
+        A request whose decode body differs from its prefill body (stock->FD,
+        FD->stock) is NOT inserted into the radix cache at finish: its generated
+        K/V belongs to the other body; its prompt prefix stays under the
+        namespace it was matched in. The cache key never changes after the
+        match (re-inserting under another key would reference the matched
+        prefix slots from two nodes -- the 2026-09-21 pool-invariant trip)."""
+
+        if not self.vp_pinner.active or req.vp_prefill_body is None:
+            return
+        if self.vp_pinner.monotone:
+            return  # [D-849 add. 23] no boundary decision: the band + promotion decide per step
+        if req.vp_decode_pinned:
+            # a retracted request re-entering decode keeps its plan
+            req.vp_body = req.vp_decode_body
+            return
+        decode = self.vp_pinner.decode_pin_at_boundary(req.vp_prefill_body)
+        self.vp_pinner.record_plan(req.vp_prefill_body, decode)
+        req.vp_decode_pinned = True
+        req.vp_decode_body = decode
+        if decode != req.vp_prefill_body:
+            req.vp_skip_finish_insert = True
+        req.vp_body = decode
+
+    def _vp_pin_witness_prefix(self, req: Req) -> None:
+        """Runtime witness that the cache namespace held: the matched prefix
+        node (if any) must carry this request's body-tagged extra_key."""
+
+        prefix_len = len(req.prefix_indices) if req.prefix_indices is not None else 0
+        if prefix_len <= 0:
+            return
+        node = req.last_node
+        if node is not None and node.key is not None and node.key.extra_key != req.extra_key:
+            self.vp_pin_cross_body_prefix_reuse += 1
+        if req.vp_body == "stock":
+            self.vp_pin_prefix_hit_tokens_stock += prefix_len
+        else:
+            self.vp_pin_prefix_hit_tokens_fd += prefix_len
+
+    def _vp_pin_mix_allowed(self, new_batch: ScheduleBatch) -> bool:
+        """A mixed chunk (running decode rows appended to a prefill pass) is
+        allowed only when every running pin equals the new batch's pin."""
+
+        if self.vp_fixed_cross_body:
+            self.vp_pin_mix_withheld += 1
+            return False
+        if not self.vp_pinner.active:
+            return True
+        new_pins = {r.vp_body for r in new_batch.reqs}
+        run_pins = {r.vp_body for r in self.running_batch.reqs if not r.finished()}
+        if len(new_pins | run_pins) <= 1:
+            return True
+        self.vp_pin_mix_withheld += 1
+        return False
 
     def init_chunked_prefill(self):
         self.chunked_prefill_size = self.server_args.chunked_prefill_size
@@ -2312,6 +2566,9 @@ class Scheduler(
                 )
 
     def _add_request_to_queue(self, req: Req, is_retracted: bool = False):
+        req.vp_queued_at = time.perf_counter()  # [D-849 add. 25 diagnostic] queue wait at admission
+        if self.vp_fixed_cross_body:
+            req.vp_skip_finish_insert = True  # [D-849 add. 11] prompt and generation come from different bodies
         if not self._set_or_validate_priority(req):
             return
         if self.disaggregation_mode == DisaggregationMode.NULL:
@@ -2674,6 +2931,12 @@ class Scheduler(
             if self.last_batch.batch_size() < last_bs:
                 self.running_batch.batch_is_full = False
 
+            # [phase-sticky] the prefill->decode boundary of every request that
+            # completed its prefill in this pass: decide its decode body once.
+            if self.vp_pinner.active:
+                for req in self.last_batch.reqs:
+                    self._vp_pin_decode_boundary(req)
+
             # Merge the new batch into the running batch.
             if not self.last_batch.is_empty():
                 if self.running_batch.is_empty():
@@ -2783,9 +3046,34 @@ class Scheduler(
         if (
             self.running_batch.batch_is_full or len(self.waiting_queue) == 0
         ) and self.chunked_req is None:
+            # [D-849 add. 25 diagnostic] a waiting request skipped because the batch is full
+            if self.waiting_queue and self.vp_pinner.active:
+                self.vp_adm_full_skips += 1
             return None
 
         running_bs = len(self.running_batch.reqs)
+        if self.vp_pinner.active:
+            # [D-849 add. 25 diagnostic] admission attempts and the queue depth they saw
+            self.vp_adm_attempts += 1
+            self.vp_adm_waiting_seen += len(self.waiting_queue)
+        # [D-849] The pin every request admitted in THIS round receives (the
+        # scheduler's mirror of the decode band, unchanged within a round), and
+        # the round's batch pin: a chunked request in flight fixes it, otherwise
+        # the first admitted request does. Requests carrying another pin
+        # (retracted re-entries) are deferred to a later round, never re-pinned.
+        if running_bs == 0 and self.chunked_req is None:
+            self.vp_pinner.observe_idle()  # an empty engine is below any band
+        # [phase-sticky] the round's PREFILL pin from the prompt tokens this round
+        # can admit (the waiting queue in order, up to the chunk budget); a
+        # chunked request in flight fixes the batch pin instead.
+        vp_round_pin = (
+            self.vp_pinner.prefill_pin(*self._vp_round_prompt_tokens(running_bs))
+            if self.vp_pinner.active and not self.vp_pinner.monotone
+            else None  # [D-849 add. 23] monotone lane: no admission pin, no speculative walk
+        )
+        vp_batch_pin = (
+            self.chunked_req.vp_prefill_body if self.chunked_req is not None else None
+        )
         # Skipped during a chunked prefill: that pass must proceed regardless.
         if (
             self.min_free_slots_delayer is not None
@@ -2897,7 +3185,35 @@ class Scheduler(
                     req.rid
                 )
 
+            # [D-849] Pin BEFORE init_next_round_input builds the radix key: the
+            # pin is part of the key. A request whose pin (its own, kept across
+            # a retract, or this round's) differs from the round's batch pin is
+            # deferred: admission rounds are pin-uniform by construction.
+            if vp_round_pin is not None:
+                # [D-849 add. 32] An UNPINNED request takes THIS ROUND's pin (the
+                # 09-21 rule, dd41daaf06); a request whose pin differs from the
+                # in-flight chunk's body is deferred to a later round. The add. 19
+                # "adoption" of the chunk's body locked the v3 natural gsm8k cell
+                # dense for its whole life (3,482 adoptions, 0 demotions, every
+                # round >= 1,536 tokens: the cold-start stock chunk was adopted by
+                # every later round). Its bbh-overload rationale (134 deferrals,
+                # TTFT p50 +18 % on one rep) was refuted by the later TTFT diagnosis.
+                if req.vp_prefill_body is not None:
+                    vp_pin = req.vp_prefill_body
+                else:
+                    vp_pin = vp_round_pin
+                if vp_batch_pin is None:
+                    vp_batch_pin = vp_pin
+                if vp_pin != vp_batch_pin:
+                    self.vp_pin_admission_deferrals += 1
+                    continue
+                if req.vp_prefill_body is None:
+                    self._vp_pin_request(req, vp_pin)
+                else:
+                    req.vp_body = req.vp_prefill_body  # a retracted re-entry re-prefills with its prompt body
             req.init_next_round_input(self.tree_cache)
+            if vp_round_pin is not None:
+                self._vp_pin_witness_prefix(req)
             res = adder.add_one_req(
                 req,
                 has_chunked_req=(self.chunked_req is not None),
@@ -2909,6 +3225,8 @@ class Scheduler(
 
             if res != AddReqResult.CONTINUE:
                 if res == AddReqResult.NO_TOKEN:
+                    if self.vp_pinner.active:
+                        self.vp_adm_no_token += 1  # [D-849 add. 25 diagnostic]
                     if self.enable_hierarchical_cache:
                         # Set batch_is_full after making sure there are requests that can be served
                         self.running_batch.batch_is_full = len(
@@ -2941,7 +3259,17 @@ class Scheduler(
         # Update waiting queue
         can_run_list: List[Req] = adder.can_run_list
         if len(can_run_list) == 0:
+            if self.vp_pinner.active:
+                self.vp_adm_zero_admit += 1  # [D-849 add. 25 diagnostic]
             return None
+        if self.vp_pinner.active:
+            # [D-849 add. 25 diagnostic] rounds, admitted requests and their queue wait
+            self.vp_adm_rounds += 1
+            self.vp_adm_admitted += len(can_run_list)
+            _now = time.perf_counter()
+            for _r in can_run_list:
+                if _r.vp_queued_at is not None:
+                    self.vp_adm_queue_wait_ms += (_now - _r.vp_queued_at) * 1000.0
 
         can_run_set = set(can_run_list)
         self.waiting_queue = [x for x in self.waiting_queue if x not in can_run_set]
@@ -3009,6 +3337,8 @@ class Scheduler(
             and not (new_batch.return_logprob or self.running_batch.return_logprob)
             # mix_with_running cats input_ids but not input_embeds — shapes would mismatch
             and new_batch.input_embeds is None
+            # [D-849] never append running rows of another pin to a prefill pass
+            and self._vp_pin_mix_allowed(new_batch)
         ):
             # TODO (lianmin): support return_logprob + mixed chunked prefill
             self.running_batch.filter_batch()
@@ -3128,6 +3458,10 @@ class Scheduler(
             logger.warning(msg_prefix + msg_details)
 
             for req in retracted_reqs:
+                # [D-849] a retracted request keeps its pin (and its body-tagged
+                # cache key); it is re-admitted only in a round of the same pin.
+                if req.vp_body is not None:
+                    self.vp_pin_retract_reentries += 1
                 self._add_request_to_queue(req, is_retracted=True)
         else:
             self.new_token_ratio_tracker.decay_step()
@@ -3237,6 +3571,43 @@ class Scheduler(
                         )
             elif _vp_bc_mode.is_decode():
                 self.vp_bc_decode_passes += 1
+                # [D-849] Advance the scheduler's mirror of the decode band ONCE
+                # per decode step with the same two numbers the runner's observe
+                # receives (rows, resident KV tokens of the WHOLE running batch,
+                # before any partition), and account mixed steps.
+                if self.vp_pinner.active:
+                    _vp_kv = (
+                        int(batch.seq_lens_cpu.sum())
+                        if batch.seq_lens_cpu is not None
+                        else None
+                    )
+                    self.vp_pinner.observe_decode_step(batch.batch_size(), _vp_kv)
+                    # [D-849 add. 12] one-way stock->fd upgrade of stock-pinned decode
+                    # rows once the band is HIGH (before this step's forward batch is built)
+                    from vskipper.runtime.regime import (
+                        downgrade_pinned_rows,
+                        monotone_assign_rows,
+                        upgrade_pinned_rows,
+                    )
+
+                    if self.vp_pinner.monotone:
+                        # [D-849 add. 23] promote at HIGH, keep promoted rows routed at LOW
+                        monotone_assign_rows(self.vp_pinner, batch.reqs)
+                    else:
+                        self.vp_pin_decode_upgraded_rows += upgrade_pinned_rows(
+                            self.vp_pinner, batch.reqs
+                        )
+                        # [D-849 add. 35] the one-switch rule's other direction (off unless
+                        # admission.decode_downgrade == "band_low")
+                        self.vp_pin_decode_downgraded_rows += downgrade_pinned_rows(
+                            self.vp_pinner, batch.reqs
+                        )
+                    _vp_stock = sum(1 for r in batch.reqs if r.vp_body == "stock")
+                    _vp_fd = sum(1 for r in batch.reqs if r.vp_body == "fd")
+                    if _vp_stock and _vp_fd:
+                        self.vp_pin_mixed_steps += 1
+                        self.vp_pin_mixed_step_rows_stock += _vp_stock
+                        self.vp_pin_mixed_step_rows_fd += _vp_fd
 
         # Whether to run the profiler
         self.profiler_manager._profile_batch_predicate(batch)
@@ -3584,6 +3955,10 @@ class Scheduler(
                 self.pool_stats_observer.get_pool_stats(),
             )
             if has_leak:
+                from vskipper.runtime.attestation import radix_namespace_report
+
+                # [D-849 diagnostic] which namespace / slots over-count before the report raises
+                logger.error(radix_namespace_report(self.tree_cache))
                 self.invariant_checker._report_leak("pool", "\n".join(messages))
             self.invariant_checker._check_req_pool()
 

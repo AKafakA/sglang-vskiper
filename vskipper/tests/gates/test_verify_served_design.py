@@ -85,6 +85,14 @@ def main() -> int:
         # [v1.5] the mechanism switch itself is gated, not only the phases it may use
         ("compact switched off while the arm declares it on",
          wrap(perturb(lambda s: s.__setitem__("compact_enabled", False))), 1),
+        # [D-849] per-request body pinning is part of the served design: a server that
+        # resolved the per-pass switch (admission off) or a version-1 tree (no admission
+        # block at all) must be refused for the pinned arm.
+        ("admission pinning OFF while the arm declares it on",
+         wrap(perturb(lambda s: s["regime_switch"]["admission"].__setitem__("enabled", False))), 1),
+        ("version-1 switch served (no admission block)",
+         wrap(perturb(lambda s: (s["regime_switch"].pop("admission"),
+                                 s["regime_switch"].__setitem__("version", 1)))), 1),
         ("served_design absent (old server)", {"internal_states": [{"vp_runtime": {}}]}, 1),
         ("no vp_runtime at all", {"internal_states": [{}]}, 1),
     ]

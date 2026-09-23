@@ -150,7 +150,8 @@ def main() -> int:
             else:
                 suites = sorted({p.name.split("_qps")[0] for p in
                                  (dataset_root / args.baseline / "cells").rglob("*_qps*_rep*.jsonl")
-                                 if "arrival" not in p.name and "load" not in p.name})
+                                 if "arrival" not in p.name and "load" not in p.name
+                                 and not p.name.startswith("INVALID.")})
                 for suite in suites:
                     ok, why = gate_verdict(dataset_root, suite)
                     if not ok:

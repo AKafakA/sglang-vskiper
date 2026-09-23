@@ -40,12 +40,16 @@ def main():
     ap = argparse.ArgumentParser(); ap.add_argument("summary"); ap.add_argument("--lmeval", required=True); ap.add_argument("--rows", required=True); ap.add_argument("--macros", required=True)
     ap.add_argument("--alwaysroute", help="summary.json of the always-route natural lane (knee cells, step 13)")
     ap.add_argument("--alwaysroute-lmeval", help="its lm-eval scores")
+    ap.add_argument("--legs", help="[v1.8] summary.json of the two knee legs (natural_lane_summarize.py over natural-integrated_"
+                    "{denseprefix_fd,fdprefix_stock}-*): one row each under the knee's always-route row; no lm-eval gate (no quality column)")
     ap.add_argument("--layout", default="v15", choices=["v15", "v16"])
     ap.add_argument("--compact", action="store_true", help="v1.7 rows: Workload & Load & Stack & out & cap & E2E s & makespan s (no TTFT/TPOT/TPS, no delta row)")
     a = ap.parse_args(); d = json.load(open(a.summary)); rows, macros = [], []
     global LABELS
     if a.layout == "v16": LABELS = LABELS_V16
     ar = json.load(open(a.alwaysroute)) if a.alwaysroute else {}
+    legs = json.load(open(a.legs)) if a.legs else {}
+    LEG = (("denseprefix_fd", "Dense prefill, routed decode", "DenseFd"), ("fdprefix_stock", "Routed prefill, dense decode", "FdDense"))
     lm, lm_all = {}, {}
     src = dict(json.load(open(a.lmeval)))
     if a.alwaysroute_lmeval:
@@ -90,6 +94,18 @@ def main():
                 macros.append(f"\\newcommand{{\\vpNatAll{tag}EtoE}}{{{w['mean_e2e_s']:.1f}}}")
                 macros.append(f"\\newcommand{{\\vpNatAll{tag}Cap}}{{{w['cap_hits']}}}")
                 macros.append(f"\\newcommand{{\\vpNatAll{tag}OutTok}}{{{w['mean_out_tokens']:.0f}}}")
+            for arm, label, mk in LEG:   # the knee legs (v1.8): the same columns, no delta row
+                g = legs.get(ds, {}).get(lbl, {}).get(arm)
+                if g is None: continue
+                if a.compact:
+                    rows.append(f" & & {label} & {g['mean_out_tokens']:.0f} & {g['cap_hits']} & {g['mean_e2e_s']:.1f} & {g['duration_s']:.0f} \\\\")
+                else:
+                    rows.append(f" & & {label} & {g['cap_hits']} & {g['mean_out_tokens']:.0f} & {g['mean_ttft_ms']:.0f} & {g['mean_tpot_ms']:.1f} & {g['mean_e2e_s']:.1f} & {tps(g):.0f} & {g['duration_s']:.0f} \\\\")
+                tag = MW[ds] + WORD[rate]
+                macros.append(f"\\newcommand{{\\vpNatLeg{mk}{tag}OutTok}}{{{g['mean_out_tokens']:.0f}}}")
+                macros.append(f"\\newcommand{{\\vpNatLeg{mk}{tag}Cap}}{{{g['cap_hits']}}}")
+                macros.append(f"\\newcommand{{\\vpNatLeg{mk}{tag}EtoE}}{{{g['mean_e2e_s']:.1f}}}")
+                macros.append(f"\\newcommand{{\\vpNatLeg{mk}{tag}Makespan}}{{{g['duration_s']:.0f}}}")
             pct = lambda k: 100 * (v[k] - u[k]) / u[k]
             dq = 100 * (quality(v, ds, "vskipper", lbl) - quality(u, ds, "upstream", lbl)); dtps = 100 * (tps(v) - tps(u)) / tps(u)
             macros.append(f"\\newcommand{{\\vpNatUp{MW[ds] + WORD[rate]}Qual}}{{{100*quality(u, ds, 'upstream', lbl):.1f}}}")
