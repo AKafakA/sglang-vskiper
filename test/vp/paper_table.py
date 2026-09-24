@@ -49,7 +49,7 @@ COLUMNS = [
 COLUMN_SETS = {
     "all": COLUMNS,
     "main": ["E2E mean", "E2E p99", "TPOT mean", "TPOT p99", "TTFT mean", "TTFT p99", "makespan"],
-    "tails": ["E2E p50", "E2E p95", "TPOT p50", "TPOT p95", "TTFT p50", "TTFT p95"],
+    "tails": ["E2E p50", "E2E p99", "TPOT p50", "TPOT p99", "TTFT p50", "TTFT p99"],
     # The served-arm-bank campaign ( backup): E2E and makespan only (owner, 2026-09-13).
     "backup": ["E2E mean", "E2E p95", "makespan"],
     # v1.7 body tables: the four means only (the appendix carries the p95 companions)

@@ -77,7 +77,7 @@ def main():
         if met in served and served[met] is not None:
             cb.ax.axhline(served[met], color="#1f5fbf", lw=2)
         tag = (met.replace("E2E ", "EtoE").replace("TTFT ", "Ttft").replace("TPOT ", "Tpot")
-               .replace("mean", "Mean").replace("p95", "Pninetyfive"))
+               .replace("mean", "Mean").replace("p95", "Pninetyfive").replace("p99", "Pninetynine"))
         if not tag.isalpha(): sys.exit(f"FATAL: metric {met!r} has no macro-safe name")
         for (rt, dp), vals in grid.items():
             v = vals[met][0]
