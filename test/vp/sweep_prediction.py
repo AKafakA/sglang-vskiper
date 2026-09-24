@@ -112,7 +112,7 @@ def main() -> int:
     # v1.7: no per-point r/d text (the table carries the arm mapping), legend above the axes, larger figure; the horizontal bar
     # from a shared-band point runs from the arm's crossover V* to the occupancy its cell held (a relation, not an error bar).
     fig, ax = plt.subplots(figsize=(5.0, 3.0), dpi=200)
-    style = {"ungated": dict(marker="^", color="#7f7f7f", label="always route (a)"), "fixed": dict(marker="o", color="#c0392b", label="shared band (b)"), "rule": dict(marker="s", color="#1f77b4", label="per-policy band (c)")}
+    style = {"ungated": dict(marker="^", color="#7f7f7f", label="always route (a)"), "fixed": dict(marker="o", color="#c0392b", label="shared thresholds (b)"), "rule": dict(marker="s", color="#1f77b4", label="per-policy thresholds (c)")}
     for label, pts in points.items():
         ax.scatter([p[0] / 1e3 for p in pts], [p[1] for p in pts], s=46, zorder=3, edgecolor="black", linewidth=0.5, alpha=0.9, **style[label])
         if label == "fixed" and not a.no_occupancy_bars:
