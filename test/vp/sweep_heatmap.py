@@ -46,7 +46,7 @@ def main():
         hrows = load_rows(a.headline)
         for met in a.metrics.split(","):
             served[met] = value(hrows, a.dataset, a.suite, met)[0]
-    import matplotlib; matplotlib.use("Agg")
+    import matplotlib; matplotlib.use("Agg"); matplotlib.rcParams["pdf.fonttype"] = 42
     import matplotlib.pyplot as plt, numpy as np
     mets = a.metrics.split(",")
     # v1.7: a single-metric panel is drawn compact and large-typed (it is placed three-across in the paper); no text tag on the
@@ -92,7 +92,7 @@ def main():
         if met in served and served[met] is not None:
             macros.append(f"\\newcommand{{\\{a.macro_prefix}{tag}Served}}{{{served[met]:+.1f}}}")
     if a.title and not single: fig.suptitle(a.title, fontsize=10)
-    fig.tight_layout(); fig.savefig(a.png); print("wrote", a.png)
+    fig.tight_layout(); fig.savefig(a.png, **({"metadata": {"CreationDate": None}} if str(a.png).endswith(".pdf") else {})); print("wrote", a.png)
     open(a.macros, "w").write("\n".join(macros) + "\n"); print("wrote", a.macros, f"({len(macros)} macros)")
 
 if __name__ == "__main__": main()

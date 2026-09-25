@@ -25,7 +25,7 @@ def main():
             e2e.setdefault(k, []).append(r["e2e_mean_reduction_pct"]); tps.setdefault(k, []).append(r.get("makespan_reduction_pct", -r["tps_gain_pct"] / (1 + r["tps_gain_pct"] / 100)))
         elif r["n"] >= 50:
             bins.setdefault(k, {}).setdefault((r["bin_lo"], r["bin_hi"]), []).append((r["e2e_reduction_pct"], r["n"]))
-    import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
+    import matplotlib; matplotlib.use("Agg"); matplotlib.rcParams["pdf.fonttype"] = 42; import matplotlib.pyplot as plt
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7.2, 2.7), dpi=200)
     for ds in ("gsm8k", "bbh_cot", "coqa"):
         xs = [m for (d, m) in sorted(e2e) if d == ds]
@@ -37,7 +37,7 @@ def main():
     handles, labels = ax1.get_legend_handles_labels()   # v1.7: one legend above both panels, consistent fonts
     fig.legend(handles, labels, fontsize=8, loc="upper center", ncol=3, frameon=False, bbox_to_anchor=(0.5, 1.02))
     for ax in (ax1, ax2): ax.tick_params(labelsize=7.5); ax.xaxis.label.set_size(8)
-    fig.tight_layout(rect=(0, 0, 1, 0.93)); fig.savefig(a.pdf); print("wrote", a.pdf)
+    fig.tight_layout(rect=(0, 0, 1, 0.93)); fig.savefig(a.pdf, metadata={"CreationDate": None}); print("wrote", a.pdf)
     macros = []
     for (ds, m), bb in sorted(bins.items()):
         vals = [sum(v * n for v, n in lst) / sum(n for _, n in lst) for lst in bb.values()]

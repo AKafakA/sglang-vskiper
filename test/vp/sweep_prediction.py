@@ -108,7 +108,7 @@ def main() -> int:
             f.write(f"\\newcommand{{\\vpPredBelowUpN}}{{{len(bu)}}}\n\\newcommand{{\\vpPredBelowUpWon}}{{{sum(1 for p in bu if p[1] < 0)}}}\n")
         if tie:
             m = ARM_RE.match(tie[0][3]); f.write(f"\\newcommand{{\\vpPredTieArm}}{{{int(m.group(1))}\\%$\\times${int(m.group(2))}\\%}}\n\\newcommand{{\\vpPredTieVstar}}{{{tie[0][0]/1e3:.0f}}}\n\\newcommand{{\\vpPredTieOcc}}{{{tie[0][2]/1e3:.0f}}}\n\\newcommand{{\\vpPredTieDelta}}{{{tie[0][1]:+.1f}}}\n")
-    import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
+    import matplotlib; matplotlib.use("Agg"); matplotlib.rcParams["pdf.fonttype"] = 42; import matplotlib.pyplot as plt
     # v1.7: no per-point r/d text (the table carries the arm mapping), legend above the axes, larger figure; the horizontal bar
     # from a shared-band point runs from the arm's crossover V* to the occupancy its cell held (a relation, not an error bar).
     fig, ax = plt.subplots(figsize=(5.0, 3.0), dpi=200)
@@ -126,7 +126,7 @@ def main() -> int:
     ax.set_xlabel("rule crossover $V^*$ (resident KV tokens)" + ("" if a.no_occupancy_bars else "; bar to the cell's own occupancy")); ax.set_ylabel("E2E mean change (%)")
     fs = 9 if a.no_occupancy_bars else 7
     ax.legend(fontsize=fs, frameon=False, loc="lower center", bbox_to_anchor=(0.5, 1.01), ncol=3, borderaxespad=0.0, columnspacing=1.0, handletextpad=0.3); ax.tick_params(labelsize=fs); ax.xaxis.label.set_size(fs + 0.5); ax.yaxis.label.set_size(fs + 0.5); ax.grid(alpha=0.25)
-    fig.tight_layout(); fig.savefig(a.png, bbox_inches="tight", pad_inches=0.04); print(f"{len(lines)} arms; fixed: {len(above)} above their occupancy ({sum(1 for p in above if p[1] > 0)} lost), {len(below)} below ({sum(1 for p in below if p[1] < 0)} won) -> {a.png}")
+    fig.tight_layout(); fig.savefig(a.png, bbox_inches="tight", pad_inches=0.04, **({"metadata": {"CreationDate": None}} if str(a.png).endswith(".pdf") else {})); print(f"{len(lines)} arms; fixed: {len(above)} above their occupancy ({sum(1 for p in above if p[1] > 0)} lost), {len(below)} below ({sum(1 for p in below if p[1] < 0)} won) -> {a.png}")
     return 0
 
 
